@@ -1,4 +1,4 @@
-MoeKoe Music Software License Agreement
+Jello Music Software License Agreement
 
 1. Terms of Use
 This software is released under the GPL-2.0 license. You are free to use, modify, and distribute this software, but must comply with all terms of the GPL-2.0 license. This means any modified versions must also be open-sourced under the same license.
@@ -7,7 +7,7 @@ This software is released under the GPL-2.0 license. You are free to use, modify
 This software is provided "as is" without any express or implied warranties.
 
 3. Copyright Notice
-Copyright 2024 MoeKoe. All rights reserved.
+Copyright 2024 Jello Music. All rights reserved.
 
 4. Usage Restrictions
 - Prohibited for any illegal purposes

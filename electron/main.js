@@ -3,9 +3,11 @@ import {
     createWindow, createTray, createTouchBar, startApiServer,
     stopApiServer, startNeteaseApiServer, stopNeteaseApiServer,
     registerShortcut,
-    playStartupSound, createLyricsWindow, setThumbarButtons,
-    registerProtocolHandler, sendHashAfterLoad, getTray, createMvWindow,
-    createSpectrumWindow, stopSpectrumFullscreenWatcher
+    createLyricsWindow, setThumbarButtons,
+    registerProtocolHandler, sendHashAfterLoad, getTray,
+    createSpectrumWindow, stopSpectrumFullscreenWatcher,
+    createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
+    finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow
 } from './appServices.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
@@ -13,15 +15,90 @@ import statusBarLyricsService from './services/statusBarLyricsService.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
 import { setupDesktopShortcutIcon } from './services/desktopShortcutIcon.js';
 import { openLogPath, exportLog } from './services/logHelper.js';
+import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
 import Store from 'electron-store';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { t } from './language/i18n.js';
+
+// 从旧版（MoeKoe-NextGen）迁移用户数据：设置、登录态、窗口位置等
+const migrateLegacyUserData = () => {
+    try {
+        const newDir = app.getPath('userData');
+        if (path.basename(newDir) !== 'Jello Music') return;
+        if (fs.existsSync(path.join(newDir, 'config.json'))) return; // 已迁移过
+        const legacyDir = path.join(path.dirname(newDir), 'MoeKoe-NextGen');
+        if (!fs.existsSync(legacyDir)) return;
+        fs.mkdirSync(newDir, { recursive: true });
+        fs.cpSync(legacyDir, newDir, { recursive: true, force: false, errorOnExist: false });
+        console.log('[Migration] 已迁移旧版用户数据:', legacyDir, '->', newDir);
+    } catch (error) {
+        console.error('[Migration] 迁移旧版用户数据失败:', error);
+    }
+};
+migrateLegacyUserData();
 
 let mainWindow = null;
 let blockerId = null;
 const store = new Store();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const SETTINGS_ARG = '--settings';
+let pendingOpenSettings = false;
+
+// 渲染进程挂载后主动领取「启动时带 --settings」的请求
+ipcMain.handle('consume-pending-settings', () => {
+    const pending = pendingOpenSettings;
+    pendingOpenSettings = false;
+    return pending;
+});
+
+// 主窗口请求在 Sigma 窗口内打开设置（Sigma 窗口未就绪就先记下，等它挂载后领取）
+ipcMain.on('sigma-request-settings', () => {
+    const handled = openSettingsWindow(mainWindow);
+    if (handled) return;
+    pendingOpenSettings = true;
+    const win = getSigmaWindow();
+    if (!win || win.isDestroyed()) {
+        // 窗口不存在时补创建一个，挂载后会领取 pending 设置请求
+        createSigmaWindow();
+    }
+});
+
+// Sigma 窗口登录/退出后：通知主窗口同步登录态
+ipcMain.on('auth-changed', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('auth-changed');
+    }
+});
+
+// 设置页已移到 Sigma 窗口：把该窗口的 settings-change 转发给主窗口（频谱/桌面歌词等需要即时生效）
+ipcMain.on('settings-changed', (_event, settings) => {
+    if (settings && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('settings-changed', settings);
+    }
+});
+
+// Windows 跳转列表：任务栏图标右键 → 任务 → 设置
+const setupJumpList = () => {
+    if (process.platform !== 'win32') return;
+    app.setAppUserModelId('cn.jello.music');
+    app.setUserTasks([
+        {
+            program: process.execPath,
+            arguments: SETTINGS_ARG,
+            title: t('settings'),
+            description: t('settings'),
+            iconPath: process.execPath,
+            iconIndex: 0
+        }
+    ]);
+};
+
+if (process.argv.includes(SETTINGS_ARG)) {
+    pendingOpenSettings = true;
+}
 
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -35,8 +112,12 @@ if (!gotTheLock) {
         }
         if (mainWindow) {
             if (mainWindow.isMinimized()) mainWindow.restore();
-            mainWindow.show();
-            mainWindow.focus();
+            if (commandLine.includes(SETTINGS_ARG)) {
+                openSettingsWindow(mainWindow);
+            } else {
+                // 主窗口是隐藏播放宿主：把 Sigma 窗口带到前台
+                createSigmaWindow();
+            }
         }
         protocolHandler.handleProtocolArgv(commandLine);
     });
@@ -47,17 +128,19 @@ app.on('ready', () => {
         try {
             mainWindow = createWindow();
             createTray(mainWindow);
+            setupJumpList();
             customTrayMenuService.init(() => mainWindow, getTray);
 
             // 初始化状态栏歌词服务
             statusBarLyricsService.init(mainWindow, store, getTray, createTray);
 
             if (process.platform === "darwin" && store.get('settings')?.touchBar == 'on') createTouchBar(mainWindow);
-            playStartupSound();
             registerShortcut();
             apiService.init(mainWindow);
             registerProtocolHandler(mainWindow);
             sendHashAfterLoad(mainWindow);
+            setupAutoUpdater(mainWindow);
+            checkForUpdates(true);
             void initializeExtensions();
             setupDesktopShortcutIcon();
         } catch (error) {
@@ -140,15 +223,20 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.isQuitting = true;
-        app.quit(); // 非 macOS 系统上关闭所有窗口后退出应用
+        app.quit(); // 非 mpcOS 系统上关闭所有窗口后退出应用
     }
 });
 // 图标被点击
 app.on('activate', () => {
-    if (mainWindow && !mainWindow.isVisible()) {
-        mainWindow.show();
-    } else if (!mainWindow) {
+    if (!mainWindow) {
         mainWindow = createWindow();
+    }
+    const sigmaWin = getSigmaWindow();
+    if (sigmaWin && !sigmaWin.isDestroyed()) {
+        sigmaWin.show();
+        sigmaWin.focus();
+    } else {
+        createSigmaWindow();
     }
 });
 
@@ -157,40 +245,8 @@ process.on('uncaughtException', (error) => {
     console.error('Unhandled Exception:', error);
 });
 
-// 监听渲染进程发送的免责声明结果
-ipcMain.on('disclaimer-response', (event, accepted) => {
-    if (accepted) {
-        store.set('disclaimerAccepted', true);
-    } else {
-        app.isQuitting = true;
-        app.quit();
-    }
-});
-
-ipcMain.on('window-control', (event, action) => {
-    switch (action) {
-        case 'close':
-            if (store.get('settings')?.minimizeToTray === 'off') {
-                app.isQuitting = true;
-                app.quit();
-            } else {
-                mainWindow.close();
-            }
-            break;
-        case 'minimize':
-            mainWindow.minimize();
-            break;
-        case 'maximize':
-            if (mainWindow.isMaximized()) {
-                mainWindow.unmaximize();
-                store.set('maximize', false);
-            } else {
-                mainWindow.maximize();
-                store.set('maximize', true);
-            }
-            break;
-    }
-});
+// 应用版本（渲染端用于设置页/扩展兼容显示）
+ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.on('will-quit', () => {
     globalShortcut.unregisterAll();
@@ -221,7 +277,7 @@ ipcMain.on('lyrics-data', (event, lyricsData) => {
         lyricsWindow.webContents.send('lyrics-data', lyricsData);
     }
 
-    // 状态栏歌词功能服务处理（仅支持Mac系统）
+    // 状态栏歌词功能服务处理（仅支持Mpc系统）
     if (process.platform === 'darwin') {
         statusBarLyricsService.handleLyricsData(lyricsData);
     }
@@ -374,6 +430,70 @@ ipcMain.on('lyrics-window-fixed-size', (event, { width, height, fixed }) => {
     lyricsWindow.setMaximumSize(screenWidth, screenHeight);
 })
 
+// Sigma UI：独立透明窗口（固定 800x600），主窗口隐藏但继续播放
+ipcMain.on('sigma-window-enter', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    createSigmaWindow();
+    mainWindow.hide();
+});
+
+ipcMain.on('sigma-window-exit', () => {
+    closeSigmaWindow();
+});
+
+// 转发 Sigma 窗口的播放指令到主窗口
+ipcMain.on('sigma-command', (_event, command) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sigma-command', command);
+    }
+});
+
+// 转发主窗口的播放状态到 Sigma 窗口
+ipcMain.on('sigma-state', (_event, state) => {
+    const win = getSigmaWindow();
+    if (win && !win.isDestroyed()) {
+        win.webContents.send('sigma-state', state);
+    }
+});
+
+ipcMain.on('sigma-request-state', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sigma-request-state');
+    }
+});
+
+// 收起状态下从右侧滑出（悬停/点击收起条时触发）
+ipcMain.on('sigma-window-restore', () => {
+    restoreSigmaWindow();
+});
+
+// 自绘拖拽：渲染进程发来期望位置，主进程负责夹取范围/贴边收起
+ipcMain.on('sigma-window-move', (_event, position) => {
+    if (!position) return;
+    moveSigmaWindow(position.x, position.y, position.movedX);
+});
+
+// 松手：决定是否吸附收起
+ipcMain.on('sigma-window-drag-end', () => {
+    finishSigmaDrag();
+});
+
+// 渲染进程 rAF 动画回传
+ipcMain.on('sigma-window-animate-position', (_event, position) => {
+    if (!position) return;
+    applySigmaAnimatePosition(position.x, position.y);
+});
+
+ipcMain.on('sigma-window-animate-done', () => {
+    finishSigmaAnimate();
+});
+
+ipcMain.handle('sigma-window-get-bounds', () => {
+    const win = getSigmaWindow();
+    if (!win || win.isDestroyed()) return null;
+    return win.getBounds();
+});
+
 ipcMain.handle('lyrics-window-pointer-state', () => {
     const lyricsWindow = mainWindow.lyricsWindow;
     if (!lyricsWindow) return null
@@ -407,23 +527,6 @@ ipcMain.on('set-tray-title', (event, title) => {
     void customTrayMenuService.refresh();
 })
 
-
-ipcMain.handle('open-mv-window', (e, url) => {
-    return (async () => {
-        const mvWindow = createMvWindow();
-        try {
-            await mvWindow.loadURL(url);
-            mvWindow.show();
-            return true;
-        } catch (error) {
-            console.error('[open-mv-window] loadURL failed:', url, error);
-            try {
-                mvWindow.close();
-            } catch {}
-            throw error;
-        }
-    })();
-});
 
 ipcMain.handle('open-log-path', async (e) => {
     try {

@@ -20,7 +20,7 @@
             <div v-for="account in accountList" :key="account.userid" class="account-item"
               @click="selectAccount(account)">
               <div class="account-avatar">
-                <img :src="account.pic || './assets/images/profile.jpg'" :alt="account.nickname" />
+                <img :src="account.pic || './assets/images/profile.png'" :alt="account.nickname" />
               </div>
               <div class="account-info">
                 <div class="account-name">{{ account.nickname || '未命名用户' }}</div>
@@ -386,18 +386,25 @@ const checkQrStatus = async () => {
 }
 
 .login-container {
-  background-color: #fff;
+  background-color: rgba(22, 20, 28, 0.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  --text-color: #ece9f1;
+  --border-color: rgba(255, 255, 255, 0.12);
+  --background-color-secondary: rgba(255, 255, 255, 0.06);
+  --hover-color: rgba(255, 255, 255, 0.1);
+  --color-secondary-bg-for-transparent: rgba(255, 255, 255, 0.08);
   border-radius: 20px;
   width: 400px;
   max-width: 100%;
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.45);
   text-align: center;
   padding: 30px 25px;
   position: relative;
   overflow: hidden;
   z-index: 1;
   transition: all 0.4s ease;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   padding-bottom: 0px;
 
   &::before {
@@ -424,22 +431,22 @@ const checkQrStatus = async () => {
   flex: 1;
   max-width: 140px;
   padding: 8px 16px;
-  border: 1.5px solid #e4e7ed;
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
-  background: #f5f7fa;
-  color: #606266;
+  background: rgba(255, 255, 255, 0.06);
+  color: #bdb7c9;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
   transition: all 0.3s;
 
   &:hover {
-    background: #ebeef5;
+    background: rgba(255, 255, 255, 0.12);
   }
 
   &.active {
     border-color: var(--primary-color);
-    background: var(--color-primary-bg, rgba(255, 105, 180, 0.1));
+    background: var(--color-primary-bg, rgba(225, 143, 168, 0.12));
     color: var(--primary-color);
     font-weight: 700;
   }
@@ -459,7 +466,7 @@ const checkQrStatus = async () => {
 }
 
 h2 {
-  color: #2c3e50;
+  color: #f2eff6;
   margin-bottom: 20px;
   font-weight: 600;
   font-size: 1.4rem;
@@ -519,18 +526,23 @@ h2 {
   height: 42px;
   line-height: 42px;
   padding: 0 14px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   transition: all 0.3s;
   outline: none;
   box-sizing: border-box;
   font-size: 14px;
-  background-color: #f9fafc;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: #f0edf5;
+
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
 
   &:focus {
     border-color: var(--primary-color);
     box-shadow: 0 0 0 3px var(--color-box-shadow);
-    background-color: #fff;
+    background-color: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -539,7 +551,7 @@ h2 {
   right: 14px;
   background: none;
   border: none;
-  color: #c0c4cc;
+  color: rgba(255, 255, 255, 0.4);
   cursor: pointer;
   font-size: 16px;
   padding: 0;
@@ -553,8 +565,8 @@ h2 {
   justify-content: center;
 
   &:hover {
-    color: #909399;
-    background-color: rgba(0, 0, 0, 0.05);
+    color: rgba(255, 255, 255, 0.8);
+    background-color: rgba(255, 255, 255, 0.08);
   }
 }
 
@@ -704,7 +716,7 @@ h2 {
 
   p {
     margin-bottom: 12px;
-    color: #606266;
+    color: #bdb7c9;
     font-size: 14px;
   }
 }
@@ -732,16 +744,16 @@ h2 {
   align-items: center;
   justify-content: center;
   height: 200px;
-  border: 1px solid #eaeaea;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 14px;
   margin: 0 auto;
   width: 200px;
-  background-color: #f9fafc;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.06);
+  background-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
   transition: all 0.3s;
 
   &:hover {
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
     transform: translateY(-3px);
   }
 }
@@ -771,20 +783,20 @@ h2 {
 }
 
 .empty-text {
-  color: #606266;
+  color: #bdb7c9;
   font-size: 14px;
   font-weight: 500;
 }
 
 .disclaimer {
   font-size: 12px;
-  color: #909399;
+  color: #a39dae;
   margin-top: 20px;
   line-height: 1.5;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding-top: 14px;
   text-align: left;
-  background-color: #f9fafc;
+  background-color: rgba(255, 255, 255, 0.04);
   padding: 14px;
   border-radius: 10px;
   position: relative;
@@ -816,8 +828,8 @@ h2 {
   width: 100%;
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid #e4e7ed;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
   position: relative;
   z-index: 1;
 }
@@ -826,12 +838,12 @@ h2 {
   flex: 1;
   padding: 10px 0;
   text-align: center;
-  background: #f5f7fa;
+  background: rgba(255, 255, 255, 0.05);
   border: none;
   cursor: pointer;
   transition: all 0.3s;
   font-size: 14px;
-  color: #606266;
+  color: #bdb7c9;
   position: relative;
   overflow: hidden;
   font-weight: 500;
@@ -843,12 +855,12 @@ h2 {
     top: 20%;
     height: 60%;
     width: 1px;
-    background-color: #e4e7ed;
+    background-color: rgba(255, 255, 255, 0.1);
   }
 
   &:hover:not(.active) {
-    background-color: #ebeef5;
-    color: #303133;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #f0edf5;
   }
 
   &.active {
@@ -865,7 +877,7 @@ h2 {
 
 .register-link {
   text-align: center;
-  color: #606266;
+  color: #bdb7c9;
   margin-top: 18px;
   font-size: 13px;
 

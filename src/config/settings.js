@@ -23,49 +23,6 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: t('yu-yan')
             },
             {
-                key: 'themeColor',
-                selectAction: 'applyThemeColor',
-                defaultValue: 'pink',
-                itemIcon: 'fas fa-paint-brush',
-                selectionTitle: t('xuan-ze-zhu-se-tiao'),
-                options: [
-                    { displayText: t('shao-nv-fen'), value: 'pink' },
-                    { displayText: t('nan-nan-lan'), value: 'blue' },
-                    { displayText: t('tou-ding-lv'), value: 'green' },
-                    { displayText: t('mi-gan-cheng'), value: 'orange' }
-                ],
-                label: t('zhu-se-tiao'),
-                icon: '🎨 '
-            },
-            {
-                key: 'blurRadius',
-                selectAction: 'applyBlurRadius',
-                defaultValue: '12',
-                itemIcon: 'fas fa-circle',
-                selectionTitle: '模糊强度 (px)',
-                options: [
-                    { displayText: '4px', value: '4' },
-                    { displayText: '8px', value: '8' },
-                    { displayText: '12px', value: '12' },
-                    { displayText: '16px', value: '16' },
-                    { displayText: '20px', value: '20' },
-                    { displayText: '28px', value: '28' },
-                    { displayText: '36px', value: '36' }
-                ],
-                label: '模糊强度',
-                icon: '🔘 '
-            },
-            {
-                key: 'font',
-                defaultValue: '',
-                defaultDisplayText: t('mo-ren-zi-ti'),
-                itemIcon: 'fas fa-font',
-                selectionTitle: t('zi-ti-she-zhi'),
-                keepOpen: true,
-                label: t('zi-ti-she-zhi'),
-                helpLink: 'https://music.moekoe.cn/guide/font-settings.html'
-            },
-            {
                 key: 'customTrayMenu',
                 defaultValue: 'native',
                 itemIcon: 'fas fa-window-restore',
@@ -128,7 +85,7 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 ],
                 label: '输出设备变化自动暂停',
                 icon: '🎧 ',
-                helpLink: 'https://music.moekoe.cn/guide/auto-pause-on-output-device-change.html'
+                helpLink: ''
             },
             {
                 key: 'audioOutputDevice',
@@ -140,33 +97,7 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 options: [],
                 label: '音频输出设备',
                 icon: '🔊 ',
-                helpLink: 'https://music.moekoe.cn/guide/audio-output-device.html'
-            },
-            {
-                key: 'greetings',
-                defaultValue: 'on',
-                itemIcon: 'fas fa-comment',
-                selectionTitle: t('qi-dong-wen-hou-yu'),
-                options: [
-                    { displayText: t('kai-qi'), value: 'on' },
-                    { displayText: t('guan-bi'), value: 'off' }
-                ],
-                label: t('qi-dong-wen-hou-yu'),
-                icon: '👋 '
-            },
-            {
-                key: 'musicSource',
-                defaultValue: 'kugou',
-                itemIcon: 'fas fa-server',
-                selectionTitle: t('yin-le-yuan'),
-                options: [
-                    { displayText: '🎵 酷狗音乐', value: 'kugou' },
-                    { displayText: '☁️ 网易云音乐', value: 'netease' },
-                ],
-                label: t('yin-le-yuan'),
-                icon: '🔀 ',
-                showRefreshHint: true,
-                refreshHintText: t('qie-huan-yin-yuan-xu-zhong-xin-sou-suo'),
+                helpLink: ''
             },
             {
                 key: 'dataSource',
@@ -182,7 +113,7 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 icon: '🔌 ',
                 showRefreshHint: true,
                 refreshHintText: t('zhong-qi-hou-sheng-xiao'),
-                helpLink: 'https://music.moekoe.cn/guide/data-source.html'
+                helpLink: ''
             }
         ]
     },
@@ -245,7 +176,7 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 selectionTitle: t('ge-ci-zi-ti-she-zhi'),
                 keepOpen: true,
                 label: t('ge-ci-zi-ti-she-zhi'),
-                helpLink: 'https://music.moekoe.cn/guide/font-settings.html'
+                helpLink: ''
             },
             {
                 key: 'statusBarLyrics',
@@ -347,26 +278,13 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 selectionTitle: t('wang-luo-jie-dian'),
                 options: [
                     { displayText: t('zhu-wang'), value: 'mainnet' },
-                    { displayText: t('ce-wang'), value: 'testnet' },
                     { displayText: t('kai-fa-wang'), value: 'devnet' }
                 ],
                 available: 'client',
                 label: t('wang-luo-mo-shi'),
                 showRefreshHint: true,
                 refreshHintText: t('zhong-qi-hou-sheng-xiao'),
-                helpLink: 'https://music.moekoe.cn/guide/network-modes.html'
-            },
-            {
-                key: 'startMinimized',
-                defaultValue: 'off',
-                itemIcon: 'fas fa-compress',
-                selectionTitle: t('qi-dong-shi-zui-xiao-hua'),
-                options: [
-                    { displayText: t('da-kai'), value: 'on' },
-                    { displayText: t('guan-bi'), value: 'off' }
-                ],
-                available: 'client',
-                label: t('qi-dong-shi-zui-xiao-hua')
+                helpLink: ''
             },
             {
                 key: 'preventAppSuspension',
@@ -412,7 +330,7 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: 'RPC地址',
                 showRefreshHint: true,
                 refreshHintText: t('shua-xin-hou-sheng-xiao'),
-                helpLink: 'https://music.moekoe.cn/guide/rpc-api-base-url.html'
+                helpLink: ''
             },
             {
                 key: 'apiBaseUrl',
@@ -444,14 +362,6 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 action: actions.openShortcutSettings
             },
             {
-                key: 'pwa',
-                available: 'web',
-                itemIcon: 'fas fa-mobile-alt',
-                label: t('pwa-app'),
-                customText: t('install'),
-                action: actions.installPWA
-            },
-            {
                 key: 'proxy',
                 available: 'client',
                 defaultValue: 'off',
@@ -465,7 +375,7 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: t('wang-luo-dai-li'),
                 showRefreshHint: true,
                 refreshHintText: t('zhong-qi-hou-sheng-xiao'),
-                helpLink: 'https://music.moekoe.cn/guide/proxy-settings.html'
+                helpLink: ''
             },
             {
                 key: 'proxyUrl',

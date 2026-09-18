@@ -30,32 +30,42 @@ jobs:
         id: set-version
         run: |
           VERSION=$(git tag --sort=-v:refname | head -n 1)
-          MAJOR=$(echo $VERSION | awk -F. '{print $1}' | sed 's/v//')
-          MINOR=$(echo $VERSION | awk -F. '{print $2}')
-          PATCH=$(echo $VERSION | awk -F. '{print $3}')
-          PATCH=$((PATCH + 1))
-          if [ "$PATCH" -gt 9 ]; then
-            PATCH=0
-            MINOR=$((MINOR + 1))
+          if [ -z "$VERSION" ]; then
+            # 首次发布（仓库还没有 tag）：直接使用 package.json 的版本
+            NEW_VERSION="v$(node -p "require('./package.json').version")"
+          else
+            MAJOR=$(echo $VERSION | awk -F. '{print $1}' | sed 's/v//')
+            MINOR=$(echo $VERSION | awk -F. '{print $2}')
+            PATCH=$(echo $VERSION | awk -F. '{print $3}')
+            PATCH=$((PATCH + 1))
+            if [ "$PATCH" -gt 9 ]; then
+              PATCH=0
+              MINOR=$((MINOR + 1))
+            fi
+            NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           fi
-          NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Create release body
         id: create-release
         run: |
-          # 获取上一个tag
-          PREV_TAG=$(git describe --tags --abbrev=0)
-          # 获取最后一个tag到现在的所有commit信息
-          COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s")
-          # 如果没有commit信息，使用默认消息
-          if [ -z "$COMMITS" ]; then
-            COMMITS="* Regular update and bug fixes"
+          # 获取上一个tag（首次发布没有 tag）
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"* %s" | head -n 50)
+            RELEASE_BODY="## What's Changed\n\n${COMMITS}"
+          else
+            # 获取最后一个tag到现在的所有commit信息
+            COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s")
+            # 如果没有commit信息，使用默认消息
+            if [ -z "$COMMITS" ]; then
+              COMMITS="* Regular update and bug fixes"
+            fi
+            # 创建changelog链接
+            CHANGELOG_LINK="https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${{ steps.set-version.outputs.NEW_VERSION }}"
+            # 创建release body
+            RELEASE_BODY="## What's Changed\n\n${COMMITS}\n\n**Full Changelog**: [${PREV_TAG}...${{ steps.set-version.outputs.NEW_VERSION }}](${CHANGELOG_LINK})"
           fi
-          # 创建changelog链接
-          CHANGELOG_LINK="https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${{ steps.set-version.outputs.NEW_VERSION }}"
-          # 创建release body
-          RELEASE_BODY="## What's Changed\n\n${COMMITS}\n\n**Full Changelog**: [${PREV_TAG}...${{ steps.set-version.outputs.NEW_VERSION }}](${CHANGELOG_LINK})"
           # 将release body转义后输出
           echo "RELEASE_BODY<<EOF" >> $GITHUB_OUTPUT
           echo -e "$RELEASE_BODY" >> $GITHUB_OUTPUT

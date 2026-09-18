@@ -1,8 +1,8 @@
 version: '3.3'
 
 services:
-  moekoe-music:
-    container_name: moekoe-music # 容器名
+  jello-music:
+    container_name: jello-music # 容器名
     restart: unless-stopped # 自动重启
     build:
       context: .

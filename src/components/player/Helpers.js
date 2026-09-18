@@ -10,10 +10,6 @@ export function useHelpers(t) {
     isInputFocused.value = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA' || activeElement?.isContentEditable;
   };
   const isElectron = () => typeof window !== 'undefined' && typeof window.electron !== 'undefined';
-  const handleVolumeScroll = (e) => {
-    if (!isElectron()) return;
-    window.electron.ipcRenderer.send('volume-change', { deltaY: e.deltaY });
-  };
   const handleKeyDown = (e, callbacks) => {
     if (isInputFocused.value) return;
     switch (e.code) {
@@ -87,7 +83,6 @@ export function useHelpers(t) {
   return {
     isInputFocused,
     isElectron,
-    handleVolumeScroll,
     checkFocus,
     handleKeyDown,
     desktopLyrics,

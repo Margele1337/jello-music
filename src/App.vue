@@ -1,12 +1,6 @@
 <template>
     <div id="app" :class="[riseClass, blurClass]">
-        <RiseBackground v-if="showRiseBackground && !isLyricsRoute" />
-        <button v-if="showRiseBackground && !isLyricsRoute && !isHomeRoute" class="rise-back-btn" @click="$router.back()" title="返回">
-            <i class="fas fa-chevron-left"></i>
-        </button>
-        <TitleBar v-if="showTitleBar && !isLyricsRoute" />
         <RouterView />
-        <Disclaimer v-if="!isLyricsRoute" />
         <StatusBarLyrics v-if="!isLyricsRoute" ref="statusBarLyricsRef" />
     </div>
 </template>
@@ -14,23 +8,20 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
-import Disclaimer from '@/components/Disclaimer.vue';
-import TitleBar from '@/components/TitleBar.vue';
 import StatusBarLyrics from '@/components/StatusBarLyrics.vue';
-import RiseBackground from '@/components/RiseBackground.vue';
+import { useSigmaUI } from '@/composables/useSigmaUI';
 import { MoeAuthStore } from '@/stores/store';
+import { applyColorTheme, applyCustomFont } from '@/utils/utils';
 import logoImageSrc from '@/assets/images/tray/tray-icon@2x.png?url';
 
 const route = useRoute();
-const isLyricsRoute = computed(() => route.path === '/lyrics' || route.path === '/spectrum-hud');
-const isHomeRoute = computed(() => route.path === '/library');
+const isLyricsRoute = computed(() => route.path === '/lyrics' || route.path === '/spectrum-hud' || route.path === '/sigma');
+// 触发 useSigmaUI 初始化（主窗口启动时打开 Sigma 窗口）
+useSigmaUI();
 
 // 状态栏歌词逻辑
 const statusBarLyricsRef = ref(null);
 let cleanupStatusBarIPC = null;
-
-// 强制显示自定义 TitleBar，原生窗口装饰锁定关闭
-const showTitleBar = ref(true);
 
 // 强制浅色 + Rise 背景
 document.documentElement.classList.remove('dark');
@@ -79,6 +70,10 @@ const handleSettingsChange = (e) => {
 onMounted(async () => {
     const settings = loadSettings();
 
+    // 主题色/自定义字体（Sigma 窗口内的设置页依赖这些 CSS 变量）
+    applyColorTheme(settings.themeColor);
+    applyCustomFont(settings.font || '');
+
     const MoeAuth = MoeAuthStore();
     await MoeAuth.initDevice();
 
@@ -95,7 +90,6 @@ onUnmounted(() => {
     statusBarLyricsRef.value?.cleanupStatusBar();
     cleanupStatusBarIPC?.();
     window.removeEventListener('settings-change', handleSettingsChange);
-    window.removeEventListener('background-change', handleBackgroundChange);
 });
 </script>
 

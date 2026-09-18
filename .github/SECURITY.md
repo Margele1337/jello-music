@@ -1,6 +1,6 @@
 # Security Policy
 
-> 本仓库是基于 [MoeKoeMusic](https://github.com/iAJue/MoeKoeMusic) 的第三方魔改版，安全问题请反馈到本仓库，不要打扰上游作者。
+> 本仓库是基于 [Jello Music](https://github.com/Margele1337/jello-music) 的第三方魔改版，安全问题请反馈到本仓库，不要打扰上游作者。
 
 ## Supported Versions
 
@@ -19,7 +19,7 @@ If you discover a security vulnerability in this project, please follow these st
    Please report it **privately** to allow time for remediation before public disclosure.
 
 2. **Contact:**
-   - 🔒 GitHub 私密安全报告: [Security Advisories](https://github.com/Margele1337/MoeKoe-NextGen/security/advisories/new)
+   - 🔒 GitHub 私密安全报告: [Security Advisories](https://github.com/Margele1337/jello-music/security/advisories/new)
    - 🕒 Expected Response Time: 1–3 business days
 
 3. **Information to include in your report:**
