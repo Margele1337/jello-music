@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ============================================
-echo   MoeKoe Music - Dev Mode
+echo   Jello Music - Dev Mode
 echo ============================================
 echo.
 
@@ -26,7 +26,7 @@ echo   Waiting for Vite to start...
 timeout /t 4 /nobreak >nul
 
 echo   Starting Electron...
-start "MoeKoe Music" /D "%~dp0" cmd /k "npm run electron:serve"
+start "Jello Music" /D "%~dp0" cmd /k "npm run electron:serve"
 
 echo.
 echo   Done. Check the 3 terminal windows for status.

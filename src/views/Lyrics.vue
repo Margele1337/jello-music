@@ -90,7 +90,7 @@
                     </div>
                 </div>
             </template>
-            <div v-else class="lyrics-content hovering nolyrics">MoeKoe Music - 听你想听</div>
+            <div v-else class="lyrics-content hovering nolyrics">Jello Music - 听你想听</div>
         </div>
         </div>
     </div>

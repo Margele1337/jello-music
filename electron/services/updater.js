@@ -36,7 +36,7 @@ export function setupAutoUpdater(mainWindow) {
     autoUpdater.setFeedURL({
         provider: 'github',
         owner: 'Margele1337',
-        repo: 'MoeKoe-NextGen',
+        repo: 'jello-music',
         releaseType: 'release'
     });
 
@@ -44,9 +44,6 @@ export function setupAutoUpdater(mainWindow) {
     // 检查更新错误
     autoUpdater.on('error', (error) => {
         console.error('Update check failed:', error.message);
-        mainWindow.webContents.send('update-error', {
-            message: error.message
-        });
         dialog.showMessageBox({
             type: 'error',
             message: error.message.includes('ETIMEDOUT')
@@ -87,12 +84,10 @@ export function setupAutoUpdater(mainWindow) {
     // 更新下载进度
     autoUpdater.on('download-progress', (progressObj) => {
         mainWindow.setProgressBar(progressObj.percent / 100);
-        mainWindow.webContents.send('update-progress', progressObj);
     });
     // 更新下载完成
     autoUpdater.on('update-downloaded', () => {
         mainWindow.setProgressBar(-1);
-        mainWindow.webContents.send('update-downloaded');
         dialog.showMessageBox({
             type: 'info',
             title: t('update-ready'),

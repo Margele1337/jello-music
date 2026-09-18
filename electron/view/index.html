@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoeKoe Tray Menu</title>
+    <title>Jello Music Tray Menu</title>
     <style>
         :root {
             color-scheme: light dark;
@@ -323,7 +323,7 @@
             <section class="song-section">
                 <div class="cover" id="cover"></div>
                 <div class="song-meta">
-                    <h1 class="song-title" id="songTitle">MoeKoe Music</h1>
+                    <h1 class="song-title" id="songTitle">Jello Music</h1>
                     <div class="song-artist" id="songArtist">-</div>
                     <div class="progress-track">
                         <div class="progress-fill" id="progressFill"></div>
@@ -350,6 +350,8 @@
     <script>
         const actionOrder = [
             'project-home',
+            'settings',
+            'check-updates',
             'restart-app',
             'show-hide',
             'quit'
@@ -365,6 +367,8 @@
 
         const labelMap = {
             'project-home': 'projectHome',
+            'settings': 'settings',
+            'check-updates': 'checkUpdates',
             'prev-track': 'prevTrack',
             'toggle-play-pause': 'playPause',
             'next-track': 'nextTrack',
@@ -375,6 +379,8 @@
 
         const iconMap = {
             'project-home': 'house',
+            'settings': 'settings',
+            'check-updates': 'rotate',
             'prev-track': 'backward',
             'toggle-play-pause': 'play-circle',
             'next-track': 'forward',
@@ -400,7 +406,9 @@
                 power: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.75a.75.75 0 0 1 .75.75v7a.75.75 0 0 1-1.5 0v-7a.75.75 0 0 1 .75-.75Zm4.95 2.57a.75.75 0 0 1 1.06 1.06 7 7 0 1 1-12.02 4.95 6.96 6.96 0 0 1 2.05-4.95A.75.75 0 0 1 9.1 7.44a5.5 5.5 0 1 0 7.85 0Z"/></svg>',
                 window: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.25A2.25 2.25 0 0 1 6.25 3h11.5A2.25 2.25 0 0 1 20 5.25v13.5A2.25 2.25 0 0 1 17.75 21H6.25A2.25 2.25 0 0 1 4 18.75V5.25Zm1.5 2.25h13v-2.25a.75.75 0 0 0-.75-.75H6.25a.75.75 0 0 0-.75.75V7.5Zm13 1.5h-13v9.75c0 .41.34.75.75.75h11.5a.75.75 0 0 0 .75-.75V9Z"/></svg>',
                 'arrow-right': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.97 5.97a.75.75 0 0 1 1.06 0l5.5 5.5a.75.75 0 0 1 0 1.06l-5.5 5.5a.75.75 0 1 1-1.06-1.06l4.22-4.22H4.75a.75.75 0 0 1 0-1.5h13.44l-4.22-4.22a.75.75 0 0 1 0-1.06Z"/></svg>',
-                music: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.25 3.5a.75.75 0 0 1 .75.75v9.69A3.75 3.75 0 1 1 15.5 11V7.12l-6 1.5v7.32A3.75 3.75 0 1 1 8 13V6.75c0-.34.23-.63.56-.71l7.5-1.88a.75.75 0 0 1 .19-.02Z"/></svg>'
+                music: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.25 3.5a.75.75 0 0 1 .75.75v9.69A3.75 3.75 0 1 1 15.5 11V7.12l-6 1.5v7.32A3.75 3.75 0 1 1 8 13V6.75c0-.34.23-.63.56-.71l7.5-1.88a.75.75 0 0 1 .19-.02Z"/></svg>',
+                layers: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.6 3.2a.75.75 0 0 1 .8 0l8.5 4.75a.75.75 0 0 1 0 1.3l-8.5 4.75a.75.75 0 0 1-.8 0L3.1 9.25a.75.75 0 0 1 0-1.3L11.6 3.2ZM12 4.7 5.65 8.25 12 11.8l6.35-3.55L12 4.7Zm-8.15 7.9a.75.75 0 0 1 1.02-.28L12 16.3l7.13-3.98a.75.75 0 1 1 .74 1.3l-7.5 4.2a.75.75 0 0 1-.74 0l-7.5-4.2a.75.75 0 0 1-.28-1.02Zm0 3.5a.75.75 0 0 1 1.02-.28L12 19.8l7.13-3.98a.75.75 0 1 1 .74 1.3l-7.5 4.2a.75.75 0 0 1-.74 0l-7.5-4.2a.75.75 0 0 1-.28-1.02Z"/></svg>',
+                settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.25A3.75 3.75 0 1 0 15.75 12 3.75 3.75 0 0 0 12 8.25Zm0 6A2.25 2.25 0 1 1 14.25 12 2.25 2.25 0 0 1 12 14.25Zm8.06-3.4.94-.73a.75.75 0 0 0 .2-.96l-1.5-2.6a.75.75 0 0 0-.9-.32l-1.13.4a7.6 7.6 0 0 0-1.32-.76l-.19-1.19a.75.75 0 0 0-.74-.63h-3a.75.75 0 0 0-.74.63l-.19 1.19a7.6 7.6 0 0 0-1.32.76l-1.13-.4a.75.75 0 0 0-.9.32l-1.5 2.6a.75.75 0 0 0 .2.96l.94.73a7.7 7.7 0 0 0 0 1.53l-.94.73a.75.75 0 0 0-.2.96l1.5 2.6a.75.75 0 0 0 .9.32l1.13-.4a7.6 7.6 0 0 0 1.32.76l.19 1.19a.75.75 0 0 0 .74.63h3a.75.75 0 0 0 .74-.63l.19-1.19a7.6 7.6 0 0 0 1.32-.76l1.13.4a.75.75 0 0 0 .9-.32l1.5-2.6a.75.75 0 0 0-.2-.96l-.94-.73a7.7 7.7 0 0 0 0-1.53Z"/></svg>'
             };
 
             return `<span class="icon">${icons[name] || icons.music}</span>`;
@@ -472,8 +480,8 @@
 
             if (!song) {
                 coverEl.innerHTML = iconSvg('music');
-                document.getElementById('songTitle').textContent = labels.noSong || 'MoeKoe Music';
-                document.getElementById('songArtist').textContent = 'MoeKoe Music';
+                document.getElementById('songTitle').textContent = labels.noSong || 'Jello Music';
+                document.getElementById('songArtist').textContent = 'Jello Music';
                 document.getElementById('progressFill').style.width = '0%';
                 document.getElementById('currentTime').textContent = '00:00';
                 document.getElementById('durationTime').textContent = '00:00';
@@ -486,8 +494,8 @@
                 coverEl.innerHTML = iconSvg('music');
             }
 
-            document.getElementById('songTitle').textContent = song.title || 'MoeKoe Music';
-            document.getElementById('songArtist').textContent = song.artist || 'MoeJue';
+            document.getElementById('songTitle').textContent = song.title || 'Jello Music';
+            document.getElementById('songArtist').textContent = song.artist || 'Jello';
             document.getElementById('progressFill').style.width = `${song.progressPercent || 0}%`;
             document.getElementById('currentTime').textContent = song.currentTimeText || '00:00';
             document.getElementById('durationTime').textContent = song.durationText || '00:00';
@@ -504,7 +512,8 @@
                 const hasShortcut = !!shortcut;
                 const isDanger = dangerActions.has(action);
                 const iconName = action === 'toggle-play-pause' ? getPlayIconName() : iconMap[action];
-                const label = labels[labelMap[action]] || action;
+                const isActiveSigma = action === 'sigma-ui' && !!currentState?.sigmaUI;
+                const label = (labels[labelMap[action]] || action) + (isActiveSigma ? ' ✓' : '');
 
                 return `
                     <button class="action-item${isDanger ? ' danger' : ''}${hasShortcut ? '' : ' no-shortcut'}" type="button" data-action="${action}">

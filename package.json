@@ -1,8 +1,12 @@
 {
-  "name": "moekoe-nextgen",
-  "version": "1.7.0",
-  "homepage": "https://github.com/Margele1337/MoeKoe-NextGen",
+  "name": "jello-music",
+  "version": "2.0.0",
+  "homepage": "https://github.com/Margele1337/jello-music",
   "main": "electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Margele1337/jello-music.git"
+  },
   "scripts": {
     "install-all": "npm install && cd api && npm install",
     "serve": "vite",
@@ -32,7 +36,7 @@
     "publish": {
       "provider": "github",
       "owner": "Margele1337",
-      "repo": "MoeKoe-NextGen"
+      "repo": "jello-music"
     },
     "compression": "normal",
     "extraResources": [
@@ -57,9 +61,9 @@
         "to": "assets"
       }
     ],
-    "appId": "cn.moekoe.nextgen",
-    "productName": "MoeKoe-NextGen",
-    "copyright": "Based on MoeKoe Music (© MoeJue), modified by Margele1337",
+    "appId": "cn.jello.music",
+    "productName": "Jello Music",
+    "copyright": "Based on MoeKoe Music (© MoeJue), Jello Music by Margele1337",
     "directories": {
       "output": "dist_electron"
     },
@@ -71,9 +75,9 @@
     "icon": "build/icons/icon",
     "protocols": [
       {
-        "name": "MoeKoe-NextGen Protocol",
+        "name": "Jello Music Protocol",
         "schemes": [
-          "moekoe-nextgen"
+          "jello"
         ]
       }
     ],
@@ -89,7 +93,7 @@
           ]
         }
       ],
-      "artifactName": "MoeKoe-NextGen_Setup_v${version}-${arch}.${ext}"
+      "artifactName": "Jello-Music_Setup_v${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -98,11 +102,9 @@
       "installerIcon": "build/icons/icon.ico",
       "uninstallerIcon": "build/icons/icon.ico",
       "installerHeaderIcon": "build/icons/icon.ico",
-      "installerSidebar": "build/installerSidebar.bmp",
-      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
       "createDesktopShortcut": false,
       "createStartMenuShortcut": true,
-      "shortcutName": "MoeKoe-NextGen",
+      "shortcutName": "Jello Music",
       "include": "build/installer.nsh",
       "license": "build/license.txt",
       "language": "2052",
@@ -116,12 +118,12 @@
         "zip"
       ],
       "identity": null,
-      "artifactName": "MoeKoe-NextGen_v${version}-${arch}.${ext}",
+      "artifactName": "Jello-Music_v${version}-${arch}.${ext}",
       "protocols": [
         {
-          "name": "MoeKoe-NextGen Protocol",
+          "name": "Jello Music Protocol",
           "schemes": [
-            "moekoe-nextgen"
+            "jello"
           ]
         }
       ]
@@ -137,7 +139,7 @@
       ],
       "category": "Utility",
       "maintainer": "Margele1337 <xu17183167799@gmail.com>",
-      "artifactName": "MoeKoe-NextGen_v${version}-${arch}.${ext}"
+      "artifactName": "Jello-Music_v${version}-${arch}.${ext}"
     }
   },
   "type": "module",
@@ -145,9 +147,9 @@
     "name": "Margele1337",
     "email": "xu17183167799@gmail.com"
   },
-  "blog": "https://github.com/Margele1337/MoeKoe-NextGen",
+  "blog": "https://github.com/Margele1337/jello-music",
   "license": "GPL-2.0-only",
-  "description": "MoeKoe-NextGen（基于 MoeKoe Music 的魔改版）",
+  "description": "Jello Music（酷狗音乐第三方播放器，基于 MoeKoe Music 的魔改版）",
   "devDependencies": {
     "@types/node": "^24.10.1",
     "@vitejs/plugin-vue": "^6.0.2",

@@ -10,7 +10,7 @@ body:
 
         此表单仅用于提交Bug报告。如果您有使用问题或不确定这是否真的是一个Bug，请确保：
 
-        - 阅读[文档](https://music.moekoe.cn/)
+        - 阅读[文档](https://github.com/Margele1337/jello-music/)
         - 搜索是否有类似的问题 - 它可能已经被回答或修复
         - 提供有效的 Bug 描述和明确的问题内容，否则 issue 将可能被直接关闭或忽略处理
 
@@ -19,7 +19,7 @@ body:
     id: version
     attributes:
       label: 产品版本
-      placeholder: 例如：@ MoeKoe Music V1.4.3 - darwin
+      placeholder: 例如：@ Jello Music V1.4.3 - darwin
     validations:
       required: true
   - type: textarea

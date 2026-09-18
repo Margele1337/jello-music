@@ -1,6 +1,6 @@
 import i18n from '@/utils/i18n';
 
-const appFontStyleId = 'moekoe-custom-font';
+const appFontStyleId = 'jello-custom-font';
 const defaultFontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
 
 const escapeCssString = (value) => String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -77,21 +77,21 @@ export const applyColorTheme = (theme) => {
             '--border-color': 'rgba(255, 220, 227, var(--glass-border))',
             '--hover-color': 'rgba(255, 233, 239, calc(var(--glass-opacity) * 0.8))',
             '--color-secondary-bg-for-transparent': 'rgba(209, 209, 214, 0.22)',
-            '--color-box-shadow': 'rgba(255, 105, 180, 0.15)',
+            '--color-box-shadow': 'rgba(255, 107, 107, 0.15)',
         };
     } else {
         colors = {
-            '--primary-color': '#FF69B4',
-            '--primary-color-rgb': '255, 105, 180',
-            '--secondary-color': '#FFB6C1',
-            '--background-color': 'rgba(255, 240, 245, var(--glass-opacity))',
-            '--background-color-secondary': 'rgba(255, 230, 240, var(--glass-opacity))',
-            '--color-primary': '#f167ac',
-            '--color-primary-light': 'rgba(255, 105, 180, 0.1)',
-            '--border-color': 'rgba(255, 217, 230, var(--glass-border))',
-            '--hover-color': 'rgba(255, 233, 242, calc(var(--glass-opacity) * 0.8))',
+            '--primary-color': '#E18FA8',
+            '--primary-color-rgb': '225, 143, 168',
+            '--secondary-color': '#F2C7D4',
+            '--background-color': 'rgba(252, 240, 245, var(--glass-opacity))',
+            '--background-color-secondary': 'rgba(250, 232, 240, var(--glass-opacity))',
+            '--color-primary': '#C06C88',
+            '--color-primary-light': 'rgba(225, 143, 168, 0.12)',
+            '--border-color': 'rgba(238, 213, 223, var(--glass-border))',
+            '--hover-color': 'rgba(248, 235, 241, calc(var(--glass-opacity) * 0.8))',
             '--color-secondary-bg-for-transparent': 'rgba(209, 209, 214, 0.22)',
-            '--color-box-shadow': 'rgba(255, 105, 180, 0.15)',
+            '--color-box-shadow': 'rgba(225, 143, 168, 0.18)',
         };
     }
 
@@ -274,35 +274,8 @@ export const openRegisterUrl = (registerUrl) => {
     }
 };
 
-export const openMvPlayer = async (router, hash, title = '视频播放') => {
-    const resolved = router.resolve({
-        path: '/video',
-        query: { hash, title }
-    });
-    const base = window.location.href.split('#')[0];
-    const href = resolved.href || '';
-    const fullUrl = href.startsWith('#')
-        ? `${base}${href}`
-        : `${base}#${href.startsWith('/') ? href : `/${href}`}`;
-
-    if (window.electronAPI) {
-        await window.electronAPI.openMvWindow(fullUrl);
-        return;
-    }
-
-    const width = 960;
-    const height = 620;
-    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
-    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
-    const features = `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no`;
-
-    const popup = window.open(fullUrl, 'moekoe-mv', features);
-    if (popup) {
-        popup.focus?.();
-        return;
-    }
-
-    await router.push(resolved);
+export const openMvPlayer = async () => {
+    // MV 播放页已随主界面移除
 };
 
 // 分享
@@ -310,19 +283,19 @@ import { MoeAuthStore } from '../stores/store';
 export const share = (songName, id, type = 0, songDesc = '') => {
     let text = '';
     const MoeAuth = MoeAuthStore();
-    let userName = '萌音';
+    let userName = 'Jello';
     if(MoeAuth.isAuthenticated) {
-        userName = MoeAuth.UserInfo?.nickname || '萌音';
+        userName = MoeAuth.UserInfo?.nickname || 'Jello';
     };
     // 客户端分享
     let shareUrl = '';
     if (window.electron) {
         if(type == 0){
             // 歌曲
-            shareUrl = `https://music.moekoe.cn/share/?hash=${id}`;
+            shareUrl = `jello://share?hash=${id}`;
         }else{
             // 歌单
-            shareUrl = `moekoe-nextgen://share?listid=${id}`;
+            shareUrl = `jello://share?listid=${id}`;
         }
     } else {
         //  Web / H5 逻辑

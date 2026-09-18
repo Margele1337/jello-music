@@ -60,10 +60,10 @@ export default defineConfig({
         ]
       },
       manifest: {
-        name: 'MoeKoe 萌音',
-        short_name: 'MoeKoe',
-        description: '一个高颜值的kugou第三方播放器',
-        theme_color: '#FF69B4',
+        name: 'Jello Music',
+        short_name: 'Jello',
+        description: '一个高颜值的酷狗第三方播放器',
+        theme_color: '#E18FA8',
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/',

@@ -63,10 +63,12 @@ const getPrivilegeCandidates = (qualityOptions, quality, originalHash) => {
     const fallbackChain = getFallbackChain(quality);
     const candidates = fallbackChain.map(itemQuality => candidatesByQuality.get(itemQuality)).filter(Boolean);
 
-    return candidates.length > 0 ? candidates : fallbackChain.map(itemQuality => ({
-        hash: originalHash,
-        quality: itemQuality
-    }));
+    // 兜底：无 VIP / 权限数据缺失时，用原始 hash 再试一次免费 128，避免直接判定失败
+    if (!candidates.some(item => item.quality === '128')) {
+        candidates.push({ hash: originalHash, quality: '128' });
+    }
+
+    return candidates;
 };
 
 export default function useOnlineMusicQueue(t, musicQueueStore, currentSong, timeoutId) {
@@ -180,6 +182,24 @@ export default function useOnlineMusicQueue(t, musicQueueStore, currentSong, tim
 
             if (isStaleRequest()) return { stale: true };
 
+            // 无 VIP 或音质权限不足时，尝试获取试听片段（仅部分歌曲支持），避免直接报“获取音乐失败”
+            if (isAuth && response && response.status === 1 && (!response.url || !response.url[0])) {
+                try {
+                    const trialResponse = await get('/song/url', {
+                        hash,
+                        quality: '128',
+                        free_part: 1
+                    });
+                    if (isStaleRequest()) return { stale: true };
+                    if (trialResponse?.status === 1 && trialResponse.url?.[0]) {
+                        response = trialResponse;
+                        selectedCandidate = { hash, quality: '128' };
+                    }
+                } catch (error) {
+                    console.error('[SongQueue] 获取试听片段失败:', error);
+                }
+            }
+
             if (!response || response.status !== 1) {
                 console.error('[SongQueue] 获取音乐URL失败:', response);
                 currentSong.value.author = currentSong.value.name = t('huo-qu-yin-le-shi-bai');
@@ -204,7 +224,9 @@ export default function useOnlineMusicQueue(t, musicQueueStore, currentSong, tim
             } else {
                 console.error('[SongQueue] 未获取到音乐URL');
                 currentSong.value.author = currentSong.value.name = t('huo-qu-yin-le-shi-bai');
-                return { error: true };
+                if (musicQueueStore.queue.length === 0) return { error: true };
+                currentSong.value.author = t('3-miao-hou-zi-dong-qie-huan-xia-yi-shou');
+                return { error: true, shouldPlayNext: true };
             }
 
             // 创建歌曲对象

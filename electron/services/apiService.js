@@ -21,7 +21,7 @@ class ApiService {
             //发送欢迎信息
             ws.send(JSON.stringify({
                 type: 'welcome',
-                data: '感谢接入MoeKoe Music，文档地址：https://music.moekoe.cn/'
+                data: '感谢接入 Jello Music，项目地址：https://github.com/Margele1337/jello-music'
             }));
 
             // 发送当前歌词

@@ -71,7 +71,7 @@
 2. **克隆仓库到本地**  
    使用 Git 克隆你 Fork 的仓库：
    ```bash
-   git clone https://github.com/your-username/MoeKoeMusic.git
+   git clone https://github.com/your-username/Jello Music.git
    ```
 
 3. **创建一个新的分支**  
@@ -192,6 +192,6 @@ npm run test
 如果您有任何问题或需要进一步的帮助，请通过以下方式联系我们：
 
 - 在GitHub上创建Issue
-- 在Blog中留言 [Blog](https://MoeJue.cn)
+- 在Blog中留言 [Blog](https://github.com/Margele1337/jello-music)
 
 再次感谢你对项目的支持和贡献！

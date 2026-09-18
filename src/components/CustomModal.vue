@@ -42,7 +42,7 @@
 <script setup>
 import { ref } from 'vue';
 import i18n from '@/utils/i18n';
-// 该组件代码来自萌音商城(MoeKoe.cn) © 阿珏酱
+// 该组件代码来自萌音商城(Jello) © 阿珏酱
 // window.$modal.alert('这是一个 Alert'); // 直接调用 window.$modal
 // const result = await window.$modal.confirm('这是一个 Confirm');
 // const result = await window.$modal.prompt('请输入内容：', '默认值');

@@ -1,6 +1,6 @@
-# MoeKoe Music 插件目录
+# Jello Music 插件目录
 
-这个目录用于存放 MoeKoe Music 扩展插件，应用启动时会自动加载此目录下的所有有效插件。
+这个目录用于存放 Jello Music 扩展插件，应用启动时会自动加载此目录下的所有有效插件。
 
 ## 插件结构
 
@@ -18,11 +18,11 @@ plugin-name/
 
 ## 开发指导
 
-前往 [https://github.com/MoeKoeMusic](https://github.com/MoeKoeMusic) 查看其他用户编写的插件示例，获取更多灵感和参考。
+前往 [https://github.com/Jello Music](https://github.com/Jello Music) 查看其他用户编写的插件示例，获取更多灵感和参考。
 
-- [插件开发 [基础]](https://music.moekoe.cn/guide/basic-plugin-development.html)
-- [插件开发 [进阶]](https://music.moekoe.cn/guide/advanced-plugin-development.html)
-- [插件市场](https://music.moekoe.cn/plugins.html)
+- [插件开发 [基础]](https://github.com/Margele1337/jello-music)
+- [插件开发 [进阶]](https://github.com/Margele1337/jello-music)
+- [插件市场](https://github.com/Margele1337/jello-music)
 
 ## 插件开发指南
 

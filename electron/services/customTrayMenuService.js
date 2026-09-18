@@ -2,10 +2,11 @@ import { app, BrowserWindow, ipcMain, screen, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { t } from '../language/i18n.js';
+import { openSettingsWindow, getSigmaWindow, createSigmaWindow } from '../appServices.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TRAY_MENU_WIDTH = 300;
-const TRAY_MENU_HEIGHT = 370;
+const TRAY_MENU_HEIGHT = 410;
 
 class CustomTrayMenuService {
     constructor() {
@@ -223,6 +224,7 @@ class CustomTrayMenuService {
         const storage = await mainWindow.webContents.executeJavaScript(`
             (() => {
                 try {
+                    const settings = JSON.parse(localStorage.getItem('settings') || '{}');
                     return {
                         currentSong: localStorage.getItem('current_song'),
                         playerProgress: localStorage.getItem('player_progress'),
@@ -265,8 +267,8 @@ class CustomTrayMenuService {
             const progressPercent = duration > 0 ? Math.max(0, Math.min((currentTime / duration) * 100, 100)) : 0;
 
             return {
-                title: currentSong?.displayName || currentSong?.name || 'MoeKoe Music',
-                artist: currentSong?.author || 'MoeJue',
+                title: currentSong?.displayName || currentSong?.name || 'Jello Music',
+                artist: currentSong?.author || 'Jello',
                 cover: currentSong?.img || '',
                 qualityLabel: currentSong?.qualityLabel || '',
                 currentTime,
@@ -299,6 +301,8 @@ class CustomTrayMenuService {
             playPause: t('zan-ting-bo-fang'),
             nextTrack: t('next-track'),
             restartApp: t('restart-app'),
+            settings: t('settings'),
+            checkUpdates: t('check-updates'),
             showHide: t('show-hide'),
             quit: t('quit')
         };
@@ -314,7 +318,10 @@ class CustomTrayMenuService {
 
         switch (action) {
             case 'project-home':
-                shell.openExternal('https://github.com/Margele1337/MoeKoe-NextGen');
+                shell.openExternal('https://github.com/Margele1337/jello-music');
+                break;
+            case 'settings':
+                openSettingsWindow(mainWindow);
                 break;
             case 'prev-track':
                 mainWindow?.webContents.send('play-previous-track');
@@ -333,16 +340,21 @@ class CustomTrayMenuService {
                 app.isQuitting = true;
                 app.quit();
                 return;
-            case 'show-hide':
-                if (mainWindow) {
-                    if (mainWindow.isVisible()) {
-                        mainWindow.hide();
+            case 'show-hide': {
+                // 主窗口是隐藏播放宿主：显示/隐藏作用于 Sigma 窗口
+                const sigma = getSigmaWindow();
+                if (sigma && !sigma.isDestroyed()) {
+                    if (sigma.isVisible()) {
+                        sigma.hide();
                     } else {
-                        mainWindow.show();
-                        mainWindow.focus();
+                        sigma.show();
+                        sigma.focus();
                     }
+                } else {
+                    createSigmaWindow();
                 }
                 break;
+            }
             case 'quit':
                 app.isQuitting = true;
                 app.quit();

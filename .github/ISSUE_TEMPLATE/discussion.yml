@@ -16,7 +16,7 @@ body:
         - 您已经搜索过现有的讨论，避免重复
         - 您的问题足够清晰，以便其他人能够理解和参与讨论
         
-        或前往 [社区](https://github.com/iAJue/MoeKoeMusic/discussions) 进行讨论
+        或前往 [社区](https://github.com/Margele1337/jello-music/discussions) 进行讨论
   - type: textarea
     id: topic
     attributes:

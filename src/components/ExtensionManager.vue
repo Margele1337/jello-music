@@ -592,7 +592,7 @@ const buildNativeHostAuthorizationMessage = (extension, host) => {
         `插件 ${extension.name} 请求运行本地程序：`,
         host.path,
         '',
-        '1. 该程序会由 MoeKoe Music 启动，并可能在后台持续运行。',
+        '1. 该程序会由 Jello Music 启动，并可能在后台持续运行。',
         '2. 该程序属于插件附带的本地二进制内容，具备普通本地程序的系统访问能力。',
         '3. 如果插件来源不可信，可能带来隐私泄露、文件读写或网络访问风险。',
         '4. 本地程序运行后可能修改系统状态，造成数据丢失、系统异常，甚至损坏计算机。',
@@ -842,7 +842,7 @@ $border-dark: #232527;
         transition: all 0.2s ease;
 
         &.active {
-            background: var(--color-primary, #ff69b4);
+            background: var(--color-primary, #E18FA8);
             color: #fff;
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
         }
@@ -851,7 +851,7 @@ $border-dark: #232527;
             color: #f3f4f6;
 
             &.active {
-                background: var(--color-primary, #ff69b4);
+                background: var(--color-primary, #E18FA8);
                 color: #fff;
             }
         }

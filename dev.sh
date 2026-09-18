@@ -1,5 +1,5 @@
 #!/bin/bash
-# MoeKoe Music - 开发模式一键启动
+# Jello Music - 开发模式一键启动
 # 用法: bash dev.sh  或  ./dev.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,7 +9,7 @@ cd "$SCRIPT_DIR"
 unset ELECTRON_RUN_AS_NODE
 
 echo "============================================"
-echo "  MoeKoe Music - 开发模式"
+echo "  Jello Music - 开发模式"
 echo "============================================"
 echo ""
 echo "  API 服务器 : http://localhost:6521"

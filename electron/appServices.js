@@ -6,11 +6,11 @@ import Store from 'electron-store';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
 import fs from 'fs';
-import { exec } from 'child_process';
 import { Notification } from 'electron';
 import { t } from './language/i18n.js';
 import { bindExternalLinkHandler } from './services/externalLinkHandler.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
+import { checkForUpdates } from './services/updater.js';
 import { watchForegroundFullscreen, stopForegroundFullscreenWatcher } from './services/fullscreenWatcher.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const store = new Store();
@@ -54,7 +54,8 @@ export function createWindow() {
         y: y,
         minWidth: 890,
         minHeight: 750,
-        show: savedConfig?.startMinimized === 'on' ? false : true,
+        show: false,
+        skipTaskbar: true,
         frame: useNativeTitleBar,
         titleBarStyle: useNativeTitleBar ? 'default' : 'hiddenInset',
         autoHideMenuBar: true,
@@ -83,8 +84,6 @@ export function createWindow() {
     } else {
         if (savedConfig?.networkMode == 'devnet') { //开发网
             mainWindow.loadURL('http://localhost:8080');
-        } else if (savedConfig?.networkMode == 'testnet') { //测试网
-            mainWindow.loadURL('https://app.testnet.music.moekoe.cn');
         } else { //主网
             mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
         }
@@ -107,10 +106,6 @@ export function createWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('Page Loaded Successfully');
         mainWindow.webContents.insertCSS('::-webkit-scrollbar { display: none; }');
-        if (!store.get('disclaimerAccepted')) {
-            mainWindow.webContents.send('show-disclaimer');
-        }
-        mainWindow.webContents.send('version', app.getVersion());
     });
 
     mainWindow.on('close', (event) => {
@@ -387,29 +382,311 @@ export function createSpectrumWindow() {
     spectrumWindow.setBackgroundColor('#00000000');
 }
 
-export function createMvWindow() {
-    const { screenWidth, screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    return new BrowserWindow({
-        width: Math.min(screenWidth * 0.8, 1280),
-        height: Math.min(screenHeight * 0.8, 720),
+// Sigma UI 独立透明窗口（固定 800x600，背景可透到应用后面）
+let sigmaWindow = null;
+let sigmaWindowLoaded = false;
+let sigmaDocked = false;
+let sigmaAnimating = false;
+
+const SIGMA_DOCK_VISIBLE = 40;   // 贴右边缘收起后保留可见的宽度（原版 var8 = parentWidth - 40）
+const SIGMA_RESTORE_MARGIN = 20; // 滑出后距右边缘的间距（原版 var11 = parentWidth - 20 - width）
+
+const setSigmaDocked = (docked) => {
+    if (sigmaDocked === docked) return;
+    sigmaDocked = docked;
+    if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+        sigmaWindow.webContents.send('sigma-dock-changed', docked);
+    }
+};
+
+// 缓动动画（复刻原版 updatePanelDimensions：var7 = dt / 18.1ms，每帧 0.25 × var7）
+// 首选渲染进程 rAF 驱动（与显示器垂直同步，最顺）；窗口离屏导致 rAF 降频/停发时，
+// 主进程 150ms 收不到帧就接管，用同一套公式继续推进（从最后一帧坐标接着走）
+const SIGMA_ANIM_GAME_FRAME_MS = 18.10361;
+const SIGMA_ANIM_TICK_MS = 4;             // 主进程接管时的步进间隔
+const SIGMA_ANIM_MAX_DT = 40;             // dt 上限，避免偶发迟到造成大跳
+const SIGMA_ANIM_RENDERER_TIMEOUT = 150;  // 渲染进程超过该时间没回帧 → 主进程接管
+
+let sigmaAnimationTimer = null;
+let sigmaAnimationWatchdog = null;
+let sigmaAnimationStartedAt = 0;
+let sigmaAnimationMode = null;  // 'renderer' | 'main'
+let sigmaLastFrameAt = 0;
+let sigmaLastX = 0;
+let sigmaLastY = 0;
+let sigmaTargetX = 0;
+let sigmaTargetY = 0;
+
+const cancelSigmaAnimation = () => {
+    if (sigmaAnimationTimer) {
+        clearTimeout(sigmaAnimationTimer);
+        sigmaAnimationTimer = null;
+    }
+    if (sigmaAnimationWatchdog) {
+        clearInterval(sigmaAnimationWatchdog);
+        sigmaAnimationWatchdog = null;
+    }
+    sigmaAnimationMode = null;
+    sigmaAnimating = false;
+};
+
+// 动画卡死保护：超过 3 秒仍未结束则强制取消
+const sigmaAnimationBlocked = () => {
+    if (!sigmaAnimating) return false;
+    if (Date.now() - sigmaAnimationStartedAt > 3000) {
+        cancelSigmaAnimation();
+        return false;
+    }
+    return true;
+};
+
+// 主进程接管推进
+const runMainSigmaAnimation = () => {
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) {
+        cancelSigmaAnimation();
+        return;
+    }
+    sigmaAnimationMode = 'main';
+    sigmaWindow.webContents.send('sigma-animate-stop');
+
+    let currentX = sigmaLastX;
+    let currentY = sigmaLastY;
+    let lastTime = Date.now();
+
+    const step = () => {
+        sigmaAnimationTimer = null;
+        if (!sigmaWindow || sigmaWindow.isDestroyed()) {
+            cancelSigmaAnimation();
+            return;
+        }
+
+        const now = Date.now();
+        const dt = Math.min(SIGMA_ANIM_MAX_DT, Math.max(1, now - lastTime));
+        lastTime = now;
+        const frameFactor = dt / SIGMA_ANIM_GAME_FRAME_MS;
+
+        currentX = sigmaTargetX > currentX
+            ? Math.min(currentX + (sigmaTargetX - currentX) * 0.25 * frameFactor, sigmaTargetX)
+            : Math.max(currentX + (sigmaTargetX - currentX) * 0.25 * frameFactor, sigmaTargetX);
+        currentY = sigmaTargetY > currentY
+            ? Math.min(currentY + (sigmaTargetY - currentY) * 0.2 * frameFactor, sigmaTargetY)
+            : Math.max(currentY + (sigmaTargetY - currentY) * 0.2 * frameFactor, sigmaTargetY);
+
+        sigmaLastX = currentX;
+        sigmaLastY = currentY;
+
+        if (Math.abs(sigmaTargetX - currentX) < 0.5 && Math.abs(sigmaTargetY - currentY) < 0.5) {
+            sigmaWindow.setPosition(Math.round(sigmaTargetX), Math.round(sigmaTargetY));
+            cancelSigmaAnimation();
+            return;
+        }
+
+        sigmaWindow.setPosition(Math.round(currentX), Math.round(currentY));
+        sigmaAnimationTimer = setTimeout(step, SIGMA_ANIM_TICK_MS);
+    };
+    step();
+};
+
+const animateSigmaWindow = (targetX, targetY) => {
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
+    const start = sigmaWindow.getBounds();
+    if (Math.abs(start.x - targetX) < 1 && Math.abs(start.y - targetY) < 1) {
+        return;
+    }
+
+    cancelSigmaAnimation();
+    sigmaAnimating = true;
+    sigmaAnimationStartedAt = Date.now();
+    sigmaAnimationMode = 'renderer';
+    sigmaTargetX = targetX;
+    sigmaTargetY = targetY;
+    sigmaLastX = start.x;
+    sigmaLastY = start.y;
+    sigmaLastFrameAt = Date.now();
+
+    sigmaWindow.webContents.send('sigma-animate-to', {
+        x: Math.round(targetX),
+        y: Math.round(targetY),
+        fromX: start.x,
+        fromY: start.y
+    });
+
+    sigmaAnimationWatchdog = setInterval(() => {
+        if (!sigmaAnimating || sigmaAnimationMode !== 'renderer') return;
+        if (Date.now() - sigmaLastFrameAt > SIGMA_ANIM_RENDERER_TIMEOUT) {
+            runMainSigmaAnimation();
+        }
+    }, 50);
+};
+
+// 渲染进程每帧回传的动画位置（仅渲染进程驱动阶段生效）
+export function applySigmaAnimatePosition(x, y) {
+    if (!sigmaWindow || sigmaWindow.isDestroyed() || !sigmaAnimating || sigmaAnimationMode !== 'renderer') return;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    sigmaLastFrameAt = Date.now();
+    sigmaLastX = x;
+    sigmaLastY = y;
+    sigmaWindow.setPosition(Math.round(x), Math.round(y));
+}
+
+// 渲染进程动画结束（主进程接管后忽略，避免误取消）
+export function finishSigmaAnimate() {
+    if (!sigmaAnimating || sigmaAnimationMode !== 'renderer') return;
+    cancelSigmaAnimation();
+}
+
+// 拖动过程中（复刻原版 handleMovementAndCheckBoundaries + MusicPlayer.updatePanelDimensions）：
+// 1) 平时四边硬夹在显示器内（碰到右边缘不会收起）
+// 2) 鼠标相对起手点向右超过 70px 且目标超出屏幕右边 200px 以上时，向屏幕外推（每次推进超出量的一半）
+// 3) 松手时若已在屏幕外，才吸附收起到 40px
+export function moveSigmaWindow(x, y, movedX = 0) {
+    if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
+
+    const bounds = sigmaWindow.getBounds();
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+    const display = screen.getDisplayMatching({ x: Math.round(x), y: Math.round(y), width: bounds.width, height: bounds.height });
+    const area = display.workArea;
+    const right = area.x + area.width;
+    const bottom = area.y + area.height;
+    const nextY = Math.min(Math.max(Math.round(y), area.y), bottom - bounds.height);
+
+    // 原版：var14 = 200, newHeight - mouseX > 70
+    if (x + bounds.width > right + 200 && movedX > 70) {
+        const excess = x - bounds.x - 200;
+        const pushedX = Math.round(bounds.x + excess * 0.5);
+        if (pushedX !== bounds.x || nextY !== bounds.y) {
+            sigmaWindow.setBounds({ x: pushedX, y: nextY, width: bounds.width, height: bounds.height });
+        }
+        return;
+    }
+
+    const nextX = Math.min(Math.max(Math.round(x), area.x), right - bounds.width);
+    if (nextX !== bounds.x || nextY !== bounds.y) {
+        sigmaWindow.setBounds({ x: nextX, y: nextY, width: bounds.width, height: bounds.height });
+    }
+}
+
+// 松手：若窗口已在屏幕外 → 吸附收起
+export function finishSigmaDrag() {
+    if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
+    const bounds = sigmaWindow.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    const right = area.x + area.width;
+    const bottom = area.y + area.height;
+    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+
+    if (bounds.x + bounds.width > right) {
+        setSigmaDocked(true);
+        animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
+        return;
+    }
+
+    setSigmaDocked(false);
+    const nextX = Math.min(Math.max(bounds.x, area.x), right - bounds.width);
+    const nextY = Math.min(Math.max(bounds.y, area.y), bottom - bounds.height);
+    if (nextX !== bounds.x || nextY !== bounds.y) {
+        sigmaWindow.setBounds({ x: nextX, y: nextY, width: bounds.width, height: bounds.height });
+    }
+}
+
+// 从收起状态滑出（原版 var11 = parentWidth - 20 - width）
+export function restoreSigmaWindow() {
+    if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
+    const bounds = sigmaWindow.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    const right = area.x + area.width;
+    if (bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
+    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+    setSigmaDocked(false);
+    animateSigmaWindow(right - bounds.width - SIGMA_RESTORE_MARGIN, centerY);
+}
+
+export function createSigmaWindow() {
+    if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+        sigmaWindow.show();
+        sigmaWindow.focus();
+        return sigmaWindow;
+    }
+
+    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+    const width = 800;
+    const height = 600;
+
+    sigmaWindow = new BrowserWindow({
+        width,
+        height,
+        x: Math.max(0, Math.round((screenWidth - width) / 2)),
+        y: Math.max(0, Math.round((screenHeight - height) / 2)),
+        minWidth: width,
+        minHeight: height,
+        maxWidth: width,
+        maxHeight: height,
+        resizable: false,
+        maximizable: false,
+        fullscreenable: false,
         frame: false,
         transparent: true,
+        hasShadow: false,
+        skipTaskbar: true,
+        alwaysOnTop: false,
         show: false,
-        titleBarStyle: 'hiddenInset',
-        autoHideMenuBar: true,
         backgroundColor: '#00000000',
+        title: 'Sigma Music',
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: false,
-            webSecurity: false, // 禁用 CORS、同源策略
-            allowRunningInsecureContent: true, // 允许混合内容
-            zoomFactor: 1.0,
-            devTools: isDev
-        },
-        icon: getIconPath('icon.ico')
+            webSecurity: false,
+            allowRunningInsecureContent: true,
+            backgroundThrottling: false,
+            zoomFactor: 1.0
+        }
     });
+
+    sigmaWindow.once('ready-to-show', () => {
+        if (sigmaWindow && !sigmaWindow.isDestroyed()) sigmaWindow.show();
+    });
+
+    sigmaWindow.on('closed', () => {
+        sigmaWindow = null;
+        sigmaWindowLoaded = false;
+        sigmaDocked = false;
+        cancelSigmaAnimation();
+        // 关闭 Sigma 窗口不再回退主界面（主窗口是隐藏播放宿主）；左键托盘可随时重新打开
+    });
+
+    if (isDev) {
+        sigmaWindow.loadURL('http://localhost:8080/#/sigma');
+    } else {
+        sigmaWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
+            hash: 'sigma'
+        });
+    }
+
+    sigmaWindow.setBackgroundColor('#00000000');
+
+    sigmaWindow.webContents.on('did-finish-load', () => {
+        sigmaWindowLoaded = true;
+    });
+
+    return sigmaWindow;
+}
+
+export function closeSigmaWindow() {
+    if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+        sigmaWindow.destroy();
+    }
+    sigmaWindow = null;
+    sigmaWindowLoaded = false;
+    sigmaDocked = false;
+}
+
+export function getSigmaWindow() {
+    return sigmaWindow;
 }
 
 const getIconPath = (iconName, subPath = '') => path.join(
@@ -420,6 +697,23 @@ const getIconPath = (iconName, subPath = '') => path.join(
 
 export function getTray() {
     return tray;
+}
+
+// 打开设置：Sigma 窗口开着就在 Sigma 窗口内显示设置页，否则用主窗口
+// 返回是否由 Sigma 窗口接收（未就绪时由调用方决定是否记为 pending）
+export function openSettingsWindow(mainWindow) {
+    const sigmaReady = sigmaWindowLoaded && sigmaWindow && !sigmaWindow.isDestroyed() && sigmaWindow.isVisible();
+    if (sigmaReady) {
+        sigmaWindow.show();
+        sigmaWindow.focus();
+        sigmaWindow.webContents.send('open-settings');
+        return true;
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        // 主窗口不显示，仅转发设置请求（主窗口会转交给 Sigma 窗口）
+        mainWindow.webContents.send('open-settings');
+    }
+    return false;
 }
 
 // 创建托盘图标及菜单
@@ -439,19 +733,25 @@ export function createTray(mainWindow, title = '') {
     }
 
     tray = new Tray(getIconPath(trayIconName));
-    tray.setToolTip('MoeKoe Music');
+    tray.setToolTip('Jello Music');
 
     const contextMenu = Menu.buildFromTemplate([
         {
             label: t('show-hide'),
                         icon: getIconPath('show.png', 'menu'),
             click: () => {
-                if (mainWindow) {
-                    if (mainWindow.isVisible()) {
-                        mainWindow.hide();
-                    } else {
-                        mainWindow.show();
-                    }
+                // 主窗口是隐藏播放宿主：显示/隐藏作用于 Sigma 窗口
+                const win = getSigmaWindow();
+                if (!win || win.isDestroyed()) {
+                    // 窗口还没创建：创建即显示
+                    createSigmaWindow();
+                    return;
+                }
+                if (win.isVisible()) {
+                    win.hide();
+                } else {
+                    win.show();
+                    win.focus();
                 }
             }
         },
@@ -479,10 +779,23 @@ export function createTray(mainWindow, title = '') {
         },
         { type: 'separator' },
         {
+            label: t('settings'),
+            click: () => {
+                openSettingsWindow(mainWindow);
+            }
+        },
+        {
+            label: t('check-updates'),
+            icon: getIconPath('update.png', 'menu'),
+            click: () => {
+                checkForUpdates(false);
+            }
+        },
+        {
             label: t('project-home'),
             icon: getIconPath('home.png', 'menu'),
             click: () => {
-                shell.openExternal('https://github.com/Margele1337/MoeKoe-NextGen');
+                shell.openExternal('https://github.com/Margele1337/jello-music');
             }
         },
         {
@@ -529,20 +842,22 @@ export function createTray(mainWindow, title = '') {
             });
     }
     if (!useLinuxCustomTrayMenu) {
+        // 左键单击托盘：显示 Sigma 窗口（主窗口只作为隐藏播放宿主，不再显示）
         tray.on('click', () => {
             customTrayMenuService.hide();
-            if (!mainWindow.isVisible()) {
-                mainWindow.show();
-            } else if (!mainWindow.isFocused()) {
-                mainWindow.show();
-                mainWindow.focus();
-            } else {
-                mainWindow.hide(); //大概率永远不会执行
+            const win = createSigmaWindow();
+            if (win && !win.isDestroyed()) {
+                win.show();
+                win.focus();
             }
         });
         tray.on('double-click', () => {
             customTrayMenuService.hide();
-            mainWindow.show();
+            const win = createSigmaWindow();
+            if (win && !win.isDestroyed()) {
+                win.show();
+                win.focus();
+            }
         });
     }
     return tray;
@@ -805,12 +1120,14 @@ export function registerShortcut() {
         }
 
         clickFunc = () => {
-            if (mainWindow) {
-                if (mainWindow.isVisible()) {
-                    mainWindow.hide();
-                } else {
-                    mainWindow.show();
-                }
+            // 主窗口是隐藏播放宿主：快捷键切换 Sigma 窗口显示
+            const win = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
+            if (!win || win.isDestroyed()) return;
+            if (win.isVisible()) {
+                win.hide();
+            } else {
+                win.show();
+                win.focus();
             }
         }
         if (settings?.shortcuts?.mainWindow) {
@@ -936,43 +1253,6 @@ const syncDesktopSpectrumSetting = (value) => {
     });
 };
 
-// 播放启动问候语
-export function playStartupSound() {
-    const savedConfig = store.get('settings');
-    if (!savedConfig || (savedConfig['greetings'] !== 'on' && savedConfig['greetings'] !== 'null')) {
-        return;
-    }
-    const audioFiles = [
-        '/assets/sound/yise-jp.mp3',
-        '/assets/sound/qiqi-jp.mp3',
-        '/assets/sound/qiqi-zh.mp3'
-    ];
-    const randomIndex = Math.floor(Math.random() * audioFiles.length);
-    const soundPath = isDev
-        ? path.join(__dirname, '..', 'public', audioFiles[randomIndex])
-        : path.join(process.resourcesPath, 'public', audioFiles[randomIndex]);
-    try {
-        switch (process.platform) {
-            case 'win32':
-                const escapedPath = soundPath.replace(/'/g, "''");
-                exec(`powershell -c "Add-Type -AssemblyName PresentationCore; $player = New-Object System.Windows.Media.MediaPlayer; $player.Open('${escapedPath}'); $player.Play(); Start-Sleep -s 3; $player.Stop()"`);
-                break;
-            case 'darwin':
-                exec(`afplay "${soundPath}"`);
-                break;
-            case 'linux':
-                exec(`paplay "${soundPath}"`, (error) => {
-                    if (error) {
-                        exec(`play "${soundPath}"`);
-                    }
-                });
-                break;
-        }
-    } catch (error) {
-        log.error('播放启动问候语失败:', error);
-    }
-}
-
 // 设置任务栏缩略图工具栏
 export function setThumbarButtons(mainWindow, isPlaying = false) {
     const buttons = [
@@ -1023,7 +1303,7 @@ let protocolMainWindow = null;
 
 // 注册自定义协议
 export function registerProtocolHandler(mainWindow) {
-    const PROTOCOL = "moekoe-nextgen";
+    const PROTOCOL = "jello";
 
     // 保存mainWindow引用
     if (mainWindow) {
@@ -1039,9 +1319,13 @@ export function registerProtocolHandler(mainWindow) {
     // 处理第二个实例的启动参数
     app.on('second-instance', (event, commandLine) => {
         if (protocolMainWindow) {
-            if (protocolMainWindow.isMinimized()) protocolMainWindow.restore();
-            protocolMainWindow.show();
-            protocolMainWindow.focus();
+    if (protocolMainWindow.isMinimized()) protocolMainWindow.restore();
+    // 主窗口是隐藏播放宿主：把 Sigma 窗口带到前台
+    const sigmaWin = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
+    if (sigmaWin && !sigmaWin.isDestroyed()) {
+        sigmaWin.show();
+        sigmaWin.focus();
+    }
             handleArgv(commandLine);
         }
     });
@@ -1062,7 +1346,7 @@ export function registerProtocolHandler(mainWindow) {
 
 // 处理命令行参数
 function handleArgv(argv) {
-    const PROTOCOL = "moekoe-nextgen";
+    const PROTOCOL = "jello";
     const prefix = `${PROTOCOL}:`;
     const url = argv.find(arg => arg.startsWith(prefix));
     if (url) handleUrl(url);

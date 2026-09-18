@@ -55,8 +55,8 @@
                 </button>
             </div>
             <div class="version-info">
-                <p>© MoeKoe Music-NextGen</p>
-                <span>V1.1 - win</span>
+                <p>© Jello Music</p>
+                <span>V{{ appVersion }} - {{ platform }}</span>
             </div>
         </div>
 
@@ -221,7 +221,6 @@ import ExtensionManager from '@/components/ExtensionManager.vue';
 import { applyCustomFont, requestMicrophonePermission } from '../utils/utils';
 import { DEFAULT_API_BASE_URL, validateApiBaseUrl, testApiBaseUrl as testApiBaseUrlRequest } from '@/utils/apiBaseUrl';
 import { useSettingsConfig } from '@/config/settings';
-import { ONBOARDING_GUIDE_EVENT } from '@/config/onboardingGuide';
 
 const MoeAuth = MoeAuthStore();
 const { t } = useI18n();
@@ -236,8 +235,7 @@ const {
     shortcutConfigs
 } = useSettingsConfig(t, {
     openShortcutSettings: () => openShortcutSettings(),
-    installPWA: () => installPWA(),
-    openOnboardingGuide: () => openOnboardingGuide()
+    installPWA: () => installPWA()
 });
 
 const createSelectedSettings = (sections) => {
@@ -873,12 +871,6 @@ const saveProxy = () => {
 
     saveSettings();
     closeSelection();
-};
-
-const openOnboardingGuide = () => {
-    window.dispatchEvent(new CustomEvent(ONBOARDING_GUIDE_EVENT, {
-        detail: { reset: true }
-    }));
 };
 
 const openShortcutSettings = () => {
