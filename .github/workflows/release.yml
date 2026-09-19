@@ -106,8 +106,11 @@ jobs:
       - name: Build
         env:
           os: ${{ runner.os == 'Windows' && 'win' || runner.os == 'macOS' && 'macos' || 'linux' }}
+          RELEASE_VERSION: ${{ needs.increment-version.outputs.version }}
         run: |
           npm run install-all
+          # 把 tag 版本写进 package.json，保证产物命名/latest.yml/应用内版本与 tag 一致（否则自动更新收不到）
+          node -e "const fs=require('fs');const v=process.env.RELEASE_VERSION.replace(/^v/,'');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=v;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('build version =',v)"
           npm run build
           npm run electron:build:${{ env.os }}
 
