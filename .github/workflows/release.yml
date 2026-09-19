@@ -14,7 +14,7 @@ permissions:
 jobs:
   # 创建版本号
   increment-version:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, 'release'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, 'chore: release'))
     name: Increment Version
     runs-on: ubuntu-latest
     outputs:
