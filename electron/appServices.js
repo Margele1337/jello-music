@@ -1,5 +1,6 @@
 import { app, ipcMain, BrowserWindow, screen, Tray, Menu, TouchBar, globalShortcut, dialog, shell, nativeImage } from 'electron';
 import path from 'path';
+import http from 'http';
 import { spawn } from 'child_process';
 import log from 'electron-log';
 import Store from 'electron-store';
@@ -1085,6 +1086,21 @@ export function createTouchBar(mainWindow) {
 }
 
 // 启动 API 服务器
+// 探测本机 6521 端口是否已经有兼容的 API 在运行（例如 dev 环境或上一个实例）
+// 有 HTTP 响应就视为可用：直接复用，避免"第二个 API 抢端口失败"导致的启动报错
+const API_PROBE_URL = 'http://127.0.0.1:6521/';
+const probeApiServer = (timeoutMs = 1500) => new Promise((resolve) => {
+    const request = http.get(API_PROBE_URL, { timeout: timeoutMs }, (response) => {
+        response.resume();
+        resolve(true);
+    });
+    request.on('timeout', () => {
+        request.destroy();
+        resolve(false);
+    });
+    request.on('error', () => resolve(false));
+});
+
 export function startApiServer() {
     return new Promise((resolve, reject) => {
         let apiPath = '';
@@ -1123,41 +1139,53 @@ export function startApiServer() {
         const proxyUrl = savedConfig?.proxyUrl;
         const dataSource = savedConfig?.dataSource || 'concept';
 
-        const Args = [];
-        if (dataSource === 'concept') {
-            Args.push('--platform=lite');
-            log.info('API data source: concept (lite mode)');
-        }
-        if (proxy === 'on' && proxyUrl) {
-            const proxyAddress = String(proxyUrl).trim();
-            if (proxyAddress) {
-                Args.push(`--proxy=${proxyAddress}`);
-                log.info(`API proxy enabled: ${proxyAddress}`);
-            }
-        }
-        Args.push('--port=6521');
-        apiProcess = spawn(apiPath, Args, { windowsHide: true });
-
-        apiProcess.stdout.on('data', (data) => {
-            log.info(`API输出: ${data}`);
-            if (data.toString().includes('running')) {
-                console.log('API服务器已启动');
+        probeApiServer().then((alreadyRunning) => {
+            if (alreadyRunning) {
+                log.info('API 端口 6521 已有服务在运行，复用现有实例（不再启动第二个）');
+                console.log('API 已在运行，复用现有实例');
                 resolve();
+                return;
             }
-        });
 
-        apiProcess.stderr.on('data', (data) => {
-            log.error(`API 错误: ${data}`);
-            reject(data);
-        });
+            const Args = [];
+            if (dataSource === 'concept') {
+                Args.push('--platform=lite');
+                log.info('API data source: concept (lite mode)');
+            }
+            if (proxy === 'on' && proxyUrl) {
+                const proxyAddress = String(proxyUrl).trim();
+                if (proxyAddress) {
+                    Args.push(`--proxy=${proxyAddress}`);
+                    log.info(`API proxy enabled: ${proxyAddress}`);
+                }
+            }
+            Args.push('--port=6521');
+            apiProcess = spawn(apiPath, Args, { windowsHide: true });
 
-        apiProcess.on('close', (code) => {
-            log.info(`API 关闭，退出码: ${code}`);
-        });
+            apiProcess.stdout.on('data', (data) => {
+                log.info(`API输出: ${data}`);
+                if (data.toString().includes('running')) {
+                    console.log('API服务器已启动');
+                    resolve();
+                }
+            });
 
-        apiProcess.on('error', (error) => {
-            log.error('启动 API 失败:', error);
-            reject(error);
+            apiProcess.stderr.on('data', (data) => {
+                log.error(`API 错误: ${data}`);
+                if (String(data).includes('EADDRINUSE')) {
+                    log.error('端口 6521 被其它程序占用：请关闭占用该端口的程序（或重复运行的实例）后重试');
+                }
+                reject(data);
+            });
+
+            apiProcess.on('close', (code) => {
+                log.info(`API 关闭，退出码: ${code}`);
+            });
+
+            apiProcess.on('error', (error) => {
+                log.error('启动 API 失败:', error);
+                reject(error);
+            });
         });
     });
 }
@@ -1180,11 +1208,11 @@ export function startNeteaseApiServer() {
 
         const apiPath = path.join(process.resourcesPath, '../api-netease', 'start.js');
 
-        if (!fs.existsSync(apiPath)) {
-            log.error(`网易云 API 入口文件未找到：${apiPath}`);
-            // 非致命错误，网易云 API 不可用不影响酷狗 API
-            resolve();
-            return;
+    if (!fs.existsSync(apiPath)) {
+        // 网易云 API 是可选的附加组件（仓库不含该目录），缺失不影响酷狗主 API
+        log.warn(`网易云 API 入口文件未找到（可选组件，跳过）：${apiPath}`);
+        resolve();
+        return;
         }
 
         log.info(`网易云 API 路径: ${apiPath}`);
