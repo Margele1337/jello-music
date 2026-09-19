@@ -6,9 +6,10 @@ import {
     createLyricsWindow, setThumbarButtons,
     registerProtocolHandler, sendHashAfterLoad, getTray,
     createSpectrumWindow, stopSpectrumFullscreenWatcher,
+    createKeystrokesWindow, closeKeystrokesWindow, getKeystrokesWindow,
     createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
-    toggleSigmaWindowFromHotkey
+    toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow
 } from './appServices.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
@@ -17,7 +18,7 @@ import customTrayMenuService from './services/customTrayMenuService.js';
 import { setupDesktopShortcutIcon } from './services/desktopShortcutIcon.js';
 import { openLogPath, exportLog } from './services/logHelper.js';
 import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
-import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
+import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokeHandler } from './services/globalKeyService.js';
 import Store from 'electron-store';
 import fs from 'fs';
 import path from 'path';
@@ -117,8 +118,8 @@ if (!gotTheLock) {
             if (commandLine.includes(SETTINGS_ARG)) {
                 openSettingsWindow(mainWindow);
             } else {
-                // 主窗口是隐藏播放宿主：把 Sigma 窗口带到前台
-                createSigmaWindow();
+                // 主窗口是隐藏播放宿主：把 Sigma 窗口提到最前（贴边收起会自动滑出）
+                revealSigmaWindow(getSigmaWindow() || createSigmaWindow());
             }
         }
         protocolHandler.handleProtocolArgv(commandLine);
@@ -144,6 +145,12 @@ app.on('ready', () => {
             setupAutoUpdater(mainWindow);
             checkForUpdates(true);
             initGlobalKeyListener({ onRightShift: () => toggleSigmaWindowFromHotkey() });
+            setKeystrokeHandler((payload) => {
+                const win = getKeystrokesWindow();
+                if (win && !win.isDestroyed()) {
+                    win.webContents.send('keystrokes-input', payload);
+                }
+            });
             void initializeExtensions();
             setupDesktopShortcutIcon();
         } catch (error) {
@@ -236,16 +243,20 @@ app.on('activate', () => {
     }
     const sigmaWin = getSigmaWindow();
     if (sigmaWin && !sigmaWin.isDestroyed()) {
-        sigmaWin.show();
-        sigmaWin.focus();
+        revealSigmaWindow(sigmaWin);
     } else {
-        createSigmaWindow();
+        revealSigmaWindow(createSigmaWindow());
     }
 });
 
 // 处理未捕获的异常
 process.on('uncaughtException', (error) => {
     console.error('Unhandled Exception:', error);
+});
+
+// 新手教程等场景：临时挂起 RSHIFT 热键
+ipcMain.on('sigma-hotkey-suspend', (_event, flag) => {
+    setGlobalKeySuspended(!!flag);
 });
 
 // 应用版本（渲染端用于设置页/扩展兼容显示）
@@ -376,6 +387,30 @@ const syncDesktopSpectrumSetting = (value) => {
     store.set('settings', {
         ...settings,
         desktopSpectrum: value
+    });
+};
+
+// 监听 KeyStrokes 覆盖层开关
+ipcMain.on('desktop-keystrokes-action', (event, action) => {
+    switch (action) {
+        case 'display-keystrokes':
+            if (!getKeystrokesWindow()) createKeystrokesWindow();
+            syncDesktopKeystrokesSetting('on');
+            break;
+        case 'close-keystrokes': {
+            const win = getKeystrokesWindow();
+            if (win) win.close();
+            syncDesktopKeystrokesSetting('off');
+            break;
+        }
+    }
+});
+
+const syncDesktopKeystrokesSetting = (value) => {
+    const settings = store.get('settings') || {};
+    store.set('settings', {
+        ...settings,
+        desktopKeystrokes: value
     });
 };
 

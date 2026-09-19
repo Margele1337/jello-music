@@ -2,6 +2,15 @@
   <div class="sigma-shell">
     <SigmaMusicPlayer v-show="view === 'player'" :player="player" />
 
+    <!-- 新手教程（首次安装打开的新手引导模板，第一步是 Keybind Manager） -->
+    <div v-if="view === 'onboarding'" class="sigma-view sigma-view--onboarding">
+      <SigmaKeybindManager title="快捷呼出" :highlight-keys="[344]" @select="onKeybindSelect" />
+      <div class="onboarding-footer">
+        <span class="onboarding-step">{{ onboardingStep }} / {{ onboardingTotal }}</span>
+        <button type="button" class="onboarding-next" @click="finishOnboarding">完成</button>
+      </div>
+    </div>
+
     <!-- 设置界面（只在 Sigma 窗口内出现，左上角返回箭头） -->
     <div v-if="view === 'settings'" class="sigma-view sigma-view--settings">
       <div class="sigma-view-bar">
@@ -10,7 +19,7 @@
         </button>
         <button type="button" class="sigma-switch-account" @click="view = 'login'">切换账号</button>
       </div>
-      <Settings />
+      <Settings @show-tutorial="openTutorial" />
     </div>
 
     <!-- 登录界面（未登录时自动显示；登录成功后回到播放器） -->
@@ -32,6 +41,7 @@
 // 面板铺满窗口；元素尺寸/字号保持原版 1:1（左 250、封面条 94、控件坐标按右侧区域居中）
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SigmaMusicPlayer from './sigma/SigmaMusicPlayer.vue';
+import SigmaKeybindManager from './sigma/SigmaKeybindManager.vue';
 import Settings from '@/views/Settings.vue';
 import Login from '@/views/Login.vue';
 import { MoeAuthStore } from '@/stores/store';
@@ -42,6 +52,39 @@ defineProps({
 
 const view = ref('player');
 const MoeAuth = MoeAuthStore();
+
+// 新手教程（首次安装打开）：完成后写入标记
+const ONBOARDING_DONE_KEY = 'jello-onboarding-done';
+const onboardingStep = ref(1);
+const onboardingTotal = ref(1);
+const tutorialKey = ref(null);
+const tutorialReturnView = ref(null);
+
+const onKeybindSelect = (payload) => {
+  tutorialKey.value = payload;
+  console.log('[Onboarding] 选中按键:', payload);
+};
+
+// 设置页「重新观看教程」：记住来源视图，完成后返回
+const openTutorial = () => {
+  tutorialReturnView.value = view.value;
+  view.value = 'onboarding';
+};
+
+const finishOnboarding = () => {
+  localStorage.setItem(ONBOARDING_DONE_KEY, '1');
+  if (tutorialReturnView.value) {
+    view.value = tutorialReturnView.value;
+    tutorialReturnView.value = null;
+    return;
+  }
+  view.value = MoeAuth.isAuthenticated ? 'player' : 'login';
+};
+
+// 教程期间挂起 RSHIFT 热键（避免在教程里按 Shift 时把窗口收起）
+watch(view, (next) => {
+  window.electron?.ipcRenderer?.send('sigma-hotkey-suspend', next === 'onboarding');
+}, { immediate: true });
 
 // 托盘右键「设置」/ 跳转列表任务：在 Sigma 窗口内显示设置页
 const onOpenSettings = () => {
@@ -63,8 +106,10 @@ onMounted(() => {
   window.electron?.ipcRenderer?.invoke?.('consume-pending-settings').then((pending) => {
     if (pending) view.value = 'settings';
   }).catch(() => {});
-  // 未登录：直接进登录页
-  if (!MoeAuth.isAuthenticated) {
+  // 首次安装：先进新手教程；否则未登录进登录页
+  if (localStorage.getItem(ONBOARDING_DONE_KEY) !== '1') {
+    view.value = 'onboarding';
+  } else if (!MoeAuth.isAuthenticated) {
     view.value = 'login';
   }
 });
@@ -119,6 +164,50 @@ watch(() => MoeAuth.UserInfo, (info) => {
 /* 登录页自身是深色样式，配深色底 */
 .sigma-view--login {
   background: rgba(16, 17, 20, 0.96);
+}
+
+/* 新手教程：原版 KeyboardScreen 的 DEEP_TEAL 25% 覆盖 + 背景模糊 */
+.sigma-view--onboarding {
+  align-items: center;
+  justify-content: center;
+  background: rgba(1, 1, 1, 0.25);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.onboarding-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.onboarding-step {
+  font-family: 'JelloLight', sans-serif;
+  font-size: 14px;
+  color: rgba(254, 254, 254, 0.6);
+}
+
+.onboarding-next {
+  height: 34px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 8px;
+  background: #f0f0f0;
+  color: rgba(1, 1, 1, 0.7);
+  font-family: 'JelloLight', sans-serif;
+  font-size: 15px;
+  cursor: pointer;
+  transition: transform 0.1s linear, background 0.1s linear;
+}
+
+.onboarding-next:hover {
+  background: #fefefe;
+  transform: translateY(-2px);
 }
 
 .sigma-view-bar {

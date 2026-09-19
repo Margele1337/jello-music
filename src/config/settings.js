@@ -33,6 +33,14 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 ],
                 available: 'client',
                 label: '托盘菜单'
+            },
+            {
+                key: 'showTutorial',
+                available: 'client',
+                itemIcon: 'fas fa-graduation-cap',
+                label: '重新观看教程',
+                customText: '打开',
+                action: actions.showTutorial
             }
         ]
     },
@@ -146,6 +154,19 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 ],
                 available: 'client',
                 label: '桌面音频频谱'
+            },
+            {
+                key: 'desktopKeystrokes',
+                selectAction: 'toggleDesktopKeystrokes',
+                defaultValue: 'off',
+                itemIcon: 'fas fa-keyboard',
+                selectionTitle: '按键显示 (KeyStrokes)',
+                options: [
+                    { displayText: t('da-kai'), value: 'on' },
+                    { displayText: t('guan-bi'), value: 'off' }
+                ],
+                available: 'client',
+                label: '按键显示 (KeyStrokes)'
             },
             {
                 key: 'spectrumLocked',

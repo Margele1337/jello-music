@@ -7,6 +7,7 @@ const routes = [
     { path: '/', component: HomeLayout },
     { path: '/lyrics', name: 'Lyrics', component: Lyrics },
     { path: '/sigma', name: 'SigmaWindow', component: () => import('@/views/SigmaWindow.vue') },
+    { path: '/keystrokes', name: 'KeystrokesHUD', component: () => import('@/views/KeystrokesHUD.vue') },
     { path: '/spectrum-hud', name: 'SpectrumHUD', component: () => import('@/views/SpectrumHUD.vue') },
 ];
 
