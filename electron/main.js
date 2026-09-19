@@ -7,7 +7,8 @@ import {
     registerProtocolHandler, sendHashAfterLoad, getTray,
     createSpectrumWindow, stopSpectrumFullscreenWatcher,
     createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
-    finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow
+    finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
+    toggleSigmaWindowFromHotkey
 } from './appServices.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
@@ -16,6 +17,7 @@ import customTrayMenuService from './services/customTrayMenuService.js';
 import { setupDesktopShortcutIcon } from './services/desktopShortcutIcon.js';
 import { openLogPath, exportLog } from './services/logHelper.js';
 import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
+import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
 import Store from 'electron-store';
 import fs from 'fs';
 import path from 'path';
@@ -141,6 +143,7 @@ app.on('ready', () => {
             sendHashAfterLoad(mainWindow);
             setupAutoUpdater(mainWindow);
             checkForUpdates(true);
+            initGlobalKeyListener({ onRightShift: () => toggleSigmaWindowFromHotkey() });
             void initializeExtensions();
             setupDesktopShortcutIcon();
         } catch (error) {
@@ -249,6 +252,7 @@ process.on('uncaughtException', (error) => {
 ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.on('will-quit', () => {
+    stopGlobalKeyListener();
     globalShortcut.unregisterAll();
 });
 ipcMain.on('save-settings', (event, settings) => {

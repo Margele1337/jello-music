@@ -631,7 +631,7 @@ export function createSigmaWindow() {
         transparent: true,
         hasShadow: false,
         skipTaskbar: true,
-        alwaysOnTop: false,
+        alwaysOnTop: true,
         show: false,
         backgroundColor: '#00000000',
         title: 'Sigma Music',
@@ -648,7 +648,12 @@ export function createSigmaWindow() {
     });
 
     sigmaWindow.once('ready-to-show', () => {
-        if (sigmaWindow && !sigmaWindow.isDestroyed()) sigmaWindow.show();
+        if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+            // 浮层化：置顶 + 全屏应用/所有工作区可见（复刻 sigmarebase 面板始终在最前）
+            sigmaWindow.setAlwaysOnTop(true, 'screen-saver');
+            sigmaWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+            sigmaWindow.show();
+        }
     });
 
     sigmaWindow.on('closed', () => {
@@ -687,6 +692,46 @@ export function closeSigmaWindow() {
 
 export function getSigmaWindow() {
     return sigmaWindow;
+}
+
+// RSHIFT 全局热键（复刻 sigmarebase 的 ClickGui 开关）：
+// 已显示且聚焦 → 收起；否则无论之前在哪，都从右侧收起位播放"抽出"动画并置顶
+export function toggleSigmaWindowFromHotkey() {
+    let win = sigmaWindow;
+    if (!win || win.isDestroyed()) {
+        win = createSigmaWindow();
+        if (win && !win.isDestroyed()) {
+            win.show();
+            win.focus();
+            win.moveTop();
+        }
+        return;
+    }
+
+    if (win.isVisible() && win.isFocused()) {
+        win.hide();
+        return;
+    }
+
+    const bounds = win.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    const right = area.x + area.width;
+    const dockX = right - SIGMA_DOCK_VISIBLE;
+    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+
+    // 先隐藏并归位到右侧收起位，避免看到"瞬移"；再从收起位播放滑出动画
+    cancelSigmaAnimation();
+    if (win.isVisible()) {
+        win.hide();
+    }
+    setSigmaDocked(true);
+    win.setPosition(dockX, centerY);
+    win.setAlwaysOnTop(true, 'screen-saver');
+    win.show();
+    restoreSigmaWindow();
+    win.moveTop();
+    win.focus();
 }
 
 const getIconPath = (iconName, subPath = '') => path.join(
