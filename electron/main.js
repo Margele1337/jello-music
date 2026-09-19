@@ -1,7 +1,7 @@
 import { app, ipcMain, globalShortcut, dialog, Notification, shell, session, powerSaveBlocker, nativeImage, screen } from 'electron';
 import {
     createWindow, createTray, createTouchBar, startApiServer,
-    stopApiServer, startNeteaseApiServer, stopNeteaseApiServer,
+    stopApiServer,
     registerShortcut,
     createLyricsWindow, setThumbarButtons,
     registerProtocolHandler, sendHashAfterLoad, getTray,
@@ -127,7 +127,7 @@ if (!gotTheLock) {
 }
 
 app.on('ready', () => {
-    Promise.all([startApiServer(), startNeteaseApiServer()]).then(() => {
+    startApiServer().then(() => {
         try {
             mainWindow = createWindow();
             createTray(mainWindow);
@@ -222,8 +222,7 @@ app.on('before-quit', () => {
         customTrayMenuService.cleanup();
 
         stopApiServer();
-        stopNeteaseApiServer();
-        stopSpectrumFullscreenWatcher();
+                stopSpectrumFullscreenWatcher();
         apiService.stop();
         cleanupExtensions();
         app.exit(0);
