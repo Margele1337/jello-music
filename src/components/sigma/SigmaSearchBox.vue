@@ -118,21 +118,68 @@ const loadPlaylist = async (card) => {
 const showPlaylist = (id) => loadPlaylist({ id });
 
 // 左栏「每日推荐」：/everyday/recommend
+// 普通账号服务端默认给 30 首（会员 60）：先按 pagesize=60 + 翻页请求（需要 API 侧补丁透传参数），
+// 若服务端仍不给，再用「猜你喜欢」按 hash 去重补足
+const DAILY_TARGET_COUNT = 60;
+
+const toDailyCard = (song) => ({
+  type: 'song',
+  key: 'sn-' + song.hash,
+  hash: song.hash,
+  // 每日推荐是 ori_audio_name，猜你喜欢卡片是 songname
+  title: stripBrackets(song.ori_audio_name || song.songname || song.name),
+  artist: stripBrackets(song.author_name || song.author),
+  cover: (song.sizable_cover || song.cover || '').replace('{size}', '480') || artworkImg,
+  timelen: song.time_length || song.timelen || 0
+});
+
 const loadDailyRecommend = async () => {
   cards.value = [];
   try {
-    const response = await get('/everyday/recommend');
-    if (response?.status !== 1) return;
-    const songs = Array.isArray(response.data?.song_list) ? response.data.song_list : [];
-    cards.value = songs.map((song) => ({
-      type: 'song',
-      key: 'sn-' + song.hash,
-      hash: song.hash,
-      title: stripBrackets(song.ori_audio_name),
-      artist: stripBrackets(song.author_name),
-      cover: (song.sizable_cover || '').replace('{size}', '480') || artworkImg,
-      timelen: song.time_length || 0
-    })).filter((item) => item.hash);
+    const collected = [];
+    const seen = new Set();
+
+    // 1) 原生每日推荐（param 透传由 tools/patch-api.cjs 打补丁）
+    for (const page of [1, 2]) {
+      let list = [];
+      try {
+        const response = await get('/everyday/recommend', { pagesize: DAILY_TARGET_COUNT, page });
+        if (response?.status !== 1) break;
+        list = Array.isArray(response.data?.song_list) ? response.data.song_list : [];
+      } catch (error) {
+        console.warn('[SigmaSearchBox] 每日推荐请求失败:', error);
+        break;
+      }
+      if (!list.length) break;
+      const before = collected.length;
+      for (const song of list) {
+        if (!song?.hash || seen.has(song.hash)) continue;
+        seen.add(song.hash);
+        collected.push(song);
+      }
+      if (collected.length >= DAILY_TARGET_COUNT) break;
+      if (collected.length === before) break; // 没有新增，说明服务端不支持翻页
+    }
+    console.log(`[SigmaSearchBox] 每日推荐原生返回: ${collected.length} 首`);
+
+    // 2) 仍不足则用「猜你喜欢」补足
+    if (collected.length < DAILY_TARGET_COUNT) {
+      try {
+        const extra = await get(`/top/card?card_id=1&timestamp=${Date.now()}`);
+        const extraList = Array.isArray(extra?.data?.song_list) ? extra.data.song_list : [];
+        for (const song of extraList) {
+          if (collected.length >= DAILY_TARGET_COUNT) break;
+          if (!song?.hash || seen.has(song.hash)) continue;
+          seen.add(song.hash);
+          collected.push(song);
+        }
+        console.log(`[SigmaSearchBox] 补足后共: ${collected.length} 首`);
+      } catch (error) {
+        console.warn('[SigmaSearchBox] 补足每日推荐失败:', error);
+      }
+    }
+
+    cards.value = collected.map(toDailyCard).filter((item) => item.hash);
   } catch (error) {
     console.error('[SigmaSearchBox] 每日推荐加载失败:', error);
     cards.value = [];

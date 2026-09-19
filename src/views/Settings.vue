@@ -225,6 +225,7 @@ import { useSettingsConfig } from '@/config/settings';
 const MoeAuth = MoeAuthStore();
 const { t } = useI18n();
 const { proxy } = getCurrentInstance();
+const emit = defineEmits(['show-tutorial']);
 const appVersion = ref('');
 const platform = ref('');
 const activeTab = ref(0);
@@ -235,7 +236,8 @@ const {
     shortcutConfigs
 } = useSettingsConfig(t, {
     openShortcutSettings: () => openShortcutSettings(),
-    installPWA: () => installPWA()
+    installPWA: () => installPWA(),
+    showTutorial: () => emit('show-tutorial')
 });
 
 const createSelectedSettings = (sections) => {
@@ -498,6 +500,10 @@ const selectActions = {
     toggleDesktopSpectrum: (option) => {
         const action = option.value === 'on' ? 'display-spectrum' : 'close-spectrum';
         window.electron.ipcRenderer.send('desktop-spectrum-action', action);
+    },
+    toggleDesktopKeystrokes: (option) => {
+        const action = option.value === 'on' ? 'display-keystrokes' : 'close-keystrokes';
+        window.electron.ipcRenderer.send('desktop-keystrokes-action', action);
     },
     dispatchLoudnessNormalization: (option) => {
         window.dispatchEvent(new CustomEvent('loudness-normalization-change', {

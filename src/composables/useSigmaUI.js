@@ -9,8 +9,8 @@ const hashRoute = typeof window !== 'undefined'
   ? window.location.hash.replace(/^#\/?/, '').split('?')[0]
   : '';
 const isSigmaWindow = hashRoute === 'sigma';
-// 桌面歌词/频谱等辅助窗口不触发打开 Sigma 窗口
-const isAuxWindow = hashRoute === 'lyrics' || hashRoute === 'spectrum-hud';
+// 桌面歌词/频谱/按键显示等辅助窗口不触发打开 Sigma 窗口
+const isAuxWindow = hashRoute === 'lyrics' || hashRoute === 'spectrum-hud' || hashRoute === 'keystrokes';
 
 // 兼容旧调用：不再支持退出 Sigma 模式
 const setSigmaUI = () => {

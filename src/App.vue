@@ -15,7 +15,7 @@ import { applyColorTheme, applyCustomFont } from '@/utils/utils';
 import logoImageSrc from '@/assets/images/tray/tray-icon@2x.png?url';
 
 const route = useRoute();
-const isLyricsRoute = computed(() => route.path === '/lyrics' || route.path === '/spectrum-hud' || route.path === '/sigma');
+const isLyricsRoute = computed(() => route.path === '/lyrics' || route.path === '/spectrum-hud' || route.path === '/sigma' || route.path === '/keystrokes');
 // 触发 useSigmaUI 初始化（主窗口启动时打开 Sigma 窗口）
 useSigmaUI();
 

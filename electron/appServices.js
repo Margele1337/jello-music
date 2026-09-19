@@ -131,6 +131,10 @@ export function createWindow() {
     if (savedConfig?.desktopSpectrum === 'on') {
         createSpectrumWindow();
     }
+
+    if (savedConfig?.desktopKeystrokes === 'on') {
+        createKeystrokesWindow();
+    }
     return mainWindow;
 }
 
@@ -382,6 +386,82 @@ export function createSpectrumWindow() {
     spectrumWindow.setBackgroundColor('#00000000');
 }
 
+// KeyStrokes 覆盖层（1:1 复刻 sigmarebase KeyStrokes：左下角 x=10，窗口 160x252）
+let keystrokesWindow = null;
+
+export function createKeystrokesWindow() {
+    if (keystrokesWindow && !keystrokesWindow.isDestroyed()) {
+        keystrokesWindow.show();
+        return keystrokesWindow;
+    }
+
+    const width = 170;
+    const height = 260;
+
+    keystrokesWindow = new BrowserWindow({
+        width,
+        height,
+        x: 0,
+        y: 0,
+        frame: false,
+        transparent: true,
+        resizable: false,
+        movable: false,
+        focusable: false,
+        skipTaskbar: true,
+        hasShadow: false,
+        alwaysOnTop: true,
+        show: false,
+        backgroundColor: '#00000000',
+        title: 'KeyStrokes',
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.cjs'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: false,
+            webSecurity: false,
+            allowRunningInsecureContent: true,
+            backgroundThrottling: false,
+            zoomFactor: 1.0
+        }
+    });
+
+    // 鼠标穿透 + 置于所有窗口之上（HUD）
+    keystrokesWindow.setIgnoreMouseEvents(true, { forward: true });
+    keystrokesWindow.setAlwaysOnTop(true, 'screen-saver');
+    keystrokesWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    keystrokesWindow.setBackgroundColor('#00000000');
+
+    keystrokesWindow.once('ready-to-show', () => {
+        if (keystrokesWindow && !keystrokesWindow.isDestroyed()) keystrokesWindow.show();
+    });
+
+    keystrokesWindow.on('closed', () => {
+        keystrokesWindow = null;
+    });
+
+    if (isDev) {
+        keystrokesWindow.loadURL('http://localhost:8080/#/keystrokes');
+    } else {
+        keystrokesWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
+            hash: 'keystrokes'
+        });
+    }
+
+    return keystrokesWindow;
+}
+
+export function closeKeystrokesWindow() {
+    if (keystrokesWindow && !keystrokesWindow.isDestroyed()) {
+        keystrokesWindow.close();
+    }
+    keystrokesWindow = null;
+}
+
+export function getKeystrokesWindow() {
+    return keystrokesWindow;
+}
+
 // Sigma UI 独立透明窗口（固定 800x600，背景可透到应用后面）
 let sigmaWindow = null;
 let sigmaWindowLoaded = false;
@@ -631,7 +711,7 @@ export function createSigmaWindow() {
         transparent: true,
         hasShadow: false,
         skipTaskbar: true,
-        alwaysOnTop: true,
+        alwaysOnTop: false,
         show: false,
         backgroundColor: '#00000000',
         title: 'Sigma Music',
@@ -649,9 +729,6 @@ export function createSigmaWindow() {
 
     sigmaWindow.once('ready-to-show', () => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            // 浮层化：置顶 + 全屏应用/所有工作区可见（复刻 sigmarebase 面板始终在最前）
-            sigmaWindow.setAlwaysOnTop(true, 'screen-saver');
-            sigmaWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
             sigmaWindow.show();
         }
     });
@@ -694,16 +771,28 @@ export function getSigmaWindow() {
     return sigmaWindow;
 }
 
+// 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）
+export const raiseSigmaWindow = (win) => {
+    if (!win || win.isDestroyed()) return;
+    win.setAlwaysOnTop(true, 'screen-saver');
+    win.show();
+    win.moveTop();
+    win.focus();
+    setTimeout(() => {
+        if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+            sigmaWindow.setAlwaysOnTop(false);
+        }
+    }, 600);
+};
+
 // RSHIFT 全局热键（复刻 sigmarebase 的 ClickGui 开关）：
-// 已显示且聚焦 → 收起；否则无论之前在哪，都从右侧收起位播放"抽出"动画并置顶
+// 已显示且聚焦 → 收起；否则无论之前在哪，都从右侧收起位播放"抽出"动画并临时置顶
 export function toggleSigmaWindowFromHotkey() {
     let win = sigmaWindow;
     if (!win || win.isDestroyed()) {
         win = createSigmaWindow();
         if (win && !win.isDestroyed()) {
-            win.show();
-            win.focus();
-            win.moveTop();
+            raiseSigmaWindow(win);
         }
         return;
     }
@@ -727,11 +816,8 @@ export function toggleSigmaWindowFromHotkey() {
     }
     setSigmaDocked(true);
     win.setPosition(dockX, centerY);
-    win.setAlwaysOnTop(true, 'screen-saver');
-    win.show();
+    raiseSigmaWindow(win);
     restoreSigmaWindow();
-    win.moveTop();
-    win.focus();
 }
 
 const getIconPath = (iconName, subPath = '') => path.join(
@@ -744,13 +830,31 @@ export function getTray() {
     return tray;
 }
 
-// 打开设置：Sigma 窗口开着就在 Sigma 窗口内显示设置页，否则用主窗口
+// 显示并提到最前；若处于贴边收起/屏幕外，先播放滑出动画
+export const revealSigmaWindow = (win = sigmaWindow) => {
+    if (!win || win.isDestroyed()) return false;
+    const bounds = win.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    const right = area.x + area.width;
+    if (sigmaDocked || bounds.x + bounds.width > right + 1) {
+        if (!sigmaDocked) {
+            const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+            win.setPosition(right - SIGMA_DOCK_VISIBLE, centerY);
+            setSigmaDocked(true);
+        }
+        restoreSigmaWindow();
+    }
+    raiseSigmaWindow(win);
+    return true;
+};
+
+// 打开设置：Sigma 窗口已加载就始终用它（隐藏/贴边收起都会自动呼出），否则回退主窗口转发
 // 返回是否由 Sigma 窗口接收（未就绪时由调用方决定是否记为 pending）
 export function openSettingsWindow(mainWindow) {
-    const sigmaReady = sigmaWindowLoaded && sigmaWindow && !sigmaWindow.isDestroyed() && sigmaWindow.isVisible();
-    if (sigmaReady) {
-        sigmaWindow.show();
-        sigmaWindow.focus();
+    const sigmaExists = sigmaWindowLoaded && sigmaWindow && !sigmaWindow.isDestroyed();
+    if (sigmaExists) {
+        revealSigmaWindow(sigmaWindow);
         sigmaWindow.webContents.send('open-settings');
         return true;
     }
@@ -795,8 +899,7 @@ export function createTray(mainWindow, title = '') {
                 if (win.isVisible()) {
                     win.hide();
                 } else {
-                    win.show();
-                    win.focus();
+                    revealSigmaWindow(win);
                 }
             }
         },
@@ -890,19 +993,11 @@ export function createTray(mainWindow, title = '') {
         // 左键单击托盘：显示 Sigma 窗口（主窗口只作为隐藏播放宿主，不再显示）
         tray.on('click', () => {
             customTrayMenuService.hide();
-            const win = createSigmaWindow();
-            if (win && !win.isDestroyed()) {
-                win.show();
-                win.focus();
-            }
+            revealSigmaWindow(createSigmaWindow());
         });
         tray.on('double-click', () => {
             customTrayMenuService.hide();
-            const win = createSigmaWindow();
-            if (win && !win.isDestroyed()) {
-                win.show();
-                win.focus();
-            }
+            revealSigmaWindow(createSigmaWindow());
         });
     }
     return tray;
@@ -1171,8 +1266,7 @@ export function registerShortcut() {
             if (win.isVisible()) {
                 win.hide();
             } else {
-                win.show();
-                win.focus();
+                revealSigmaWindow(win);
             }
         }
         if (settings?.shortcuts?.mainWindow) {
@@ -1367,10 +1461,7 @@ export function registerProtocolHandler(mainWindow) {
     if (protocolMainWindow.isMinimized()) protocolMainWindow.restore();
     // 主窗口是隐藏播放宿主：把 Sigma 窗口带到前台
     const sigmaWin = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
-    if (sigmaWin && !sigmaWin.isDestroyed()) {
-        sigmaWin.show();
-        sigmaWin.focus();
-    }
+    revealSigmaWindow(sigmaWin);
             handleArgv(commandLine);
         }
     });
