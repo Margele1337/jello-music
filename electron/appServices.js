@@ -18,7 +18,6 @@ const store = new Store();
 const { TouchBarLabel, TouchBarButton, TouchBarGroup, TouchBarSpacer } = TouchBar;
 let mainWindow = null;
 let apiProcess = null;
-let neteaseApiProcess = null;
 let tray = null;
 
 // 创建主窗口
@@ -1195,75 +1194,6 @@ export function stopApiServer() {
     if (apiProcess) {
         process.kill(apiProcess.pid, 'SIGKILL');
         apiProcess = null;
-    }
-}
-
-// 启动网易云 API 服务器
-export function startNeteaseApiServer() {
-    return new Promise((resolve, reject) => {
-        if (isDev) {
-            // 开发模式下由 npm run api-netease 处理
-            return resolve();
-        }
-
-        const apiPath = path.join(process.resourcesPath, '../api-netease', 'start.js');
-
-    if (!fs.existsSync(apiPath)) {
-        // 网易云 API 是可选的附加组件（仓库不含该目录），缺失不影响酷狗主 API
-        log.warn(`网易云 API 入口文件未找到（可选组件，跳过）：${apiPath}`);
-        resolve();
-        return;
-        }
-
-        log.info(`网易云 API 路径: ${apiPath}`);
-
-        const savedConfig = store.get('settings') || {};
-        const proxy = savedConfig?.proxy;
-        const proxyUrl = savedConfig?.proxyUrl;
-
-        const env = { ...process.env };
-        if (proxy === 'on' && proxyUrl) {
-            env.PROXY_URL = String(proxyUrl).trim();
-            env.ENABLE_PROXY = 'true';
-        }
-
-        neteaseApiProcess = spawn('node', [apiPath, '--port=6522'], {
-            windowsHide: true,
-            env,
-        });
-
-        neteaseApiProcess.stdout.on('data', (data) => {
-            log.info(`网易云 API 输出: ${data}`);
-            if (data.toString().includes('running')) {
-                console.log('网易云 API 服务器已启动');
-                resolve();
-            }
-        });
-
-        neteaseApiProcess.stderr.on('data', (data) => {
-            log.error(`网易云 API 错误: ${data}`);
-        });
-
-        neteaseApiProcess.on('close', (code) => {
-            log.info(`网易云 API 关闭，退出码: ${code}`);
-        });
-
-        neteaseApiProcess.on('error', (error) => {
-            log.error('启动网易云 API 失败:', error);
-            // 非致命错误
-            resolve();
-        });
-
-        // 超时保护
-        setTimeout(() => resolve(), 5000);
-    });
-}
-
-// 停止网易云 API 服务器
-export function stopNeteaseApiServer() {
-    if (neteaseApiProcess) {
-        process.kill(neteaseApiProcess.pid, 'SIGKILL');
-        neteaseApiProcess = null;
     }
 }
 
