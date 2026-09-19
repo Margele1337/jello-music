@@ -40,6 +40,7 @@
       "repo": "jello-music"
     },
     "compression": "normal",
+    "npmRebuild": false,
     "extraResources": [
       {
         "from": "build/icons/",
