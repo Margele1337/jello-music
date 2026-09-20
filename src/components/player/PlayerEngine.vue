@@ -431,9 +431,11 @@ let spectrumEnabled = false;
 
 // 第二形态（Sigma 原版）：sigmarebase 的 visualizerData 最多保留 18 帧，
 // 平滑目标取 get(0)（最旧那一帧），且每解码一个 MP3 帧才推入一帧
-// （1152 采样 @44.1kHz ≈ 26ms），所以延迟约 18 × 26ms ≈ 0.47s，上升下降比默认形态慢而稳。
-const SPECTRUM_SIGMA_QUEUE_MAX = 18;
-const SPECTRUM_SIGMA_PUSH_MS = 26;
+// （1152 采样 @44.1kHz ≈ 26ms）→ 目标延迟约 18 × 26ms ≈ 0.47s。
+// 我们的生产者定时器是 16ms 一跳，推入节奏只能落在 16/32/48ms，取 32ms（最接近 26ms），
+// 队列长度相应取 15，使延迟同样是 ~0.48s（观感与原生一致）。
+const SPECTRUM_SIGMA_QUEUE_MAX = 15;
+const SPECTRUM_SIGMA_PUSH_MS = 32;
 let spectrumMode = 'default';
 const sigmaQueue = [];
 let sigmaPushLast = 0;
