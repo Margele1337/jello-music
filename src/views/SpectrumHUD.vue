@@ -131,6 +131,55 @@ const draw = (now = performance.now()) => {
 
   const barWidth = w / BAR_COUNT
   const maxHeight = h * 0.85 // 条形最高到窗口 85% 高度
+
+  if (spectrumMode === 'sigma') {
+    // ===== 第二形态：1:1 复刻 sigmarebase renderSpectrum =====
+    // 条宽 ceil(窗口宽 / 114)，条高 (sqrt(幅度)/12 - 5) × 窗口高/1080（绝对像素，不归一化）
+    const dprScale = dpr
+    const cssHeight = h / dprScale
+    const heightRatio = cssHeight / 1080
+    const sigmaBarWidth = Math.ceil(w / BAR_COUNT)
+
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const refHeight = Math.sqrt(levels[i]) / 12 - 5
+      const height = Math.max(0, refHeight) * heightRatio * spectrumScale
+      heights[i] = Math.min(h, height * dprScale)
+    }
+
+    // 1) 灰色底条 MID_GREY #999999，alpha = 0.2 × alphaValue（左→右渐隐）
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const x = i * sigmaBarWidth
+      if (x >= w) break
+      ctx.fillStyle = barStyles[i]
+      ctx.fillRect(x, h - heights[i], sigmaBarWidth, heights[i])
+    }
+
+    // 2) 主条 LIGHT_GREYISH_BLUE #FEFEFE（原版不透明实心）
+    ctx.fillStyle = '#FEFEFE'
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const x = i * sigmaBarWidth
+      if (x >= w) break
+      ctx.fillRect(x, h - heights[i], sigmaBarWidth, heights[i])
+    }
+
+    // 3) 封面图整屏叠加 alpha 0.4，仅裁剪在条形内（对应原版 stencil）
+    if (blurredCover) {
+      ctx.save()
+      ctx.beginPath()
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const x = i * sigmaBarWidth
+        if (x >= w) break
+        ctx.rect(x, h - heights[i], sigmaBarWidth, heights[i])
+      }
+      ctx.clip()
+      ctx.globalAlpha = 0.4
+      ctx.drawImage(blurredCover, 0, 0, w, h)
+      ctx.globalAlpha = 1
+      ctx.restore()
+    }
+    return
+  }
+
   for (let i = 0; i < BAR_COUNT; i++) {
     // sigmarebase renderSpectrum：height = (sqrt(amplitude) / 12 - 5)，按参考上限归一化后映射到窗口高度
     const refHeight = Math.max(0, Math.sqrt(levels[i]) / 12 - 5)
