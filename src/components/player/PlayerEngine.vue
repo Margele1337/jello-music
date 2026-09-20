@@ -430,11 +430,10 @@ let spectrumEnabled = false;
 // 第二形态（Sigma 原版）：sigmarebase 的 visualizerData 最多保留 18 帧，
 // 平滑目标取 get(0)（最旧那一帧），且每解码一个 MP3 帧才推入一帧
 // （1152 采样 @44.1kHz ≈ 26ms）→ 目标延迟约 18 × 26ms ≈ 0.47s。
-// 我们的生产者定时器是 16ms 一跳，推入节奏只能落在 16/32/48ms，取 32ms（最接近 26ms），
-// 队列长度相应取 15，使延迟同样是 ~0.48s（观感与原生一致）。
-const SPECTRUM_SIGMA_QUEUE_MAX = 15;
+// 生产者定时器 16ms 一跳，推入节奏取 32ms，队列长度按设置的延迟换算（默认 470ms ≈ 15 帧）。
 const SPECTRUM_SIGMA_PUSH_MS = 32;
 let spectrumMode = 'default';
+let spectrumSigmaDelayMs = 470;
 const sigmaQueue = [];
 let sigmaPushLast = 0;
 
@@ -443,12 +442,17 @@ const resetSigmaQueue = () => {
     sigmaPushLast = 0;
 };
 
+const sigmaQueueMax = () => Math.max(1, Math.round(spectrumSigmaDelayMs / SPECTRUM_SIGMA_PUSH_MS));
+
 const syncSpectrumSetting = (settings) => {
     const config = settings || JSON.parse(localStorage.getItem('settings') || '{}');
     spectrumEnabled = config?.desktopSpectrum === 'on';
     const nextMode = config?.spectrumMode === 'sigma' ? 'sigma' : 'default';
-    if (nextMode !== spectrumMode) {
+    const nextDelay = Number.parseFloat(config?.spectrumSigmaDelay ?? '470');
+    const delayChanged = Number.isFinite(nextDelay) && nextDelay !== spectrumSigmaDelayMs;
+    if (nextMode !== spectrumMode || delayChanged) {
         spectrumMode = nextMode;
+        if (Number.isFinite(nextDelay)) spectrumSigmaDelayMs = nextDelay;
         resetSigmaQueue();
     }
 };
@@ -500,10 +504,11 @@ const startSpectrumProducer = () => {
         //   放在这里会因隐藏窗口定时器被节流导致 dt 变大、alpha 被截成 1 而变成瞬间跳变）
         let targets = spectrumRaw;
         if (spectrumMode === 'sigma') {
-            if (playing.value && now - sigmaPushLast >= SPECTRUM_SIGMA_PUSH_MS) {
+            if (spectrumSigmaDelayMs > 0 && playing.value && now - sigmaPushLast >= SPECTRUM_SIGMA_PUSH_MS) {
                 sigmaPushLast = now;
                 sigmaQueue.push(Float32Array.from(spectrumRaw));
-                if (sigmaQueue.length > SPECTRUM_SIGMA_QUEUE_MAX) sigmaQueue.shift();
+                const max = sigmaQueueMax();
+                if (sigmaQueue.length > max) sigmaQueue.shift();
             }
             targets = sigmaQueue.length ? sigmaQueue[0] : spectrumRaw;
         }
