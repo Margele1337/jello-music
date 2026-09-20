@@ -190,6 +190,19 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: '频谱幅度'
             },
             {
+                key: 'spectrumMode',
+                defaultValue: 'default',
+                defaultDisplayText: '默认',
+                itemIcon: 'fas fa-chart-bar',
+                selectionTitle: '频谱形态',
+                options: [
+                    { displayText: '默认（灵敏）', value: 'default' },
+                    { displayText: 'Sigma 原版（18 帧延迟，慢而稳）', value: 'sigma' }
+                ],
+                available: 'client',
+                label: '频谱形态'
+            },
+            {
                 key: 'desktopLyricsFont',
                 defaultValue: '',
                 defaultDisplayText: t('mo-ren-zi-ti'),

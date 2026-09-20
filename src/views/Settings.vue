@@ -619,7 +619,7 @@ const saveSettings = () => {
     if (isElectron()) {
         window.electron.ipcRenderer.send('save-settings', JSON.parse(JSON.stringify(settingsToSave)));
         // 实时通知频谱窗口
-        for (const key of ['spectrumLocked', 'spectrumScale']) {
+        for (const key of ['spectrumLocked', 'spectrumScale', 'spectrumMode']) {
             if (key in settingsToSave) {
                 window.electron.ipcRenderer.send('spectrum-setting-update', { key, value: settingsToSave[key] });
             }
