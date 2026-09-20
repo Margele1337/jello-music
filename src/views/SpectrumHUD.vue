@@ -35,6 +35,9 @@ for (let i = 0; i < BAR_COUNT; i++) {
 let lastDrawTime = 0
 let raf = null
 let spectrumScale = 1
+// 频谱形态：'default' 当前帧（灵敏）；'sigma' 第二形态（18 帧延迟 + 分步更新，慢而稳）
+// sigma 形态下暂停时的回落由生产者按同一平滑系数完成，这里不再叠加自身衰减
+let spectrumMode = 'default'
 
 // 封面图（用于频谱条内叠加，模拟 sigmarebase 的模糊封面 + stencil 裁剪效果）
 let coverImage = null
@@ -120,8 +123,8 @@ const draw = (now = performance.now()) => {
   const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 16.67
   lastDrawTime = now
 
-  // 未播放时让条形逐渐回落到零
-  if (!playing.value) {
+  // 未播放时让条形逐渐回落到零（Sigma 形态由生产者负责回落，避免双重衰减）
+  if (!playing.value && spectrumMode !== 'sigma') {
     const decay = Math.pow(IDLE_DECAY, dt / 16.67)
     for (let i = 0; i < BAR_COUNT; i++) levels[i] *= decay
   }
@@ -189,12 +192,15 @@ onMounted(() => {
       applyLock()
     } else if (key === 'spectrumScale') {
       spectrumScale = parseFloat(value) || 1
+    } else if (key === 'spectrumMode') {
+      spectrumMode = value === 'sigma' ? 'sigma' : 'default'
     }
   })
 
   const settings = JSON.parse(localStorage.getItem('settings') || '{}')
   locked.value = settings?.spectrumLocked !== 'off'
   spectrumScale = parseFloat(settings?.spectrumScale || '1.0') || 1
+  spectrumMode = settings?.spectrumMode === 'sigma' ? 'sigma' : 'default'
 
   applyLock()
   draw()

@@ -419,6 +419,7 @@ const createSpectrumFft = (size) => {
 };
 
 const spectrumLevels = new Float32Array(SPECTRUM_BAR_COUNT);
+const spectrumRaw = new Float32Array(SPECTRUM_BAR_COUNT);
 const spectrumSamples = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumReal = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumImag = new Float32Array(SPECTRUM_FFT_SIZE);
@@ -428,9 +429,28 @@ let spectrumLastFrame = 0;
 let spectrumMetaKey = '';
 let spectrumEnabled = false;
 
+// 第二形态（Sigma 原版）：sigmarebase 的 visualizerData 最多保留 18 帧，
+// 平滑目标取 get(0)（最旧那一帧），且每解码一个 MP3 帧才推入一帧
+// （1152 采样 @44.1kHz ≈ 26ms），所以延迟约 18 × 26ms ≈ 0.47s，上升下降比默认形态慢而稳。
+const SPECTRUM_SIGMA_QUEUE_MAX = 18;
+const SPECTRUM_SIGMA_PUSH_MS = 26;
+let spectrumMode = 'default';
+const sigmaQueue = [];
+let sigmaPushLast = 0;
+
+const resetSigmaQueue = () => {
+    sigmaQueue.length = 0;
+    sigmaPushLast = 0;
+};
+
 const syncSpectrumSetting = (settings) => {
     const config = settings || JSON.parse(localStorage.getItem('settings') || '{}');
     spectrumEnabled = config?.desktopSpectrum === 'on';
+    const nextMode = config?.spectrumMode === 'sigma' ? 'sigma' : 'default';
+    if (nextMode !== spectrumMode) {
+        spectrumMode = nextMode;
+        resetSigmaQueue();
+    }
 };
 syncSpectrumSetting();
 
@@ -439,22 +459,33 @@ const startSpectrumProducer = () => {
     // 用定时器而非 requestAnimationFrame：主窗口最小化后不再产生渲染帧，rAF 会停止导致频谱冻结
     const loop = () => {
         const now = performance.now();
+        const dt = spectrumLastFrame > 0 ? Math.min((now - spectrumLastFrame) / 1000, 0.1) : 1 / 60;
+        spectrumLastFrame = now;
 
-        // 与 sigmarebase 一致：仅在播放且开启时更新幅度，暂停时由频谱窗口自行衰减
-        if (!spectrumEnabled || !playing.value) {
-            spectrumLastFrame = now;
-            return;
-        }
+        if (!spectrumEnabled) return;
+        // 默认形态暂停时由频谱窗口自行衰减；Sigma 形态要继续平滑到 0（否则条形会停在原地）
+        if (!playing.value && spectrumMode !== 'sigma') return;
 
         const analyser = analyserNode.value;
         if (!analyser) { ensureAnalyser(); return; }
 
-        // 复刻 JavaFFT + MathHelper.calculateAmplitudes：直接对原始 PCM 采样做 FFT（换算回 16bit 量纲）
-        analyser.getFloatTimeDomainData(spectrumSamples);
-        const elementVolume = audio.muted || audio.volume <= 0 ? 1 : audio.volume;
-        const sampleScale = 32768 / elementVolume;
-        for (let i = 0; i < SPECTRUM_FFT_SIZE; i++) spectrumSamples[i] *= sampleScale;
-        spectrumFft(spectrumSamples, spectrumReal, spectrumImag);
+        if (playing.value) {
+            // 复刻 JavaFFT + MathHelper.calculateAmplitudes：直接对原始 PCM 采样做 FFT（换算回 16bit 量纲）
+            analyser.getFloatTimeDomainData(spectrumSamples);
+            const elementVolume = audio.muted || audio.volume <= 0 ? 1 : audio.volume;
+            const sampleScale = 32768 / elementVolume;
+            for (let i = 0; i < SPECTRUM_FFT_SIZE; i++) spectrumSamples[i] *= sampleScale;
+            spectrumFft(spectrumSamples, spectrumReal, spectrumImag);
+            for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
+                const re = spectrumReal[i];
+                const im = spectrumImag[i];
+                spectrumRaw[i] = Math.sqrt(re * re + im * im);
+            }
+        } else {
+            spectrumRaw.fill(0);
+            // sigmarebase 暂停时会清空 visualizerData：队列一起清掉，恢复播放时从 0 平滑上来
+            resetSigmaQueue();
+        }
 
         // 检测切歌：重置频谱数据，避免旧歌幅度残影
         const song = currentSong.value;
@@ -463,17 +494,24 @@ const startSpectrumProducer = () => {
         if (songChanged) {
             spectrumMetaKey = metaKey;
             spectrumLevels.fill(0);
+            resetSigmaQueue();
+        }
+
+        // Sigma 形态：按音频节奏推入队列，目标取最旧的一帧；默认形态直接用当前帧
+        let targets = spectrumRaw;
+        if (spectrumMode === 'sigma') {
+            if (playing.value && now - sigmaPushLast >= SPECTRUM_SIGMA_PUSH_MS) {
+                sigmaPushLast = now;
+                sigmaQueue.push(Float32Array.from(spectrumRaw));
+                if (sigmaQueue.length > SPECTRUM_SIGMA_QUEUE_MAX) sigmaQueue.shift();
+            }
+            targets = sigmaQueue.length ? sigmaQueue[0] : spectrumRaw;
         }
 
         // sigmarebase 帧率补偿平滑：alpha = min(0.335 * (60 / fps), 1)
-        const dt = spectrumLastFrame > 0 ? Math.min((now - spectrumLastFrame) / 1000, 0.1) : 1 / 60;
-        spectrumLastFrame = now;
         const alpha = Math.min(SPECTRUM_SMOOTHING * 60 * dt, 1);
-
         for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
-            const re = spectrumReal[i];
-            const im = spectrumImag[i];
-            const target = Math.sqrt(re * re + im * im);
+            const target = targets[i] || 0;
             spectrumLevels[i] = Math.min(SPECTRUM_MAX_AMPLITUDE, Math.max(0, spectrumLevels[i] + (target - spectrumLevels[i]) * alpha));
         }
 
