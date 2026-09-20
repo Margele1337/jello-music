@@ -418,14 +418,12 @@ const createSpectrumFft = (size) => {
     };
 };
 
-const spectrumLevels = new Float32Array(SPECTRUM_BAR_COUNT);
 const spectrumRaw = new Float32Array(SPECTRUM_BAR_COUNT);
 const spectrumSamples = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumReal = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumImag = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumFft = createSpectrumFft(SPECTRUM_FFT_SIZE);
 let spectrumTimer = null;
-let spectrumLastFrame = 0;
 let spectrumMetaKey = '';
 let spectrumEnabled = false;
 
@@ -461,8 +459,6 @@ const startSpectrumProducer = () => {
     // 用定时器而非 requestAnimationFrame：主窗口最小化后不再产生渲染帧，rAF 会停止导致频谱冻结
     const loop = () => {
         const now = performance.now();
-        const dt = spectrumLastFrame > 0 ? Math.min((now - spectrumLastFrame) / 1000, 0.1) : 1 / 60;
-        spectrumLastFrame = now;
 
         if (!spectrumEnabled) return;
         // 默认形态暂停时由频谱窗口自行衰减；Sigma 形态要继续平滑到 0（否则条形会停在原地）
@@ -495,11 +491,13 @@ const startSpectrumProducer = () => {
         const songChanged = metaKey !== spectrumMetaKey;
         if (songChanged) {
             spectrumMetaKey = metaKey;
-            spectrumLevels.fill(0);
             resetSigmaQueue();
         }
 
         // Sigma 形态：按音频节奏推入队列，目标取最旧的一帧；默认形态直接用当前帧
+        // 注意：这里只发原始幅度，平滑由频谱窗口在自己的渲染循环里做
+        // （复刻 sigmarebase 在 onRender2D 里更新 amplitudes 的结构；
+        //   放在这里会因隐藏窗口定时器被节流导致 dt 变大、alpha 被截成 1 而变成瞬间跳变）
         let targets = spectrumRaw;
         if (spectrumMode === 'sigma') {
             if (playing.value && now - sigmaPushLast >= SPECTRUM_SIGMA_PUSH_MS) {
@@ -510,15 +508,9 @@ const startSpectrumProducer = () => {
             targets = sigmaQueue.length ? sigmaQueue[0] : spectrumRaw;
         }
 
-        // sigmarebase 帧率补偿平滑：alpha = min(0.335 * (60 / fps), 1)
-        const alpha = Math.min(SPECTRUM_SMOOTHING * 60 * dt, 1);
-        for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
-            const target = targets[i] || 0;
-            spectrumLevels[i] = Math.min(SPECTRUM_MAX_AMPLITUDE, Math.max(0, spectrumLevels[i] + (target - spectrumLevels[i]) * alpha));
-        }
-
-        const payload = { levels: spectrumLevels };
+        const payload = { levels: targets };
         if (songChanged) {
+            payload.reset = true;
             payload.cover = song?.img || '';
             payload.title = song?.name || '';
             payload.author = song?.author || '';

@@ -16,6 +16,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const BAR_COUNT = 114            // 与 sigmarebase renderSpectrum 的 maxWidth 一致
 const MAX_REF_HEIGHT = Math.sqrt(2.256e7) / 12 - 5 // sigmarebase 幅度上限对应的条高，用于把参考算法映射到窗口高度
+const SPECTRUM_SMOOTHING = 0.335 // sigmarebase 60fps 平滑系数（onRender2D 里更新 amplitudes）
 const IDLE_DECAY = 0.92          // 未播放时每帧衰减
 
 const canvasRef = ref(null)
@@ -27,6 +28,7 @@ const locked = ref(true)
 
 // 非响应式频谱数据，避免高频 IPC 触发 Vue 响应式开销
 const levels = new Float32Array(BAR_COUNT)
+const targets = new Float32Array(BAR_COUNT)   // 生产者发来的原始幅度（Sigma 形态的平滑目标）
 const heights = new Float32Array(BAR_COUNT)
 const barStyles = new Array(BAR_COUNT)
 for (let i = 0; i < BAR_COUNT; i++) {
@@ -129,6 +131,17 @@ const draw = (now = performance.now()) => {
     for (let i = 0; i < BAR_COUNT; i++) levels[i] *= decay
   }
 
+  // ===== Sigma 形态的平滑：复刻 sigmarebase 在 onRender2D 里更新 amplitudes =====
+  // amplitudes[i] = amplitudes[i] - (amplitudes[i] - target[i]) * min(0.335 * (60 / fps), 1)
+  // 用指数形式做帧率补偿（1 - (1-0.335)^(dt*60)），等价于原版公式但不会在低刷新率下被截断成 1
+  if (spectrumMode === 'sigma') {
+    const alpha = 1 - Math.pow(1 - SPECTRUM_SMOOTHING, (dt / 16.67))
+    for (let i = 0; i < BAR_COUNT; i++) {
+      const next = levels[i] + (targets[i] - levels[i]) * alpha
+      levels[i] = Math.max(0, Math.min(2.256e7, next))
+    }
+  }
+
   const barWidth = w / BAR_COUNT
   const maxHeight = h * 0.85 // 条形最高到窗口 85% 高度
 
@@ -223,7 +236,14 @@ onMounted(() => {
     if (data.levels && data.levels.length) {
       const incoming = data.levels
       const count = Math.min(BAR_COUNT, incoming.length)
-      for (let i = 0; i < count; i++) levels[i] = incoming[i] || 0
+      for (let i = 0; i < count; i++) targets[i] = incoming[i] || 0
+      if (data.reset) {
+        levels.fill(0)
+      }
+      // 默认形态：即时变化；Sigma 形态：交给渲染循环按原版系数平滑逼近 targets
+      if (spectrumMode !== 'sigma') {
+        for (let i = 0; i < count; i++) levels[i] = targets[i]
+      }
     }
     if (data.cover != null && data.cover !== cover.value) {
       cover.value = data.cover
