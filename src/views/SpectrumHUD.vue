@@ -40,10 +40,14 @@ let spectrumScale = 1
 // 频谱形态：'default' 当前帧（灵敏）；'sigma' 第二形态（18 帧延迟 + 分步更新，慢而稳）
 // sigma 形态下暂停时的回落由生产者按同一平滑系数完成，这里不再叠加自身衰减
 let spectrumMode = 'default'
+// 平滑系数可调（默认即 sigmarebase 的 0.335）
+let spectrumSmoothing = SPECTRUM_SMOOTHING
 
 // 封面图（用于频谱条内叠加，模拟 sigmarebase 的模糊封面 + stencil 裁剪效果）
 let coverImage = null
 let blurredCover = null
+// Sigma 形态专用：sigmarebase 把封面 applyBlur(15) 后裁出底部 20% 那条当叠加图
+let blurredCoverStrip = null
 
 let coverLoadToken = 0
 
@@ -53,6 +57,7 @@ const loadCover = (url) => {
     coverLoadToken++
     coverImage = null
     blurredCover = null
+    blurredCoverStrip = null
     return
   }
   if (url === coverImage?.src) return
@@ -60,6 +65,7 @@ const loadCover = (url) => {
   // 切歌立即清除旧封面，避免旧模糊封面残留在频谱条上（背景残影）
   coverImage = null
   blurredCover = null
+  blurredCoverStrip = null
   const img = new Image()
   img.crossOrigin = 'anonymous'
   img.onload = () => {
@@ -72,17 +78,28 @@ const loadCover = (url) => {
       c.width = w
       c.height = h
       const bctx = c.getContext('2d')
-      bctx.filter = 'blur(10px)'
+      // sigmarebase processVideoThumbnail: ImageUtil.applyBlur(buffImage, 15)
+      bctx.filter = 'blur(15px)'
       bctx.drawImage(img, 0, 0, w, h)
       blurredCover = c
+      // 再裁出底部 20% 作为频谱条叠加图（原版 getSubimage(0, 0.75h, w, 0.2h)）
+      const stripHeight = Math.max(1, Math.round(h * 0.2))
+      const strip = document.createElement('canvas')
+      strip.width = w
+      strip.height = stripHeight
+      const sctx = strip.getContext('2d')
+      sctx.drawImage(c, 0, Math.round(h * 0.75), w, stripHeight, 0, 0, w, stripHeight)
+      blurredCoverStrip = strip
     } catch (e) {
       blurredCover = null
+      blurredCoverStrip = null
     }
   }
   img.onerror = () => {
     if (token !== coverLoadToken) return
     coverImage = null
     blurredCover = null
+    blurredCoverStrip = null
   }
   img.src = url
 }
@@ -135,7 +152,7 @@ const draw = (now = performance.now()) => {
   // amplitudes[i] = amplitudes[i] - (amplitudes[i] - target[i]) * min(0.335 * (60 / fps), 1)
   // 用指数形式做帧率补偿（1 - (1-0.335)^(dt*60)），等价于原版公式但不会在低刷新率下被截断成 1
   if (spectrumMode === 'sigma') {
-    const alpha = 1 - Math.pow(1 - SPECTRUM_SMOOTHING, (dt / 16.67))
+    const alpha = 1 - Math.pow(1 - spectrumSmoothing, (dt / 16.67))
     for (let i = 0; i < BAR_COUNT; i++) {
       const next = levels[i] + (targets[i] - levels[i]) * alpha
       levels[i] = Math.max(0, Math.min(2.256e7, next))
@@ -147,16 +164,15 @@ const draw = (now = performance.now()) => {
 
   if (spectrumMode === 'sigma') {
     // ===== 第二形态：1:1 复刻 sigmarebase renderSpectrum =====
-    // 条宽 ceil(窗口宽 / 114)，条高 (sqrt(幅度)/12 - 5) × 窗口高/1080（绝对像素，不归一化）
-    const dprScale = dpr
-    const cssHeight = h / dprScale
-    const heightRatio = cssHeight / 1080
+    // 条宽 ceil(窗口宽 / 114)；条高 (sqrt(幅度)/12 - 5) × 窗口高/1080
+    // 注意：原版 getMainWindow().getHeight() 是物理像素，这里同样用 canvas 物理高度，不用 CSS 高度
+    const heightRatio = h / 1080
     const sigmaBarWidth = Math.ceil(w / BAR_COUNT)
 
     for (let i = 0; i < BAR_COUNT; i++) {
       const refHeight = Math.sqrt(levels[i]) / 12 - 5
       const height = Math.max(0, refHeight) * heightRatio * spectrumScale
-      heights[i] = Math.min(h, height * dprScale)
+      heights[i] = Math.min(h, height)
     }
 
     // 1) 灰色底条 MID_GREY #999999，alpha = 0.2 × alphaValue（左→右渐隐）
@@ -175,8 +191,9 @@ const draw = (now = performance.now()) => {
       ctx.fillRect(x, h - heights[i], sigmaBarWidth, heights[i])
     }
 
-    // 3) 封面图整屏叠加 alpha 0.4，仅裁剪在条形内（对应原版 stencil）
-    if (blurredCover) {
+    // 3) 叠加封面（原版：模糊封面的底部 20% 条）整屏 alpha 0.4，仅裁剪在条形内（对应 stencil）
+    const overlay = blurredCoverStrip || blurredCover
+    if (overlay) {
       ctx.save()
       ctx.beginPath()
       for (let i = 0; i < BAR_COUNT; i++) {
@@ -186,7 +203,7 @@ const draw = (now = performance.now()) => {
       }
       ctx.clip()
       ctx.globalAlpha = 0.4
-      ctx.drawImage(blurredCover, 0, 0, w, h)
+      ctx.drawImage(overlay, 0, 0, w, h)
       ctx.globalAlpha = 1
       ctx.restore()
     }
@@ -263,6 +280,9 @@ onMounted(() => {
       spectrumScale = parseFloat(value) || 1
     } else if (key === 'spectrumMode') {
       spectrumMode = value === 'sigma' ? 'sigma' : 'default'
+    } else if (key === 'spectrumSigmaSmoothing') {
+      const v = Number.parseFloat(value)
+      if (Number.isFinite(v)) spectrumSmoothing = Math.min(1, Math.max(0.02, v))
     }
   })
 
@@ -270,6 +290,8 @@ onMounted(() => {
   locked.value = settings?.spectrumLocked !== 'off'
   spectrumScale = parseFloat(settings?.spectrumScale || '1.0') || 1
   spectrumMode = settings?.spectrumMode === 'sigma' ? 'sigma' : 'default'
+  const savedSmoothing = Number.parseFloat(settings?.spectrumSigmaSmoothing ?? '')
+  if (Number.isFinite(savedSmoothing)) spectrumSmoothing = Math.min(1, Math.max(0.02, savedSmoothing))
 
   applyLock()
   draw()
