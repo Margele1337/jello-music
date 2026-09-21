@@ -216,7 +216,7 @@ export function registerExtensionIPC() {
                 width: 400,
                 height: 600,
                 webPreferences: {
-                    preload: path.join(__dirname, '../preload.cjs'),
+                    preload: path.join(__dirname, '../preload-extension.cjs'),
                     nodeIntegration: false,
                     contextIsolation: true,
                     enableRemoteModule: false,

@@ -12,13 +12,17 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
     const playbackRate = ref(1.0);
 
     // Web Audio 音频图：source → volumeGain → loudnessGain → destination
-    //                               └→ spectrumTap（pre-volume，输出静音）
+    //                               └→ mainTapGain ┐
+    //                    lookaheadSource → lookaheadTapGain ┴→ spectrumTap（输出静音）
     const audioContext = ref(null);
     const sourceNode = ref(null);
     const volumeGainNode = ref(null);
     const gainNode = ref(null);
     const spectrumTapNode = ref(null);
     const spectrumTapKind = ref(null);
+    const lookaheadSourceNode = ref(null);
+    const mainTapGainNode = ref(null);
+    const lookaheadTapGainNode = ref(null);
     const currentLoudnessGain = ref(1.0); // 当前响度增益系数
     const loudnessNormalizationEnabled = ref(false); // 响度规格化开关，默认关闭
     const webAudioInitialized = ref(false); // 标记 Web Audio 是否已初始化
@@ -48,6 +52,84 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         const rate = audioContext.value?.sampleRate || 44100;
         return Math.max(1, Math.round((1152 * rate) / 44100));
     };
+
+    // ── 预读播放器 ──
+    // 静音播放同一 URL 并领先主播放器 leadMs，用它的 PCM 喂频谱 FFT：
+    // 音频本身零延迟，频谱则"提前"，复刻 sigmarebase 的音画关系（原版画面领先声音 421.7ms）。
+    // 预读元素的声音只接到频谱采集节点（输出静音），不会出声。
+    const SPECTRUM_AV_DELAY_DEFAULT_MS = 590;
+    const lookaheadAudio = new Audio();
+    lookaheadAudio.crossOrigin = 'anonymous';
+    lookaheadAudio.preload = 'auto';
+    let lookaheadLeadMs = SPECTRUM_AV_DELAY_DEFAULT_MS;
+
+    const readSpectrumAvDelayMs = () => {
+        try {
+            const settings = JSON.parse(localStorage.getItem('settings') || '{}');
+            const value = Number.parseFloat(settings?.spectrumAvDelay ?? '');
+            if (Number.isFinite(value)) return Math.max(0, Math.min(2000, value));
+        } catch (error) {
+            /* ignore */
+        }
+        return SPECTRUM_AV_DELAY_DEFAULT_MS;
+    };
+    lookaheadLeadMs = readSpectrumAvDelayMs();
+
+    const isLookaheadReady = () => !!lookaheadAudio.src && lookaheadAudio.readyState >= 2;
+
+    // 预读数据可用时用预读喂频谱，否则退回主播放器（保证频谱始终有数据）
+    const updateTapRouting = () => {
+        const ready = isLookaheadReady();
+        if (mainTapGainNode.value) mainTapGainNode.value.gain.value = ready ? 0 : 1;
+        if (lookaheadTapGainNode.value) lookaheadTapGainNode.value.gain.value = ready ? 1 : 0;
+    };
+
+    const setSpectrumDelay = (ms) => {
+        lookaheadLeadMs = Math.max(0, Math.min(2000, Number(ms) || 0));
+        console.log('[AudioController] 频谱提前量(预读领先):', lookaheadLeadMs, 'ms');
+    };
+
+    // 设置预读源（换歌时调用）
+    const setLookaheadSource = (url) => {
+        const next = url || '';
+        if (lookaheadAudio.getAttribute('src') === next) return;
+        if (!next) {
+            lookaheadAudio.removeAttribute('src');
+            lookaheadAudio.load();
+        } else {
+            lookaheadAudio.src = next;
+        }
+        updateTapRouting();
+    };
+
+    // 与主播放器同步：位置领先 leadMs，播放/暂停/倍速跟随；force=true 强制重新定位
+    const syncLookahead = (currentTime, playing, rate = 1, force = false) => {
+        if (!lookaheadAudio.src) return;
+        // 音频图未就绪（没有 MediaElementSource）时不能播放预读，否则会真的出声
+        if (!lookaheadSourceNode.value) return;
+        const expected = Math.max(0, (Number(currentTime) || 0) + lookaheadLeadMs / 1000);
+        if (force || Math.abs(lookaheadAudio.currentTime - expected) > 0.08) {
+            try {
+                lookaheadAudio.currentTime = expected;
+            } catch (error) {
+                /* ignore */
+            }
+        }
+        if (Number.isFinite(rate) && lookaheadAudio.playbackRate !== rate) {
+            lookaheadAudio.playbackRate = rate;
+        }
+        if (playing && lookaheadAudio.paused && !lookaheadAudio.ended) {
+            lookaheadAudio.play().catch(() => {});
+        } else if (!playing && !lookaheadAudio.paused) {
+            lookaheadAudio.pause();
+        }
+        updateTapRouting();
+    };
+
+    const getLookaheadTime = () => (isLookaheadReady() ? lookaheadAudio.currentTime : null);
+    lookaheadAudio.addEventListener('loadeddata', updateTapRouting);
+    lookaheadAudio.addEventListener('canplay', updateTapRouting);
+    lookaheadAudio.addEventListener('error', updateTapRouting);
 
     // 音量走音频图（音量节点在频谱采集点之后），保证 FFT 输入与音量无关（同 SourceDataLine MASTER_GAIN 只作用于输出）
     const applyVolumeToOutput = () => {
@@ -194,7 +276,20 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
             if (!spectrumTapNode.value) {
                 const tap = await createSpectrumTap(getSpectrumFrameSize());
                 if (tap) {
-                    sourceNode.value.connect(tap);
+                    // 主播放器 / 预读播放器通过增益切换谁喂频谱（默认主播放器，预读就绪后切到预读）
+                    if (!mainTapGainNode.value) {
+                        mainTapGainNode.value = audioContext.value.createGain();
+                        mainTapGainNode.value.gain.value = 1;
+                    }
+                    if (!lookaheadSourceNode.value) {
+                        lookaheadSourceNode.value = audioContext.value.createMediaElementSource(lookaheadAudio);
+                        lookaheadTapGainNode.value = audioContext.value.createGain();
+                        lookaheadTapGainNode.value.gain.value = 0;
+                        lookaheadSourceNode.value.connect(lookaheadTapGainNode.value);
+                    }
+                    sourceNode.value.connect(mainTapGainNode.value);
+                    mainTapGainNode.value.connect(tap);
+                    if (lookaheadTapGainNode.value) lookaheadTapGainNode.value.connect(tap);
                     tap.connect(audioContext.value.destination);
                     spectrumTapNode.value = tap;
                 }
@@ -479,6 +574,17 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
 
         spectrumBlockHandlers.clear();
 
+        try {
+            lookaheadAudio.pause();
+            lookaheadAudio.removeAttribute('src');
+            lookaheadAudio.load();
+        } catch (error) {
+            /* ignore */
+        }
+        lookaheadAudio.removeEventListener('loadeddata', updateTapRouting);
+        lookaheadAudio.removeEventListener('canplay', updateTapRouting);
+        lookaheadAudio.removeEventListener('error', updateTapRouting);
+
         if (spectrumTapNode.value) {
             try {
                 spectrumTapNode.value.disconnect();
@@ -489,7 +595,7 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
             spectrumTapNode.value.onaudioprocess = null;
             spectrumTapNode.value = null;
         }
-        for (const node of [sourceNode.value, volumeGainNode.value, gainNode.value]) {
+        for (const node of [sourceNode.value, volumeGainNode.value, gainNode.value, lookaheadSourceNode.value, mainTapGainNode.value, lookaheadTapGainNode.value]) {
             if (node) {
                 try {
                     node.disconnect();
@@ -508,6 +614,9 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         sourceNode.value = null;
         volumeGainNode.value = null;
         gainNode.value = null;
+        lookaheadSourceNode.value = null;
+        mainTapGainNode.value = null;
+        lookaheadTapGainNode.value = null;
         audioContext.value = null;
         webAudioInitialized.value = false;
     };
@@ -534,6 +643,10 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         webAudioInitialized,
         audioContext,
         setOutputDevice,
+        setSpectrumDelay,
+        setLookaheadSource,
+        syncLookahead,
+        getLookaheadTime,
         // 频谱采集（AudioWorklet 帧块）
         onSpectrumBlock
     };

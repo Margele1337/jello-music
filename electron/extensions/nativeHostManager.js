@@ -374,7 +374,7 @@ class NativeHostManager {
             show: false,
             skipTaskbar: true,
             webPreferences: {
-                preload: path.join(__dirname, '../preload.cjs'),
+                preload: path.join(__dirname, '../preload-extension.cjs'),
                 nodeIntegration: false,
                 contextIsolation: true,
                 sandbox: false,

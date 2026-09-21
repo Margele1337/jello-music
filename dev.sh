@@ -24,10 +24,25 @@ echo ""
 cleanup() {
     echo ""
     echo "正在停止所有服务..."
-    # 杀掉端口上的进程
-    for pid in $(netstat -ano 2>/dev/null | grep -E ":6521|:8080" | awk '{print $NF}' | sort -u); do
-        taskkill //F //PID $pid 2>/dev/null
-    done
+    case "$OSTYPE" in
+        msys*|cygwin*|win32*)
+            # Windows（Git Bash / Cygwin）：按端口找 PID 后 taskkill
+            for pid in $(netstat -ano 2>/dev/null | grep -E ":6521|:8080" | awk '{print $NF}' | sort -u); do
+                taskkill //F //PID "$pid" 2>/dev/null
+            done
+            ;;
+        *)
+            # Linux / macOS：按端口找 PID 后 kill，并兜底清理 Electron
+            for port in 6521 8080; do
+                pids=$(lsof -ti "tcp:$port" 2>/dev/null)
+                [ -n "$pids" ] && kill -9 $pids 2>/dev/null
+            done
+            pkill -f "electron/start-electron.cjs" 2>/dev/null
+            pkill -f "electron/dist/electron" 2>/dev/null
+            ;;
+    esac
+    # 兜底：结束本脚本直接拉起的子进程
+    kill "$PID_API" "$PID_VITE" "$PID_ELECTRON" 2>/dev/null
     echo "已停止。"
     exit 0
 }

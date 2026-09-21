@@ -200,6 +200,9 @@ const updateCurrentTime = throttle(() => {
 
     localStorage.setItem('player_progress', audio.currentTime);
 
+    // 预读播放器漂移校正（偏差 >80ms 才重新定位，避免频繁 seek）
+    syncLookahead(audio.currentTime, playing.value, currentSpeed.value, false);
+
     // 向 Sigma 独立窗口广播播放状态
     if (sigmaUI.value && isElectron()) {
         broadcastSigmaState();
@@ -208,7 +211,7 @@ const updateCurrentTime = throttle(() => {
 
 // 初始化各个模块
 const audioController = useAudioController({ onSongEnd, updateCurrentTime });
-const { playing, volume, changeVolume, toggleMute, audio, playbackRate, setPlaybackRate, applyLoudnessNormalization, ensureAudioContextRunning, toggleLoudnessNormalization, loudnessNormalizationEnabled, currentLoudnessGain, webAudioInitialized, audioContext, setOutputDevice, onSpectrumBlock } = audioController;
+const { playing, volume, changeVolume, toggleMute, audio, playbackRate, setPlaybackRate, applyLoudnessNormalization, ensureAudioContextRunning, toggleLoudnessNormalization, loudnessNormalizationEnabled, currentLoudnessGain, webAudioInitialized, audioContext, setOutputDevice, setSpectrumDelay, setLookaheadSource, syncLookahead, onSpectrumBlock } = audioController;
 
 const lyricsHandler = useLyricsHandler(t);
 const { lyricsData, originalLyrics, showLyrics, scrollAmount, SongTips, lyricsMode, toggleLyrics, getLyrics, highlightCurrentChar, resetLyricsHighlight, getCurrentLineText, scrollToCurrentLine, toggleLyricsMode } = lyricsHandler;
@@ -373,7 +376,9 @@ const handleSigmaCommand = async (_event, command) => {
 const SPECTRUM_BAR_COUNT = 114;          // sigmarebase renderSpectrum 的 maxWidth
 const SPECTRUM_FFT_SIZE = 1024;          // JavaFFT numberOfSamples
 const SPECTRUM_MAX_AMPLITUDE = 2.256e7;  // sigmarebase amplitudes 上限
-const SPECTRUM_SIGMA_QUEUE_MAX = 18;     // sigmarebase visualizerData 最多保留 18 帧
+// 队列容量：越小画面越贴近声音（每帧 26.12ms）。原版是 18 帧，但它的解码提前量让画面
+// 领先声音 421.7ms；我们无法提前解码，改为「队列 4 帧 + 预读播放器领先 590ms」来对齐音画差。
+const SPECTRUM_SIGMA_QUEUE_MAX = 4;
 // 实测 sigmarebase（spectrum-monitor.csv）：音频线程不是均匀推帧，而是每 ~250ms 被
 // SourceDataLine 放行一次、一次推入 9~10 帧（P 间隔直方图 0ms×453 / 250ms×59）。
 // 因此 18 帧队列表现为"保持 250ms 不动 → 整体前移 ~10 帧"的台阶（目标平均延迟 375ms）。
@@ -447,6 +452,8 @@ const resetSigmaQueue = () => {
 const syncSpectrumSetting = (settings) => {
     const config = settings || JSON.parse(localStorage.getItem('settings') || '{}');
     spectrumEnabled = config?.desktopSpectrum === 'on';
+    // 音画差补偿（预读提前量）：频谱领先声音的量，复刻 sigmarebase 的音画关系
+    if (config?.spectrumAvDelay != null) setSpectrumDelay(config.spectrumAvDelay);
 };
 syncSpectrumSetting();
 
@@ -681,6 +688,8 @@ const playSong = async (song) => {
         }
 
         audio.src = song.url;
+        // 预读播放器跟随同一 URL（频谱"提前"由它提供，音频本身零延迟）
+        setLookaheadSource(song.url);
 
         // 确保 AudioContext 处于运行状态（如果已启用）
         await ensureAudioContextRunning();
@@ -784,6 +793,7 @@ const togglePlayPause = async () => {
                     console.log('[PlayerEngine] 从队列中的歌曲获取URL:', song.url);
                     currentSong.value.url = song.url;
                     audio.src = song.url;
+                    setLookaheadSource(song.url);
                 } else if (song.isCloud) {
                     console.log('[PlayerEngine] 云音乐没有URL，重新获取');
                     addCloudMusicToQueue(song.hash, song.name, song.author, song.timeLength, song.img);
@@ -1498,6 +1508,7 @@ onMounted(() => {
     audio.addEventListener('pause', () => {
         playing.value = false;
         console.log('[PlayerEngine] 暂停事件');
+        syncLookahead(audio.currentTime, false, currentSpeed.value);
         // 暂停时清除SMTC位置状态
         mediaSession.clearPositionState();
         if (isElectron()) window.electron.ipcRenderer.send('play-pause-action', playing.value, audio.currentTime);
@@ -1506,9 +1517,16 @@ onMounted(() => {
     audio.addEventListener('play', () => {
         playing.value = true;
         console.log('[PlayerEngine] 播放事件');
+        if (audio.src) setLookaheadSource(audio.src);
+        syncLookahead(audio.currentTime, true, currentSpeed.value, true);
         if (!lyricsData.value.length) getCurrentLyrics();
         if (isElectron()) window.electron.ipcRenderer.send('play-pause-action', playing.value, audio.currentTime);
     });
+
+    // 拖动进度 / 倍速变化时，预读播放器强制重新对齐
+    audio.addEventListener('seeking', () => syncLookahead(audio.currentTime, playing.value, currentSpeed.value, true));
+    audio.addEventListener('seeked', () => syncLookahead(audio.currentTime, playing.value, currentSpeed.value, true));
+    audio.addEventListener('ratechange', () => syncLookahead(audio.currentTime, playing.value, audio.playbackRate, true));
 
     audio.addEventListener('error', async (e) => {
         console.log('[PlayerEngine] 音频错误代码:', audio.error?.code);
