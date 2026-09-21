@@ -215,12 +215,13 @@ const titleLine1 = computed(() => {
 
 const titleLine2 = computed(() => (hasArtist.value ? (currentSong.value?.author || '') : ''));
 
-/* ================= 循环模式（repeat.png 三态：0=NO_REPEAT / 1=REPEAT / 2=LOOP_CURRENT） ================= */
+/* ================= 循环模式（repeat.png 三态：0=NO_REPEAT / 1=REPEAT / 2=LOOP_CURRENT；3=随机） ================= */
 const repeatType = computed(() => {
   const index = Number(props.player?.currentPlaybackModeIndex);
-  if (index === 2) return 2;
-  if (index === 3) return 0;
-  return 1;
+  if (index === 0) return 3;   // 随机播放（魔改版新增图标）
+  if (index === 2) return 2;   // 单曲循环
+  if (index === 3) return 0;   // 顺序播放
+  return 1;                    // 列表循环
 });
 
 /* ================= 频谱开关 ================= */
@@ -248,6 +249,16 @@ const toggleSpectrum = () => {
   }
   if (window.electron?.ipcRenderer) {
     window.electron.ipcRenderer.send('desktop-spectrum-action', spectrumOn.value ? 'display-spectrum' : 'close-spectrum');
+  }
+};
+
+// 设置页改动（含「重置界面」）后同步频谱按钮状态
+const onSettingsChange = (event) => {
+  const settings = event.detail?.settings;
+  if (settings) {
+    spectrumOn.value = settings.desktopSpectrum === 'on';
+  } else {
+    syncSpectrumState();
   }
 };
 
@@ -533,6 +544,7 @@ onMounted(() => {
   syncSpectrumState();
   setupStripCanvas();
   updateDockedState();
+  window.addEventListener('settings-change', onSettingsChange);
   tickTimer = setInterval(syncPlaybackState, 250);
   dockedTimer = setInterval(updateDockedState, 200);
 });
@@ -542,6 +554,7 @@ onBeforeUnmount(() => {
   tickTimer = null;
   if (dockedTimer) clearInterval(dockedTimer);
   dockedTimer = null;
+  window.removeEventListener('settings-change', onSettingsChange);
   stopWindowAnimation();
   endDrag();
 });

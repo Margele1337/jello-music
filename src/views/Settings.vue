@@ -46,13 +46,12 @@
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div class="reset-settings-container">
-                <button @click="openResetConfirmation" class="reset-settings-button">
-                    <i class="fas fa-sync-alt"></i>
-                    {{ $t('hui-fu-chu-chang-she-zhi') }}
-                </button>
+                <div class="reset-settings-container">
+                    <button class="reset-settings-button" @click="resetSection(sectionIndex)">
+                        <i class="fas fa-sync-alt"></i>
+                        重置{{ section.title }}
+                    </button>
+                </div>
             </div>
             <div class="version-info">
                 <p>© Jello Music</p>
@@ -70,7 +69,7 @@
                 <h3>{{ getSettingItem(selectionType)?.selectionTitle }}</h3>
                 <input v-if="isFontSelection()" class="font-search" placeholder="搜索字体..."
                     v-model="fontSearch" />
-                <ul v-if="!isFontSelection() && selectionType !== 'audioOutputDevice' && selectionType !== 'spectrumScale'">
+                <ul v-if="!isFontSelection() && selectionType !== 'audioOutputDevice' && selectionType !== 'spectrumScale' && selectionType !== 'spectrumSigmaSmoothing'">
                     <li v-for="option in getSettingItem(selectionType)?.options || []" :key="option.value"
                         @click="selectOption(option)">
                         {{ option.displayText }}
@@ -126,6 +125,23 @@
                             <span>1.0</span>
                             <span>2.0</span>
                             <span>3.0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="selectionType === 'spectrumSigmaSmoothing'" class="scale-slider-container">
+                    <div class="scale-slider-label">
+                        Sigma 平滑系数: {{ spectrumSigmaSmoothing.toFixed(3) }}
+                        <span class="scale-slider-hint">0.335 = 原版，越小越慢/惯性越强</span>
+                    </div>
+                    <div class="scale-slider-wrapper">
+                        <input type="range" min="0.001" max="1" step="0.001" v-model.number="spectrumSigmaSmoothing"
+                            class="scale-slider" @input="previewSpectrumSmoothing" @change="saveSpectrumSmoothing" />
+                        <div class="scale-marks">
+                            <span>0.001</span>
+                            <span>0.335</span>
+                            <span>0.7</span>
+                            <span>1.0</span>
                         </div>
                     </div>
                 </div>
@@ -221,6 +237,7 @@ import ExtensionManager from '@/components/ExtensionManager.vue';
 import { applyCustomFont, requestMicrophonePermission } from '../utils/utils';
 import { DEFAULT_API_BASE_URL, validateApiBaseUrl, testApiBaseUrl as testApiBaseUrlRequest } from '@/utils/apiBaseUrl';
 import { useSettingsConfig } from '@/config/settings';
+import { getBrowserLocale } from '@/utils/i18n';
 
 const MoeAuth = MoeAuthStore();
 const { t } = useI18n();
@@ -380,6 +397,11 @@ const openSelection = (type, helpLink) => {
 
     if (type === 'spectrumScale') {
         spectrumScale.value = parseFloat(selectedSettings.value.spectrumScale?.value || '1.0') || 1.0;
+    }
+
+    if (type === 'spectrumSigmaSmoothing') {
+        const saved = parseFloat(selectedSettings.value.spectrumSigmaSmoothing?.value ?? '');
+        spectrumSigmaSmoothing.value = Number.isFinite(saved) ? Math.min(1, Math.max(0.001, saved)) : 0.335;
     }
 
     if (isFontSelection(type)) void loadLocalFonts();
@@ -619,7 +641,7 @@ const saveSettings = () => {
     if (isElectron()) {
         window.electron.ipcRenderer.send('save-settings', JSON.parse(JSON.stringify(settingsToSave)));
         // 实时通知频谱窗口
-        for (const key of ['spectrumLocked', 'spectrumScale', 'spectrumMode', 'spectrumSigmaSmoothing', 'spectrumSigmaDelay']) {
+        for (const key of ['spectrumLocked', 'spectrumScale', 'spectrumSigmaSmoothing']) {
             if (key in settingsToSave) {
                 window.electron.ipcRenderer.send('spectrum-setting-update', { key, value: settingsToSave[key] });
             }
@@ -669,6 +691,11 @@ onMounted(() => {
             if (key === 'spectrumScale') {
                 const value = savedSettings[key] || '1.0';
                 selectedSettings.value[key] = { displayText: `${value}x`, value: value };
+                continue;
+            }
+            if (key === 'spectrumSigmaSmoothing') {
+                const value = savedSettings[key] || '0.335';
+                selectedSettings.value[key] = { displayText: value, value: value };
                 continue;
             }
             if (isFontSelection(key)) {
@@ -1054,6 +1081,7 @@ const clearShortcut = (key) => {
 
 const dpiScale = ref(1.0);
 const spectrumScale = ref(1.0);
+const spectrumSigmaSmoothing = ref(0.335);
 
 const previewSpectrumScale = () => {
     if (!isElectron()) return;
@@ -1072,13 +1100,65 @@ const saveSpectrumScale = () => {
     saveSettings();
 };
 
-const openResetConfirmation = async () => {
-    const result = await window.$modal.confirm(t('ni-que-ren-hui-fu-chu-chang'));
-    if (result) {
-        localStorage.clear();
-        isElectron() && window.electron.ipcRenderer.send('clear-settings');
-        window.$modal.alert(t('hui-fu-chu-chang-she-zhi-cheng-gong'));
+const previewSpectrumSmoothing = () => {
+    if (!isElectron()) return;
+    window.electron.ipcRenderer.send('spectrum-setting-update', {
+        key: 'spectrumSigmaSmoothing',
+        value: spectrumSigmaSmoothing.value.toFixed(3)
+    });
+};
+
+const saveSpectrumSmoothing = () => {
+    const value = spectrumSigmaSmoothing.value.toFixed(3);
+    selectedSettings.value.spectrumSigmaSmoothing = {
+        displayText: value,
+        value
+    };
+    saveSettings();
+};
+
+// 按分类重置设置：把该分类的设置恢复为默认值，并应用对应副作用
+const RESET_SKIP_ACTIONS = new Set(['checkQualityAuth', 'saveDpiScale']);
+const resetSection = async (index) => {
+    const section = settingSections.value[index];
+    if (!section) return;
+    const confirmed = await window.$modal.confirm(`确认将「${section.title}」恢复为默认设置？`);
+    if (!confirmed) return;
+
+    for (const item of section.items) {
+        if (!Object.prototype.hasOwnProperty.call(item, 'defaultValue')) continue;
+        const value = item.defaultValue;
+        const option = item.options?.find(option => option.value === value) || {
+            displayText: item.defaultDisplayText ?? value,
+            value
+        };
+        selectedSettings.value[item.key] = { ...option };
+
+        if (item.key === 'language') {
+            // 语言默认值为空 = 自动（按浏览器语言重新应用）
+            const locale = value || getBrowserLocale();
+            proxy.$i18n.locale = locale;
+            document.documentElement.lang = locale;
+            continue;
+        }
+        if (item.hidden || RESET_SKIP_ACTIONS.has(item.selectAction)) continue;
+        try {
+            await runSelectAction(item, option);
+        } catch (error) {
+            console.warn(`[Settings] 重置 ${item.key} 失败:`, error);
+        }
     }
+
+    // 快捷键一并恢复默认
+    if (section.items.some(item => item.key === 'shortcuts')) {
+        shortcuts.value = Object.fromEntries(
+            Object.entries(shortcutConfigs).map(([key, config]) => [key, config.defaultValue])
+        );
+    }
+
+    saveSettings();
+    for (const item of section.items) markRefreshHint(item.key);
+    window.$modal.alert(`「${section.title}」已恢复默认设置`);
 };
 
 let deferredPrompt;
@@ -1578,8 +1658,8 @@ $shadow-medium: rgba(0, 0, 0, 0.18);
     color: white;
     border: none;
     border-radius: 8px;
-    padding: 10px 20px;
-    font-size: 14px;
+    padding: 8px 16px;
+    font-size: 13px;
     cursor: pointer;
     transition: background-color 0.3s;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);

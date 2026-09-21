@@ -208,7 +208,7 @@ const updateCurrentTime = throttle(() => {
 
 // 初始化各个模块
 const audioController = useAudioController({ onSongEnd, updateCurrentTime });
-const { playing, isMuted, volume, changeVolume, audio, playbackRate, setPlaybackRate, applyLoudnessNormalization, ensureAudioContextRunning, toggleLoudnessNormalization, loudnessNormalizationEnabled, currentLoudnessGain, webAudioInitialized, analyserNode, ensureAnalyser } = audioController;
+const { playing, volume, changeVolume, toggleMute, audio, playbackRate, setPlaybackRate, applyLoudnessNormalization, ensureAudioContextRunning, toggleLoudnessNormalization, loudnessNormalizationEnabled, currentLoudnessGain, webAudioInitialized, audioContext, setOutputDevice, onSpectrumBlock } = audioController;
 
 const lyricsHandler = useLyricsHandler(t);
 const { lyricsData, originalLyrics, showLyrics, scrollAmount, SongTips, lyricsMode, toggleLyrics, getLyrics, highlightCurrentChar, resetLyricsHighlight, getCurrentLineText, scrollToCurrentLine, toggleLyricsMode } = lyricsHandler;
@@ -368,10 +368,18 @@ const handleSigmaCommand = async (_event, command) => {
 };
 
 // ── 桌面频谱可视化（移植 sigmarebase MusicManager + JavaFFT）──
+// 采集端在 AudioController 的 AudioWorklet 上：每攒满一个 MP3 帧（1152 采样/声道）回调一次，
+// 传入帧首 1024 个交错采样（= JLayer pcm[0..1023]），推送节奏天然 38.28Hz 且与音频锁相。
 const SPECTRUM_BAR_COUNT = 114;          // sigmarebase renderSpectrum 的 maxWidth
 const SPECTRUM_FFT_SIZE = 1024;          // JavaFFT numberOfSamples
 const SPECTRUM_MAX_AMPLITUDE = 2.256e7;  // sigmarebase amplitudes 上限
-const SPECTRUM_SMOOTHING = 0.335;        // sigmarebase 60fps 平滑系数
+const SPECTRUM_SIGMA_QUEUE_MAX = 18;     // sigmarebase visualizerData 最多保留 18 帧
+// 实测 sigmarebase（spectrum-monitor.csv）：音频线程不是均匀推帧，而是每 ~250ms 被
+// SourceDataLine 放行一次、一次推入 9~10 帧（P 间隔直方图 0ms×453 / 250ms×59）。
+// 因此 18 帧队列表现为"保持 250ms 不动 → 整体前移 ~10 帧"的台阶（目标平均延迟 375ms）。
+const SPECTRUM_SIGMA_BATCH_SECONDS = 0.25;
+const SPECTRUM_SIGMA_BATCH_MAX = 12;     // 防止异常时一批积太多
+const SPECTRUM_SIGMA_FRAME_SECONDS = 1152 / 44100; // worklet 每块 1152 帧（强制 44.1kHz）
 
 // 迭代式基 2 FFT（JavaFFT 移植），realIn 只读，结果写入 realOut / imagOut
 const createSpectrumFft = (size) => {
@@ -423,116 +431,106 @@ const spectrumSamples = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumReal = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumImag = new Float32Array(SPECTRUM_FFT_SIZE);
 const spectrumFft = createSpectrumFft(SPECTRUM_FFT_SIZE);
-let spectrumTimer = null;
 let spectrumMetaKey = '';
 let spectrumEnabled = false;
-
-// 第二形态（Sigma 原版）：sigmarebase 的 visualizerData 最多保留 18 帧，
-// 平滑目标取 get(0)（最旧那一帧），且每解码一个 MP3 帧才推入一帧
-// （1152 采样 @44.1kHz ≈ 26ms）→ 目标延迟约 18 × 26ms ≈ 0.47s。
-// 生产者定时器 16ms 一跳，推入节奏取 32ms，队列长度按设置的延迟换算（默认 470ms ≈ 15 帧）。
-const SPECTRUM_SIGMA_PUSH_MS = 32;
-let spectrumMode = 'default';
-let spectrumSigmaDelayMs = 470;
+let lastSpectrumBlockAt = 0;
 const sigmaQueue = [];
-let sigmaPushLast = 0;
+const sigmaPendingFrames = [];
+let sigmaBatchAccumulator = 0;
 
 const resetSigmaQueue = () => {
     sigmaQueue.length = 0;
-    sigmaPushLast = 0;
+    sigmaPendingFrames.length = 0;
+    sigmaBatchAccumulator = SPECTRUM_SIGMA_BATCH_SECONDS; // 首个块立即入队（原版开局预热爆发）
 };
-
-const sigmaQueueMax = () => Math.max(1, Math.round(spectrumSigmaDelayMs / SPECTRUM_SIGMA_PUSH_MS));
 
 const syncSpectrumSetting = (settings) => {
     const config = settings || JSON.parse(localStorage.getItem('settings') || '{}');
     spectrumEnabled = config?.desktopSpectrum === 'on';
-    const nextMode = config?.spectrumMode === 'sigma' ? 'sigma' : 'default';
-    const nextDelay = Number.parseFloat(config?.spectrumSigmaDelay ?? '470');
-    const delayChanged = Number.isFinite(nextDelay) && nextDelay !== spectrumSigmaDelayMs;
-    if (nextMode !== spectrumMode || delayChanged) {
-        spectrumMode = nextMode;
-        if (Number.isFinite(nextDelay)) spectrumSigmaDelayMs = nextDelay;
-        resetSigmaQueue();
-    }
 };
 syncSpectrumSetting();
 
-const startSpectrumProducer = () => {
-    if (spectrumTimer || !isElectron()) return;
-    // 用定时器而非 requestAnimationFrame：主窗口最小化后不再产生渲染帧，rAF 会停止导致频谱冻结
-    const loop = () => {
-        const now = performance.now();
-
-        if (!spectrumEnabled) return;
-        // 默认形态暂停时由频谱窗口自行衰减；Sigma 形态要继续平滑到 0（否则条形会停在原地）
-        if (!playing.value && spectrumMode !== 'sigma') return;
-
-        const analyser = analyserNode.value;
-        if (!analyser) { ensureAnalyser(); return; }
-
-        if (playing.value) {
-            // 复刻 JavaFFT + MathHelper.calculateAmplitudes：直接对原始 PCM 采样做 FFT（换算回 16bit 量纲）
-            analyser.getFloatTimeDomainData(spectrumSamples);
-            const elementVolume = audio.muted || audio.volume <= 0 ? 1 : audio.volume;
-            const sampleScale = 32768 / elementVolume;
-            for (let i = 0; i < SPECTRUM_FFT_SIZE; i++) spectrumSamples[i] *= sampleScale;
-            spectrumFft(spectrumSamples, spectrumReal, spectrumImag);
-            for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
-                const re = spectrumReal[i];
-                const im = spectrumImag[i];
-                spectrumRaw[i] = Math.sqrt(re * re + im * im);
-            }
-        } else {
-            spectrumRaw.fill(0);
-            // sigmarebase 暂停时会清空 visualizerData：队列一起清掉，恢复播放时从 0 平滑上来
-            resetSigmaQueue();
-        }
-
-        // 检测切歌：重置频谱数据，避免旧歌幅度残影
-        const song = currentSong.value;
-        const metaKey = `${song?.hash || ''}|${song?.img || ''}`;
-        const songChanged = metaKey !== spectrumMetaKey;
-        if (songChanged) {
-            spectrumMetaKey = metaKey;
-            resetSigmaQueue();
-        }
-
-        // Sigma 形态：按音频节奏推入队列，目标取最旧的一帧；默认形态直接用当前帧
-        // 注意：这里只发原始幅度，平滑由频谱窗口在自己的渲染循环里做
-        // （复刻 sigmarebase 在 onRender2D 里更新 amplitudes 的结构；
-        //   放在这里会因隐藏窗口定时器被节流导致 dt 变大、alpha 被截成 1 而变成瞬间跳变）
-        let targets = spectrumRaw;
-        if (spectrumMode === 'sigma') {
-            if (spectrumSigmaDelayMs > 0 && playing.value && now - sigmaPushLast >= SPECTRUM_SIGMA_PUSH_MS) {
-                sigmaPushLast = now;
-                sigmaQueue.push(Float32Array.from(spectrumRaw));
-                const max = sigmaQueueMax();
-                if (sigmaQueue.length > max) sigmaQueue.shift();
-            }
-            targets = sigmaQueue.length ? sigmaQueue[0] : spectrumRaw;
-        }
-
-        const payload = { levels: targets };
-        if (songChanged) {
-            payload.reset = true;
-            payload.cover = song?.img || '';
-            payload.title = song?.name || '';
-            payload.author = song?.author || '';
-        }
-        window.electron.ipcRenderer.send('spectrum-data', payload);
-    };
-    spectrumTimer = setInterval(loop, 16);
+const sendSpectrum = (levels, forceMeta = false) => {
+    if (!isElectron()) return;
+    const song = currentSong.value;
+    const metaKey = `${song?.hash || ''}|${song?.img || ''}`;
+    const songChanged = metaKey !== spectrumMetaKey;
+    const payload = { levels };
+    if (songChanged || forceMeta) {
+        spectrumMetaKey = metaKey;
+        payload.reset = true;
+        payload.cover = song?.img || '';
+        payload.title = song?.name || '';
+        payload.author = song?.author || '';
+    }
+    window.electron.ipcRenderer.send('spectrum-data', payload);
 };
-startSpectrumProducer();
 
-// 频谱窗口就绪时，强制重发一次完整数据（含封面/歌名），避免 meta 去重导致后开的窗口拿不到信息
+// AudioWorklet 每个 MP3 帧回调一次：block 为 Int16Array(1024)，帧首交错采样（未加音量）
+// AudioWorklet 每个 MP3 帧回调一次：block 为 Int16Array(1024)，帧首交错采样（未加音量）
+const handleSpectrumBlock = (block) => {
+    if (!isElectron()) return;
+    lastSpectrumBlockAt = performance.now();
+
+    const song = currentSong.value;
+    const metaKey = `${song?.hash || ''}|${song?.img || ''}`;
+    if (metaKey !== spectrumMetaKey) {
+        // 切歌：sigmarebase 换歌时会 clear visualizerData，这里同步清队列，避免旧帧残影
+        resetSigmaQueue();
+    }
+
+    if (!spectrumEnabled) return;
+
+    if (!playing.value) {
+        // 原版暂停时清空 visualizerData 与 amplitudes：发全 0 让频谱窗平滑回落
+        resetSigmaQueue();
+        spectrumRaw.fill(0);
+        sendSpectrum(spectrumRaw);
+        return;
+    }
+
+    // 复刻 JavaFFT + MathHelper.calculateAmplitudes：直接对原始 16bit PCM 采样做 FFT
+    for (let i = 0; i < SPECTRUM_FFT_SIZE; i++) spectrumSamples[i] = block[i];
+    spectrumFft(spectrumSamples, spectrumReal, spectrumImag);
+    for (let i = 0; i < SPECTRUM_BAR_COUNT; i++) {
+        const re = spectrumReal[i];
+        const im = spectrumImag[i];
+        spectrumRaw[i] = Math.sqrt(re * re + im * im);
+    }
+
+    // 复刻 sigmarebase 的爆发式队列（停 ~250ms → 一次前移 9~10 帧）；
+    // 用块时长累加而不是 audio.currentTime（后者更新粒度粗，会出现 275ms 毛刺）
+    sigmaPendingFrames.push(Float32Array.from(spectrumRaw));
+    sigmaBatchAccumulator += SPECTRUM_SIGMA_FRAME_SECONDS;
+    if (sigmaBatchAccumulator >= SPECTRUM_SIGMA_BATCH_SECONDS
+        || sigmaPendingFrames.length >= SPECTRUM_SIGMA_BATCH_MAX) {
+        for (const frame of sigmaPendingFrames) {
+            sigmaQueue.push(frame);
+            if (sigmaQueue.length > SPECTRUM_SIGMA_QUEUE_MAX) sigmaQueue.shift();
+        }
+        sigmaPendingFrames.length = 0;
+        sigmaBatchAccumulator -= SPECTRUM_SIGMA_BATCH_SECONDS;
+        if (sigmaBatchAccumulator < 0) sigmaBatchAccumulator = 0;
+    }
+    sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : spectrumRaw);
+};
+
+let disposeSpectrumTap = null;
 if (isElectron()) {
+    disposeSpectrumTap = onSpectrumBlock(handleSpectrumBlock);
+    // 频谱窗口就绪时，强制重发一次完整数据（含封面/歌名），避免 meta 去重导致后开的窗口拿不到信息
     window.electron.ipcRenderer.on('request-current-spectrum', () => {
-        spectrumMetaKey = '';
-        spectrumLastFrame = 0;
+        if (!spectrumEnabled) return;
+        sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : spectrumRaw, true);
     });
 }
+
+// 启动后尚未播放（音频图未建立、没有帧块）时，周期性补发元信息/零值，供频谱窗口显示封面歌名
+const spectrumIdleTimer = setInterval(() => {
+    if (!spectrumEnabled || !isElectron()) return;
+    if (performance.now() - lastSpectrumBlockAt < 2000) return;
+    sendSpectrum(spectrumRaw);
+}, 1000);
 
 // 添加自动切换定时器引用
 let autoSwitchTimer = null;
@@ -824,6 +822,7 @@ const togglePlayPause = async () => {
         }
 
         try {
+            await ensureAudioContextRunning();
             await audio.play();
             playing.value = true;
         } catch (retryError) {
@@ -1223,16 +1222,6 @@ const setupMediaShortcuts = () => {
     });
 };
 
-// 切换静音
-const toggleMute = () => {
-    isMuted.value = !isMuted.value;
-    audio.muted = isMuted.value;
-    if (isMuted.value) volume.value = 0;
-    else volume.value = audio.volume * 100;
-    localStorage.setItem('player_volume', volume.value);
-    console.log('[PlayerEngine] 切换静音:', isMuted.value, '音量:', volume.value, '实际audio.volume:', audio.volume);
-};
-
 const pausePlayback = (reason) => {
     clearAutoSwitchTimer();
     if (!audio.paused) audio.pause();
@@ -1306,21 +1295,21 @@ const setAudioOutputDeviceWatcherEnabled = (enabled) => {
 let audioOutputDeviceWatchChangeHandler = null;
 
 const applyAudioOutputDevice = async (deviceId) => {
-    if (typeof audio?.setSinkId !== 'function') {
+    const elementSupported = typeof audio?.setSinkId === 'function';
+    const contextSupported = typeof audioContext.value?.setSinkId === 'function';
+    if (!elementSupported && !contextSupported) {
         console.warn('[PlayerEngine] 当前环境不支持切换音频输出设备（setSinkId不可用）');
         return false;
     }
 
     const sinkId = deviceId || 'default';
-    try {
-        await audio.setSinkId(sinkId);
-        console.log('[PlayerEngine] 已切换音频输出设备:', sinkId);
-        return true;
-    } catch (error) {
-        console.warn('[PlayerEngine] 切换音频输出设备失败:', error);
+    const succeeded = await setOutputDevice(sinkId);
+    if (!succeeded) {
         window.$modal.alert('切换音频输出设备失败,请刷新页面后重试');
         return false;
     }
+    console.log('[PlayerEngine] 已切换音频输出设备:', sinkId);
+    return true;
 };
 
 // 切换速度菜单
@@ -1552,11 +1541,10 @@ onUnmounted(() => {
     // 清除自动切换定时器
     clearAutoSwitchTimer();
 
-    // 停止频谱采集定时器
-    if (spectrumTimer) {
-        clearInterval(spectrumTimer);
-        spectrumTimer = null;
-    }
+    // 停止频谱采集（AudioWorklet 帧块订阅 + 空闲补发定时器）
+    disposeSpectrumTap?.();
+    disposeSpectrumTap = null;
+    clearInterval(spectrumIdleTimer);
 
     if (audioOutputDeviceWatchChangeHandler) {
         window.removeEventListener('audio-output-device-watch-change', audioOutputDeviceWatchChangeHandler);
@@ -1596,6 +1584,7 @@ onUnmounted(() => {
         window.electron.ipcRenderer.removeAllListeners('open-settings');
         window.electron.ipcRenderer.removeAllListeners('auth-changed');
         window.electron.ipcRenderer.removeAllListeners('settings-changed');
+        window.electron.ipcRenderer.removeAllListeners('request-current-spectrum');
     }
 
     // 清理键盘事件
