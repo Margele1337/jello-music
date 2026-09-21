@@ -304,7 +304,7 @@ export function createSpectrumWindow() {
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
     const savedConfig = store.get('settings') || {};
 
-    const defaultHeight = 150;
+    const defaultHeight = 280;
     const savedPosition = store.get('spectrumWindowPosition') || {};
     const savedSize = store.get('spectrumWindowSize') || {
         width: screenWidth,

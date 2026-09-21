@@ -1,4 +1,5 @@
 import { ref } from 'vue';
+import spectrumTapProcessorCode from './spectrumTapProcessor.js?raw';
 
 export default function useAudioController({ onSongEnd, updateCurrentTime }) {
     const audio = new Audio();
@@ -10,100 +11,228 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
     const volume = ref(66);
     const playbackRate = ref(1.0);
 
-    // Web Audio API 用于动态增益
+    // Web Audio 音频图：source → volumeGain → loudnessGain → destination
+    //                               └→ spectrumTap（pre-volume，输出静音）
     const audioContext = ref(null);
     const sourceNode = ref(null);
+    const volumeGainNode = ref(null);
     const gainNode = ref(null);
-    const analyserNode = ref(null);
+    const spectrumTapNode = ref(null);
+    const spectrumTapKind = ref(null);
     const currentLoudnessGain = ref(1.0); // 当前响度增益系数
     const loudnessNormalizationEnabled = ref(false); // 响度规格化开关，默认关闭
     const webAudioInitialized = ref(false); // 标记 Web Audio 是否已初始化
 
-    // 初始化 Web Audio API - 只在启用响度规格化时调用，并且应该在用户交互时调用
-    const initWebAudio = () => {
+    let volumeBeforeMute = null;
+    let desiredSinkId = 'default';
+
+    // 频谱采集：每个音频帧块（默认 1152 采样/声道 ≈ 一个 MP3 帧）回调一次 Int16Array(1024) 交错采样
+    const spectrumBlockHandlers = new Set();
+    const onSpectrumBlock = (handler) => {
+        spectrumBlockHandlers.add(handler);
+        return () => spectrumBlockHandlers.delete(handler);
+    };
+    const emitSpectrumBlock = (block) => {
+        for (const handler of spectrumBlockHandlers) {
+            try {
+                handler(block);
+            } catch (error) {
+                console.error('[AudioController] 频谱帧处理失败:', error);
+            }
+        }
+    };
+
+    // 采集帧长：按 44.1kHz MP3 帧的时长折算到当前上下文采样率，
+    // 保证 38.28Hz 的推送节奏与 sigmarebase 一致（即便设备混音率是 48kHz）
+    const getSpectrumFrameSize = () => {
+        const rate = audioContext.value?.sampleRate || 44100;
+        return Math.max(1, Math.round((1152 * rate) / 44100));
+    };
+
+    // 音量走音频图（音量节点在频谱采集点之后），保证 FFT 输入与音量无关（同 SourceDataLine MASTER_GAIN 只作用于输出）
+    const applyVolumeToOutput = () => {
+        const percent = Math.max(0, Math.min(100, Number(volume.value) || 0));
+        const linear = percent / 100;
+        if (webAudioInitialized.value && volumeGainNode.value && audioContext.value) {
+            const target = isMuted.value ? 0 : linear;
+            // 先设好音量增益，再放开元素音量，避免切换瞬间出现满音量毛刺
+            volumeGainNode.value.gain.setValueAtTime(target, audioContext.value.currentTime);
+            if (audio.volume !== 1) audio.volume = 1;
+            if (audio.muted) audio.muted = false;
+        } else {
+            audio.volume = linear;
+            audio.muted = isMuted.value;
+        }
+    };
+
+    const createWorkletTap = async (frameSize) => {
+        const blob = new Blob([spectrumTapProcessorCode], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
         try {
-            // 只有启用时才初始化 Web Audio API
-            if (!loudnessNormalizationEnabled.value) {
-                console.log('[AudioController] 响度规格化未启用，使用原生音频播放');
-                return false;
+            await audioContext.value.audioWorklet.addModule(url);
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+        const node = new AudioWorkletNode(audioContext.value, 'spectrum-tap', {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+            processorOptions: { frameSize }
+        });
+        node.port.onmessage = (event) => {
+            if (event.data) emitSpectrumBlock(event.data);
+        };
+        return node;
+    };
+
+    const createScriptTap = (frameSize) => {
+        const node = audioContext.value.createScriptProcessor(1024, 2, 1);
+        const left = new Float32Array(frameSize);
+        const right = new Float32Array(frameSize);
+        let fill = 0;
+
+        node.onaudioprocess = (event) => {
+            const buffer = event.inputBuffer;
+            if (!buffer || buffer.numberOfChannels === 0) return;
+            const l = buffer.getChannelData(0);
+            const stereo = buffer.numberOfChannels > 1;
+            const r = stereo ? buffer.getChannelData(1) : l;
+            let offset = 0;
+
+            while (offset < l.length) {
+                const take = Math.min(frameSize - fill, l.length - offset);
+                left.set(l.subarray(offset, offset + take), fill);
+                if (stereo) right.set(r.subarray(offset, offset + take), fill);
+                fill += take;
+                offset += take;
+
+                if (fill === frameSize) {
+                    const out = new Int16Array(1024);
+                    if (stereo) {
+                        for (let i = 0; i < 512; i++) {
+                            const lv = Math.round(left[i] * 32768);
+                            const rv = Math.round(right[i] * 32768);
+                            out[i * 2] = lv < -32768 ? -32768 : lv > 32767 ? 32767 : lv;
+                            out[i * 2 + 1] = rv < -32768 ? -32768 : rv > 32767 ? 32767 : rv;
+                        }
+                    } else {
+                        for (let i = 0; i < 1024; i++) {
+                            const v = Math.round(left[i] * 32768);
+                            out[i] = v < -32768 ? -32768 : v > 32767 ? 32767 : v;
+                        }
+                    }
+                    emitSpectrumBlock(out);
+                    fill = 0;
+                }
+            }
+        };
+        return node;
+    };
+
+    const createSpectrumTap = async (frameSize) => {
+        try {
+            const node = await createWorkletTap(frameSize);
+            spectrumTapKind.value = 'worklet';
+            return node;
+        } catch (error) {
+            console.warn('[AudioController] AudioWorklet 频谱采集不可用，回退 ScriptProcessor:', error);
+        }
+        try {
+            const node = createScriptTap(frameSize);
+            spectrumTapKind.value = 'script';
+            return node;
+        } catch (error) {
+            console.error('[AudioController] 频谱采集初始化失败:', error);
+        }
+        return null;
+    };
+
+    // 创建音频管线：只在首次播放（用户手势）时调用
+    const ensureAudioPipeline = async () => {
+        if (webAudioInitialized.value) return true;
+
+        try {
+            if (!audioContext.value) {
+                // 固定 44.1kHz：sigmarebase 的 JavaFFT 是按 44.1kHz MP3 帧取的
+                // （1024 个交错采样 = 11.6ms、bin 间隔 43.07Hz、帧长 26.12ms），
+                // 设备混音率是 48k/96k 时窗口与频段映射都会偏，这里强制对齐原版。
+                audioContext.value = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+                console.log('[AudioController] AudioContext 初始化成功, 采样率:', audioContext.value.sampleRate);
+            }
+        } catch (error) {
+            console.error('[AudioController] AudioContext 创建失败:', error);
+            return false;
+        }
+
+        try {
+            if (!sourceNode.value) {
+                sourceNode.value = audioContext.value.createMediaElementSource(audio);
+            }
+        } catch (sourceError) {
+            console.error('[AudioController] 创建音频源失败（可能是CORS问题）:', sourceError);
+            console.warn('[AudioController] 由于CORS限制，Web Audio 已禁用，使用原生播放');
+            return false;
+        }
+
+        try {
+            if (!volumeGainNode.value) {
+                volumeGainNode.value = audioContext.value.createGain();
+                volumeGainNode.value.gain.setValueAtTime(1, audioContext.value.currentTime);
+            }
+            if (!gainNode.value) {
+                gainNode.value = audioContext.value.createGain();
+                gainNode.value.gain.setValueAtTime(
+                    loudnessNormalizationEnabled.value ? currentLoudnessGain.value : 1.0,
+                    audioContext.value.currentTime
+                );
             }
 
-            if (!audioContext.value) {
-                audioContext.value = new (window.AudioContext || window.webkitAudioContext)();
-                console.log('[AudioController] Web Audio API 初始化成功');
-                console.log('[AudioController] AudioContext 初始状态:', audioContext.value.state);
+            sourceNode.value.connect(volumeGainNode.value);
+            volumeGainNode.value.connect(gainNode.value);
+            gainNode.value.connect(audioContext.value.destination);
 
-                // 立即创建音频图连接
-                try {
-                    sourceNode.value = audioContext.value.createMediaElementSource(audio);
-                    analyserNode.value = audioContext.value.createAnalyser();
-                    analyserNode.value.fftSize = 1024;
-                    analyserNode.value.smoothingTimeConstant = 0;
-                    analyserNode.value.minDecibels = -90; // 频谱动态范围下限
-                    analyserNode.value.maxDecibels = -10; // 频谱动态范围上限
-                    sourceNode.value.connect(analyserNode.value);
-                    gainNode.value = audioContext.value.createGain();
-                    sourceNode.value.connect(gainNode.value);
-                    gainNode.value.connect(audioContext.value.destination);
-
-                    // 设置初始增益
-                    gainNode.value.gain.setValueAtTime(currentLoudnessGain.value, audioContext.value.currentTime);
-
-                    webAudioInitialized.value = true;
-                    console.log('[AudioController] Web Audio 音频图创建完成');
-                    console.log('[AudioController] 初始增益值:', gainNode.value.gain.value);
-                } catch (sourceError) {
-                    console.error('[AudioController] 创建音频源失败（可能是CORS问题）:', sourceError);
-                    // 清理已创建的资源
-                    if (audioContext.value) {
-                        audioContext.value.close();
-                        audioContext.value = null;
-                    }
-                    webAudioInitialized.value = false;
-                    console.warn('[AudioController] 由于CORS限制，响度规格化已禁用，使用原生播放');
-                    return false;
+            if (!spectrumTapNode.value) {
+                const tap = await createSpectrumTap(getSpectrumFrameSize());
+                if (tap) {
+                    sourceNode.value.connect(tap);
+                    tap.connect(audioContext.value.destination);
+                    spectrumTapNode.value = tap;
                 }
             }
 
+            webAudioInitialized.value = true;
+            applyVolumeToOutput();
+
+            if (desiredSinkId && desiredSinkId !== 'default' && typeof audioContext.value.setSinkId === 'function') {
+                try {
+                    await audioContext.value.setSinkId(desiredSinkId);
+                } catch (sinkError) {
+                    console.warn('[AudioController] 设置 AudioContext 输出设备失败:', sinkError);
+                }
+            }
+
+            console.log('[AudioController] Web Audio 音频图创建完成, 频谱采集:', spectrumTapKind.value);
             return true;
         } catch (error) {
-            console.error('[AudioController] Web Audio API 初始化失败:', error);
+            console.error('[AudioController] Web Audio 音频图创建失败:', error);
             webAudioInitialized.value = false;
             return false;
         }
     };
 
-    // 确保 AnalyserNode 存在（用于桌面频谱可视化）。与响度规格化共用同一个 AudioContext 与
-    // MediaElementSource，保证 createMediaElementSource 对同一个 audio 元素只调用一次。
-    const ensureAnalyser = () => {
-        if (analyserNode.value) return true;
-
+    // 切换音频输出设备（元素与 AudioContext 都要设置，Web Audio 输出走 AudioContext）
+    const setOutputDevice = async (deviceId) => {
+        desiredSinkId = deviceId || 'default';
         try {
-            if (!audioContext.value) {
-                audioContext.value = new (window.AudioContext || window.webkitAudioContext)();
-                sourceNode.value = audioContext.value.createMediaElementSource(audio);
-                analyserNode.value = audioContext.value.createAnalyser();
-                analyserNode.value.fftSize = 1024;
-                analyserNode.value.smoothingTimeConstant = 0;
-                analyserNode.value.minDecibels = -90; // 频谱动态范围下限
-                analyserNode.value.maxDecibels = -10; // 频谱动态范围上限
-                sourceNode.value.connect(analyserNode.value);
-
-                // 未启用响度规格化时直接连接到输出，否则经 gainNode 输出
-                if (loudnessNormalizationEnabled.value) {
-                    gainNode.value = audioContext.value.createGain();
-                    gainNode.value.gain.setValueAtTime(currentLoudnessGain.value, audioContext.value.currentTime);
-                    sourceNode.value.connect(gainNode.value);
-                    gainNode.value.connect(audioContext.value.destination);
-                } else {
-                    sourceNode.value.connect(audioContext.value.destination);
-                }
-                webAudioInitialized.value = true;
+            if (typeof audio.setSinkId === 'function') {
+                await audio.setSinkId(desiredSinkId);
+            }
+            if (webAudioInitialized.value && typeof audioContext.value?.setSinkId === 'function') {
+                await audioContext.value.setSinkId(desiredSinkId);
             }
             return true;
         } catch (error) {
-            console.error('[AudioController] AnalyserNode 初始化失败:', error);
-            analyserNode.value = null;
+            console.warn('[AudioController] 切换音频输出设备失败:', error);
             return false;
         }
     };
@@ -131,16 +260,16 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         }
 
         try {
-            const { volume, volumeGain, volumePeak } = loudnessData;
+            const { volume: loudnessVolume, volumeGain, volumePeak } = loudnessData;
 
             // 响度规格化算法
-            // volume: LUFS 值 (例如 -11.4 表示音频响度为 -11.4 LUFS)
+            // loudnessVolume: LUFS 值 (例如 -11.4 表示音频响度为 -11.4 LUFS)
             // volumeGain: 建议的增益调整值 (dB)
             // volumePeak: 峰值 (0-1)
 
             // 目标响度为 -14 LUFS (Spotify 标准)
             const targetLoudness = -14.0;
-            const loudnessAdjustment = targetLoudness - volume;
+            const loudnessAdjustment = targetLoudness - loudnessVolume;
 
             // 计算增益系数 (dB 转线性)
             // gain = 10^(dB/20)
@@ -161,7 +290,7 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
             currentLoudnessGain.value = Math.max(0.1, Math.min(3.0, gainAdjustment));
 
             console.log('[AudioController] 响度规格化:', {
-                volume: volume + ' LUFS',
+                volume: loudnessVolume + ' LUFS',
                 volumeGain: volumeGain + ' dB',
                 volumePeak,
                 adjustment: loudnessAdjustment.toFixed(2) + ' dB',
@@ -186,16 +315,10 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
 
     // 确保 AudioContext 处于运行状态（如果未初始化则先初始化，然后恢复）
     const ensureAudioContextRunning = async () => {
-        // 如果启用了响度规格化但还未初始化 Web Audio，先初始化
-        if (loudnessNormalizationEnabled.value && !webAudioInitialized.value) {
-            console.log('[AudioController] 首次播放，初始化 Web Audio API...');
-            if (!initWebAudio()) {
-                console.warn('[AudioController] Web Audio API 初始化失败，使用原生播放');
-                return;
-            }
+        if (!webAudioInitialized.value) {
+            await ensureAudioPipeline();
         }
 
-        // 如果已初始化，确保 AudioContext 处于运行状态
         if (webAudioInitialized.value && audioContext.value) {
             console.log('[AudioController] 检查 AudioContext 状态:', audioContext.value.state);
 
@@ -211,9 +334,8 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
                 console.log('[AudioController] AudioContext 状态正常:', audioContext.value.state);
             }
 
-            // 验证音频图连接
-            if (gainNode.value) {
-                console.log('[AudioController] 当前增益节点值:', gainNode.value.gain.value);
+            if (volumeGainNode.value) {
+                console.log('[AudioController] 当前音量增益值:', volumeGainNode.value.gain.value);
             }
         }
     };
@@ -228,18 +350,12 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         settings.loudnessNormalization = enabled ? 'on' : 'off';
         localStorage.setItem('settings', JSON.stringify(settings));
 
-        // 如果 Web Audio 已经初始化，只能调整增益，无法完全禁用
-        if (webAudioInitialized.value) {
-            if (gainNode.value && audioContext.value) {
-                const newGain = enabled ? currentLoudnessGain.value : 1.0;
-                gainNode.value.gain.setValueAtTime(newGain, audioContext.value.currentTime);
-                console.log('[AudioController] 响度规格化', enabled ? '已启用' : '已禁用', ', 增益:', newGain);
-            }
+        if (gainNode.value && audioContext.value) {
+            const newGain = enabled ? currentLoudnessGain.value : 1.0;
+            gainNode.value.gain.setValueAtTime(newGain, audioContext.value.currentTime);
+            console.log('[AudioController] 响度规格化', enabled ? '已启用' : '已禁用', ', 增益:', newGain);
         } else if (enabled && !previousState) {
-            // 如果之前未启用，现在要启用，需要初始化 Web Audio
             console.warn('[AudioController] 启用响度规格化需要刷新页面才能生效');
-            // 尝试初始化（但可能已经太晚了，audio 元素可能已经在使用中）
-            // initWebAudio();
         }
 
         console.log('[AudioController] 响度规格化开关变更:', enabled ? '开启' : '关闭');
@@ -250,8 +366,8 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         const savedVolume = localStorage.getItem('player_volume');
         if (savedVolume !== null) volume.value = parseFloat(savedVolume);
         isMuted.value = volume.value === 0;
-        audio.volume = volume.value / 100;
-        audio.muted = isMuted.value;
+        if (!isMuted.value) volumeBeforeMute = volume.value;
+        applyVolumeToOutput();
 
         // 初始化播放速度
         const savedSpeed = localStorage.getItem('player_speed');
@@ -271,7 +387,7 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         audio.addEventListener('play', handleAudioEvent);
         audio.addEventListener('timeupdate', updateCurrentTime);
 
-        console.log('[AudioController] 初始化完成，音量设置为:', audio.volume, 'volume值:', volume.value, '播放速度:', audio.playbackRate);
+        console.log('[AudioController] 初始化完成，音量设置为:', volume.value, '播放速度:', audio.playbackRate);
         console.log('[AudioController] 响度规格化状态:', loudnessNormalizationEnabled.value ? '已启用（将在首次播放时初始化）' : '未启用');
     };
 
@@ -296,11 +412,8 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
             playing.value = false;
         } else {
             try {
-                // 确保频谱分析器存在（在用户手势上下文中同步创建 AudioContext）
-                ensureAnalyser();
-                // 在播放前确保 AudioContext 处于 running 状态（如果已启用）
+                // 在用户手势上下文中创建/恢复音频图
                 await ensureAudioContextRunning();
-
                 await audio.play();
                 playing.value = true;
             } catch (error) {
@@ -313,24 +426,31 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
 
     // 切换静音
     const toggleMute = () => {
-        isMuted.value = !isMuted.value;
-        audio.muted = isMuted.value;
-        console.log(`[AudioController] 切换静音: muted=${isMuted.value}`);
-        if (isMuted.value) {
+        if (!isMuted.value) {
+            volumeBeforeMute = volume.value > 0 ? volume.value : (volumeBeforeMute || 66);
+            isMuted.value = true;
             volume.value = 0;
         } else {
-            volume.value = audio.volume * 100;
+            isMuted.value = false;
+            volume.value = volumeBeforeMute || 66;
         }
+        applyVolumeToOutput();
         localStorage.setItem('player_volume', volume.value);
+        console.log(`[AudioController] 切换静音: muted=${isMuted.value}, volume=${volume.value}`);
     };
 
     // 修改音量
     const changeVolume = () => {
-        audio.volume = volume.value / 100;
+        volume.value = Math.max(0, Math.min(100, Number(volume.value) || 0));
+        if (volume.value > 0) {
+            isMuted.value = false;
+            volumeBeforeMute = volume.value;
+        } else {
+            isMuted.value = true;
+        }
+        applyVolumeToOutput();
         localStorage.setItem('player_volume', volume.value);
-        isMuted.value = volume.value === 0;
-        audio.muted = isMuted.value;
-        console.log(`[AudioController] 修改音量: volume=${volume.value}, audio.volume=${audio.volume}, muted=${isMuted.value}`);
+        console.log(`[AudioController] 修改音量: volume=${volume.value}, muted=${isMuted.value}`);
     };
 
     // 设置进度
@@ -357,18 +477,39 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         audio.removeEventListener('pause', handleAudioEvent);
         audio.removeEventListener('timeupdate', updateCurrentTime);
 
-        // 清理 Web Audio 资源
-        if (webAudioInitialized.value) {
-            if (sourceNode.value) {
-                sourceNode.value.disconnect();
+        spectrumBlockHandlers.clear();
+
+        if (spectrumTapNode.value) {
+            try {
+                spectrumTapNode.value.disconnect();
+            } catch (error) {
+                /* ignore */
             }
-            if (gainNode.value) {
-                gainNode.value.disconnect();
-            }
-            if (audioContext.value) {
-                audioContext.value.close();
+            if (spectrumTapNode.value.port) spectrumTapNode.value.port.onmessage = null;
+            spectrumTapNode.value.onaudioprocess = null;
+            spectrumTapNode.value = null;
+        }
+        for (const node of [sourceNode.value, volumeGainNode.value, gainNode.value]) {
+            if (node) {
+                try {
+                    node.disconnect();
+                } catch (error) {
+                    /* ignore */
+                }
             }
         }
+        if (audioContext.value) {
+            try {
+                audioContext.value.close();
+            } catch (error) {
+                /* ignore */
+            }
+        }
+        sourceNode.value = null;
+        volumeGainNode.value = null;
+        gainNode.value = null;
+        audioContext.value = null;
+        webAudioInitialized.value = false;
     };
 
     return {
@@ -391,7 +532,9 @@ export default function useAudioController({ onSongEnd, updateCurrentTime }) {
         loudnessNormalizationEnabled,
         currentLoudnessGain,
         webAudioInitialized,
-        analyserNode,
-        ensureAnalyser
+        audioContext,
+        setOutputDevice,
+        // 频谱采集（AudioWorklet 帧块）
+        onSpectrumBlock
     };
 }

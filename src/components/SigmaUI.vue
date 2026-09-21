@@ -12,27 +12,31 @@
     </div>
 
     <!-- 设置界面（只在 Sigma 窗口内出现，左上角返回箭头） -->
-    <div v-if="view === 'settings'" class="sigma-view sigma-view--settings">
-      <div class="sigma-view-bar">
-        <button type="button" class="sigma-back-btn" title="返回" aria-label="返回" @click="view = 'player'">
-          <i class="fas fa-chevron-left"></i>
-        </button>
-        <button type="button" class="sigma-switch-account" @click="view = 'login'">切换账号</button>
+    <Transition name="sigma-view-fade" :css="!skipViewTransition">
+      <div v-if="view === 'settings'" class="sigma-view sigma-view--settings" @pointerdown="onSigmaDragPointerDown">
+        <div class="sigma-view-bar">
+          <button type="button" class="sigma-back-btn" title="返回" aria-label="返回" @click="view = 'player'">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          <button type="button" class="sigma-switch-account" @click="view = 'login'">切换账号</button>
+        </div>
+        <Settings @show-tutorial="openTutorial" />
       </div>
-      <Settings @show-tutorial="openTutorial" />
-    </div>
+    </Transition>
 
     <!-- 登录界面（未登录时自动显示；登录成功后回到播放器） -->
-    <div v-if="view === 'login'" class="sigma-view sigma-view--login">
-      <div class="sigma-view-bar">
-        <button type="button" class="sigma-back-btn sigma-back-btn--light" title="返回" aria-label="返回" @click="view = 'player'">
-          <i class="fas fa-chevron-left"></i>
-        </button>
+    <Transition name="sigma-view-fade" :css="!skipViewTransition">
+      <div v-if="view === 'login'" class="sigma-view sigma-view--login" @pointerdown="onSigmaDragPointerDown">
+        <div class="sigma-view-bar">
+          <button type="button" class="sigma-back-btn sigma-back-btn--light" title="返回" aria-label="返回" @click="view = 'player'">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+        </div>
+        <div class="sigma-login-scroll">
+          <Login />
+        </div>
       </div>
-      <div class="sigma-login-scroll">
-        <Login />
-      </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -45,6 +49,7 @@ import SigmaKeybindManager from './sigma/SigmaKeybindManager.vue';
 import Settings from '@/views/Settings.vue';
 import Login from '@/views/Login.vue';
 import { MoeAuthStore } from '@/stores/store';
+import { useSigmaWindowDrag } from '@/composables/useSigmaWindowDrag';
 
 defineProps({
   player: { type: Object, default: null }
@@ -52,6 +57,45 @@ defineProps({
 
 const view = ref('player');
 const MoeAuth = MoeAuthStore();
+
+// 设置/登录页的自绘拖拽：四边夹在屏幕内，向右拖出松手即贴边收起（主进程处理）
+const SETTINGS_NO_DRAG_SELECTOR = [
+  'button', 'input', 'select', 'textarea', 'a',
+  '.setting-card', '.sidebar-item', '.settings-cards', '.settings-sidebar',
+  '.scale-slider-container', '.api-settings-container', '.proxy-settings-container',
+  '.font-list', '.font-search', '.modal', '.custom-modal', '.message-notification'
+].join(', ');
+const { onPointerDown: onSigmaDragPointerDown } = useSigmaWindowDrag(SETTINGS_NO_DRAG_SELECTOR);
+
+// 收起后回到播放器视图，显示主界面收起的样式。
+// - 拖到右边缘收起：dock 持续 → 300ms 后切换（带 0.3s 淡出过渡）
+// - RSHIFT 隐藏/弹出：dock(true) 后紧接着 dock(false) → 直接瞬时切到主界面（无过渡），
+//   这样弹出时看到的就是主界面自己的滑出动画
+const skipViewTransition = ref(false);
+let dockSwitchTimer = null;
+const switchToPlayer = (instant) => {
+  if (view.value === 'player') return;
+  skipViewTransition.value = instant;
+  view.value = 'player';
+  // 用 setTimeout 而不是 rAF：窗口隐藏时 rAF 不触发，标志位会一直留着
+  setTimeout(() => { skipViewTransition.value = false; }, 0);
+};
+const onSigmaDockChanged = (_event, docked) => {
+  if (docked) {
+    if (view.value === 'player' || dockSwitchTimer) return;
+    dockSwitchTimer = setTimeout(() => {
+      dockSwitchTimer = null;
+      switchToPlayer(false);
+    }, 300);
+    return;
+  }
+  // dock(false)：RSHIFT 弹出会走「瞬时 dock(true) → dock(false)」，取消延迟并瞬时切换
+  if (dockSwitchTimer) {
+    clearTimeout(dockSwitchTimer);
+    dockSwitchTimer = null;
+    switchToPlayer(true);
+  }
+};
 
 // 新手教程（首次安装打开）：完成后写入标记
 const ONBOARDING_DONE_KEY = 'jello-onboarding-done';
@@ -102,6 +146,7 @@ const onSettingsChange = (event) => {
 onMounted(() => {
   window.electron?.ipcRenderer?.on('open-settings', onOpenSettings);
   window.addEventListener('settings-change', onSettingsChange);
+  window.electron?.ipcRenderer?.on('sigma-dock-changed', onSigmaDockChanged);
   // 启动时带 --settings（跳转列表任务）且 Sigma 窗口未就绪：主进程记为 pending，这里领取
   window.electron?.ipcRenderer?.invoke?.('consume-pending-settings').then((pending) => {
     if (pending) view.value = 'settings';
@@ -117,6 +162,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.electron?.ipcRenderer?.removeListener('open-settings', onOpenSettings);
   window.removeEventListener('settings-change', onSettingsChange);
+  window.electron?.ipcRenderer?.removeListener('sigma-dock-changed', onSigmaDockChanged);
+  if (dockSwitchTimer) {
+    clearTimeout(dockSwitchTimer);
+    dockSwitchTimer = null;
+  }
 });
 
 // 登录状态变化：登录成功后回播放器并通知主窗口同步登录态；UserInfo 变化覆盖「切换账号」
@@ -152,6 +202,16 @@ watch(() => MoeAuth.UserInfo, (info) => {
   flex-direction: column;
   /* 设置页原本按 (100vh - 160px) 取高，这里铺满窗口并给顶部返回栏留位置 */
   --settings-page-height: calc(100vh - 48px);
+}
+
+/* 设置/登录浮层淡出：收起回主界面时主界面瞬时出现，浮层渐隐（0.3s） */
+.sigma-view-fade-leave-active {
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.sigma-view-fade-leave-to {
+  opacity: 0;
 }
 
 /* 设置页是浅色样式（深色文字），用浅色玻璃底，避免又暗又糊 */

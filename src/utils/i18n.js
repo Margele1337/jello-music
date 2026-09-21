@@ -15,7 +15,7 @@ const messages = {
   'zh-TW': zh_TW,
 };
 
-const getBrowserLocale = () => {
+export const getBrowserLocale = () => {
   const browserLang = navigator.language;
   if (browserLang.startsWith('zh')) {
     if (browserLang === 'zh-TW' || browserLang === 'zh-HK') {

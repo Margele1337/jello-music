@@ -15,9 +15,11 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const BAR_COUNT = 114            // 与 sigmarebase renderSpectrum 的 maxWidth 一致
-const MAX_REF_HEIGHT = Math.sqrt(2.256e7) / 12 - 5 // sigmarebase 幅度上限对应的条高，用于把参考算法映射到窗口高度
 const SPECTRUM_SMOOTHING = 0.335 // sigmarebase 60fps 平滑系数（onRender2D 里更新 amplitudes）
-const IDLE_DECAY = 0.92          // 未播放时每帧衰减
+// 与原版 1:1：原版条形像素高 = refH × (游戏窗口高 / 1080)。
+// 实测游戏窗口 1920x1009（可按实际分辨率修改），所以 1.0x 时我们的条形绝对像素高度与原版一致，
+// 与频谱窗自身高度无关（窗口只决定可见范围/余量）。
+const GAME_FRAMEBUFFER_HEIGHT = 1009
 
 const canvasRef = ref(null)
 const cover = ref('')
@@ -37,9 +39,8 @@ for (let i = 0; i < BAR_COUNT; i++) {
 let lastDrawTime = 0
 let raf = null
 let spectrumScale = 1
-// 频谱形态：'default' 当前帧（灵敏）；'sigma' 第二形态（18 帧延迟 + 分步更新，慢而稳）
-// sigma 形态下暂停时的回落由生产者按同一平滑系数完成，这里不再叠加自身衰减
-let spectrumMode = 'default'
+// 原版 amplitudes 被清空后（换歌/恢复播放）下一帧直接复制目标（复刻 amplitudes.isEmpty() 分支）
+let pendingSnap = false
 // 平滑系数可调（默认即 sigmarebase 的 0.335）
 let spectrumSmoothing = SPECTRUM_SMOOTHING
 
@@ -133,108 +134,61 @@ const draw = (now = performance.now()) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const dpr = window.devicePixelRatio || 1
   const w = canvas.width
   const h = canvas.height
   ctx.clearRect(0, 0, w, h)
 
   // 帧率补偿，保证不同刷新率下衰减速度一致
-  const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 16.67
+  const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 1000 / 60
   lastDrawTime = now
 
-  // 未播放时让条形逐渐回落到零（Sigma 形态由生产者负责回落，避免双重衰减）
-  if (!playing.value && spectrumMode !== 'sigma') {
-    const decay = Math.pow(IDLE_DECAY, dt / 16.67)
-    for (let i = 0; i < BAR_COUNT; i++) levels[i] *= decay
-  }
-
-  // ===== Sigma 形态的平滑：复刻 sigmarebase 在 onRender2D 里更新 amplitudes =====
-  // amplitudes[i] = amplitudes[i] - (amplitudes[i] - target[i]) * min(0.335 * (60 / fps), 1)
-  // 用指数形式做帧率补偿（1 - (1-0.335)^(dt*60)），等价于原版公式但不会在低刷新率下被截断成 1
-  if (spectrumMode === 'sigma') {
-    const alpha = 1 - Math.pow(1 - spectrumSmoothing, (dt / 16.67))
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const next = levels[i] + (targets[i] - levels[i]) * alpha
-      levels[i] = Math.max(0, Math.min(2.256e7, next))
-    }
-  }
-
-  const barWidth = w / BAR_COUNT
-  const maxHeight = h * 0.85 // 条形最高到窗口 85% 高度
-
-  if (spectrumMode === 'sigma') {
-    // ===== 第二形态：1:1 复刻 sigmarebase renderSpectrum =====
-    // 条宽 ceil(窗口宽 / 114)；条高 (sqrt(幅度)/12 - 5) × 窗口高/1080
-    // 注意：原版 getMainWindow().getHeight() 是物理像素，这里同样用 canvas 物理高度，不用 CSS 高度
-    const heightRatio = h / 1080
-    const sigmaBarWidth = Math.ceil(w / BAR_COUNT)
-
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const refHeight = Math.sqrt(levels[i]) / 12 - 5
-      const height = Math.max(0, refHeight) * heightRatio * spectrumScale
-      heights[i] = Math.min(h, height)
-    }
-
-    // 1) 灰色底条 MID_GREY #999999，alpha = 0.2 × alphaValue（左→右渐隐）
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const x = i * sigmaBarWidth
-      if (x >= w) break
-      ctx.fillStyle = barStyles[i]
-      ctx.fillRect(x, h - heights[i], sigmaBarWidth, heights[i])
-    }
-
-    // 2) 主条 LIGHT_GREYISH_BLUE #FEFEFE（原版不透明实心）
-    ctx.fillStyle = '#FEFEFE'
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const x = i * sigmaBarWidth
-      if (x >= w) break
-      ctx.fillRect(x, h - heights[i], sigmaBarWidth, heights[i])
-    }
-
-    // 3) 叠加封面（原版：模糊封面的底部 20% 条）整屏 alpha 0.4，仅裁剪在条形内（对应 stencil）
-    const overlay = blurredCoverStrip || blurredCover
-    if (overlay) {
-      ctx.save()
-      ctx.beginPath()
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const x = i * sigmaBarWidth
-        if (x >= w) break
-        ctx.rect(x, h - heights[i], sigmaBarWidth, heights[i])
-      }
-      ctx.clip()
-      ctx.globalAlpha = 0.4
-      ctx.drawImage(overlay, 0, 0, w, h)
-      ctx.globalAlpha = 1
-      ctx.restore()
-    }
-    return
-  }
-
+  // ===== 平滑：复刻 sigmarebase onRender2D =====
+  // 原版每帧 alpha = min(0.335 * 60 / MinecraftFps, 1)。游戏跑在 300~1100FPS，
+  // 实测等效时间常数 τ = -dt/ln(1-alpha) 稳定在 49.0ms（mean 49.02 / median 49.09）。
+  // 这里按 τ 做指数步进，任何刷新率下曲线都与原版一致（系数 0.335 → τ = 16.67/0.335 ≈ 49.8ms）
+  const tauMs = 1000 / (Math.max(0.001, spectrumSmoothing) * 60)
+  const alpha = Math.min(1, 1 - Math.exp(-dt / tauMs))
   for (let i = 0; i < BAR_COUNT; i++) {
-    // sigmarebase renderSpectrum：height = (sqrt(amplitude) / 12 - 5)，按参考上限归一化后映射到窗口高度
-    const refHeight = Math.max(0, Math.sqrt(levels[i]) / 12 - 5)
-    const scaled = Math.min(1, refHeight / MAX_REF_HEIGHT) * maxHeight * spectrumScale
-    heights[i] = Math.max(2 * dpr, Math.min(h, scaled))
+    const next = levels[i] + (targets[i] - levels[i]) * alpha
+    levels[i] = Number.isFinite(next) ? Math.max(0, Math.min(2.256e7, next)) : 0
   }
 
-  // 1) 灰色底条 #999999（MID_GREY），alpha = 0.2 * alphaValue，左→右渐变
+  // ===== 1:1 复刻 sigmarebase renderSpectrum =====
+  // 条宽 ceil(窗口宽 / 114)；条高按原版绝对像素高度（见 sigmaAmp），不随频谱窗高度缩放
+  const sigmaBarWidth = Math.ceil(w / BAR_COUNT)
+
+  // 与原版 1:1：原版像素高 = refH × (游戏窗口高/1080)；1.0x 时两者绝对像素高度一致
+  const sigmaAmp = (GAME_FRAMEBUFFER_HEIGHT / 1080) * spectrumScale
   for (let i = 0; i < BAR_COUNT; i++) {
-    const x = i * barWidth
-    const y = h - heights[i]
+    const refHeight = Math.sqrt(levels[i]) / 12 - 5
+    const height = Math.max(0, refHeight) * sigmaAmp
+    heights[i] = Math.min(h, height)
+  }
+
+  // 1) 灰色底条 MID_GREY #999999，alpha = 0.2 × alphaValue（左→右渐隐）
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const x = i * sigmaBarWidth
+    if (x >= w) break
     ctx.fillStyle = barStyles[i]
-    ctx.fillRect(x, y, barWidth, heights[i])
+    ctx.fillRect(x, h - heights[i], sigmaBarWidth, heights[i])
   }
 
-  // 2) 封面图叠加：clip 到条形状后铺满绘制，alpha 0.4（模拟 sigmarebase 的 stencil + 模糊封面）
-  if (blurredCover) {
+  // 2) 主条：原版 initStencilBuffer() 里 glColorMask(false,false,false,false)，
+  //    第二次画条只写 stencil、不写颜色；真正显示的是 configureStencilTest() 之后
+  //    drawImage(0,0,W,H, songThumbnail, 0.4) —— 只在条形区域内的模糊封面（底部 20% 条拉伸）。
+  //    所以这里没有白色实心条，只有封面条 0.4 叠在灰色底条上。
+  const overlay = blurredCoverStrip || blurredCover
+  if (overlay) {
     ctx.save()
     ctx.beginPath()
     for (let i = 0; i < BAR_COUNT; i++) {
-      ctx.rect(i * barWidth, h - heights[i], barWidth, heights[i])
+      const x = i * sigmaBarWidth
+      if (x >= w) break
+      ctx.rect(x, h - heights[i], sigmaBarWidth, heights[i])
     }
     ctx.clip()
     ctx.globalAlpha = 0.4
-    ctx.drawImage(blurredCover, 0, 0, w, h)
+    ctx.drawImage(overlay, 0, 0, w, h)
     ctx.globalAlpha = 1
     ctx.restore()
   }
@@ -254,12 +208,10 @@ onMounted(() => {
       const incoming = data.levels
       const count = Math.min(BAR_COUNT, incoming.length)
       for (let i = 0; i < count; i++) targets[i] = incoming[i] || 0
-      if (data.reset) {
-        levels.fill(0)
-      }
-      // 默认形态：即时变化；Sigma 形态：交给渲染循环按原版系数平滑逼近 targets
-      if (spectrumMode !== 'sigma') {
-        for (let i = 0; i < count; i++) levels[i] = targets[i]
+      // 原版 amplitudes 被清空后（换歌/恢复播放）下一帧直接复制目标，没有渐变
+      if (data.reset || pendingSnap) {
+        levels.set(targets)
+        pendingSnap = false
       }
     }
     if (data.cover != null && data.cover !== cover.value) {
@@ -270,7 +222,18 @@ onMounted(() => {
     if (data.author != null) author.value = data.author
   })
 
-  window.electron.ipcRenderer.on('playing-status', (_event, p) => { playing.value = !!p })
+  window.electron.ipcRenderer.on('playing-status', (_event, p) => {
+    const wasPlaying = playing.value
+    playing.value = !!p
+    if (!playing.value) {
+      // 原版暂停时 onTick 清空 amplitudes 且 renderSpectrum 不再执行：条形立即消失
+      levels.fill(0)
+      targets.fill(0)
+    } else if (!wasPlaying) {
+      // 恢复播放：amplitudes 为空 → 下一帧直接复制目标
+      pendingSnap = true
+    }
+  })
 
   window.electron.ipcRenderer.on('spectrum-setting-changed', (_e, { key, value }) => {
     if (key === 'spectrumLocked') {
@@ -278,20 +241,17 @@ onMounted(() => {
       applyLock()
     } else if (key === 'spectrumScale') {
       spectrumScale = parseFloat(value) || 1
-    } else if (key === 'spectrumMode') {
-      spectrumMode = value === 'sigma' ? 'sigma' : 'default'
     } else if (key === 'spectrumSigmaSmoothing') {
       const v = Number.parseFloat(value)
-      if (Number.isFinite(v)) spectrumSmoothing = Math.min(1, Math.max(0.02, v))
+      if (Number.isFinite(v)) spectrumSmoothing = Math.min(1, Math.max(0.001, v))
     }
   })
 
   const settings = JSON.parse(localStorage.getItem('settings') || '{}')
   locked.value = settings?.spectrumLocked !== 'off'
   spectrumScale = parseFloat(settings?.spectrumScale || '1.0') || 1
-  spectrumMode = settings?.spectrumMode === 'sigma' ? 'sigma' : 'default'
   const savedSmoothing = Number.parseFloat(settings?.spectrumSigmaSmoothing ?? '')
-  if (Number.isFinite(savedSmoothing)) spectrumSmoothing = Math.min(1, Math.max(0.02, savedSmoothing))
+  if (Number.isFinite(savedSmoothing)) spectrumSmoothing = Math.min(1, Math.max(0.001, savedSmoothing))
 
   applyLock()
   draw()

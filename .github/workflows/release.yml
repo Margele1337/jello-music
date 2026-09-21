@@ -29,10 +29,12 @@ jobs:
       - name: Increment version
         id: set-version
         run: |
+          # 版本规则：package.json 手动 bump 过（与最新 tag 不同）→ 以 package.json 为准；
+          # 否则在最新 tag 上自动 patch +1（patch > 9 进位到 minor）
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
           VERSION=$(git tag --sort=-v:refname | head -n 1)
-          if [ -z "$VERSION" ]; then
-            # 首次发布（仓库还没有 tag）：直接使用 package.json 的版本
-            NEW_VERSION="v$(node -p "require('./package.json').version")"
+          if [ -z "$VERSION" ] || [ "$PKG_VERSION" != "$VERSION" ]; then
+            NEW_VERSION="$PKG_VERSION"
           else
             MAJOR=$(echo $VERSION | awk -F. '{print $1}' | sed 's/v//')
             MINOR=$(echo $VERSION | awk -F. '{print $2}')

@@ -41,6 +41,62 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: '重新观看教程',
                 customText: '打开',
                 action: actions.showTutorial
+            },
+            {
+                key: 'desktopSpectrum',
+                selectAction: 'toggleDesktopSpectrum',
+                defaultValue: 'off',
+                itemIcon: 'fas fa-chart-bar',
+                selectionTitle: '桌面音频频谱',
+                options: [
+                    { displayText: t('da-kai'), value: 'on' },
+                    { displayText: t('guan-bi'), value: 'off' }
+                ],
+                available: 'client',
+                label: '桌面音频频谱'
+            },
+            {
+                key: 'spectrumScale',
+                defaultValue: '1.0',
+                defaultDisplayText: '1.0x',
+                itemIcon: 'fas fa-signal',
+                selectionTitle: '频谱幅度',
+                available: 'client',
+                label: '频谱幅度'
+            },
+            {
+                key: 'spectrumSigmaSmoothing',
+                defaultValue: '0.335',
+                defaultDisplayText: '0.335（原版）',
+                itemIcon: 'fas fa-wave-square',
+                selectionTitle: '平滑系数',
+                available: 'client',
+                label: '平滑系数'
+            },
+            {
+                key: 'spectrumLocked',
+                defaultValue: 'on',
+                itemIcon: 'fas fa-lock',
+                selectionTitle: '频谱锁定',
+                options: [
+                    { displayText: '锁定（穿透鼠标）', value: 'on' },
+                    { displayText: '解锁（可拖动位置）', value: 'off' }
+                ],
+                available: 'client',
+                label: '频谱锁定模式'
+            },
+            {
+                key: 'desktopKeystrokes',
+                selectAction: 'toggleDesktopKeystrokes',
+                defaultValue: 'off',
+                itemIcon: 'fas fa-keyboard',
+                selectionTitle: '按键显示 (KeyStrokes)',
+                options: [
+                    { displayText: t('da-kai'), value: 'on' },
+                    { displayText: t('guan-bi'), value: 'off' }
+                ],
+                available: 'client',
+                label: '按键显示 (KeyStrokes)'
             }
         ]
     },
@@ -141,97 +197,6 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 ],
                 available: 'client',
                 label: t('xian-shi-zhuo-mian-ge-ci')
-            },
-            {
-                key: 'desktopSpectrum',
-                selectAction: 'toggleDesktopSpectrum',
-                defaultValue: 'off',
-                itemIcon: 'fas fa-chart-bar',
-                selectionTitle: '桌面音频频谱',
-                options: [
-                    { displayText: t('da-kai'), value: 'on' },
-                    { displayText: t('guan-bi'), value: 'off' }
-                ],
-                available: 'client',
-                label: '桌面音频频谱'
-            },
-            {
-                key: 'desktopKeystrokes',
-                selectAction: 'toggleDesktopKeystrokes',
-                defaultValue: 'off',
-                itemIcon: 'fas fa-keyboard',
-                selectionTitle: '按键显示 (KeyStrokes)',
-                options: [
-                    { displayText: t('da-kai'), value: 'on' },
-                    { displayText: t('guan-bi'), value: 'off' }
-                ],
-                available: 'client',
-                label: '按键显示 (KeyStrokes)'
-            },
-            {
-                key: 'spectrumLocked',
-                defaultValue: 'on',
-                itemIcon: 'fas fa-lock',
-                selectionTitle: '频谱锁定',
-                options: [
-                    { displayText: '锁定（穿透鼠标）', value: 'on' },
-                    { displayText: '解锁（可拖动位置）', value: 'off' }
-                ],
-                available: 'client',
-                label: '频谱锁定模式'
-            },
-            {
-                key: 'spectrumScale',
-                defaultValue: '1.0',
-                defaultDisplayText: '1.0x',
-                itemIcon: 'fas fa-signal',
-                selectionTitle: '频谱幅度',
-                available: 'client',
-                label: '频谱幅度'
-            },
-            {
-                key: 'spectrumMode',
-                defaultValue: 'default',
-                defaultDisplayText: '默认',
-                itemIcon: 'fas fa-chart-bar',
-                selectionTitle: '频谱形态',
-                options: [
-                    { displayText: '默认（灵敏）', value: 'default' },
-                    { displayText: 'Sigma 原版（18 帧延迟，慢而稳）', value: 'sigma' }
-                ],
-                available: 'client',
-                label: '频谱形态'
-            },
-            {
-                key: 'spectrumSigmaSmoothing',
-                defaultValue: '0.335',
-                defaultDisplayText: '0.335（原版）',
-                itemIcon: 'fas fa-wave-square',
-                selectionTitle: 'Sigma 平滑系数',
-                options: [
-                    { displayText: '0.15（更慢、惯性更强）', value: '0.15' },
-                    { displayText: '0.25', value: '0.25' },
-                    { displayText: '0.335（原版）', value: '0.335' },
-                    { displayText: '0.5（更快）', value: '0.5' },
-                    { displayText: '0.75（接近即时）', value: '0.75' }
-                ],
-                available: 'client',
-                label: 'Sigma 平滑系数'
-            },
-            {
-                key: 'spectrumSigmaDelay',
-                defaultValue: '470',
-                defaultDisplayText: '470ms（原版）',
-                itemIcon: 'fas fa-clock',
-                selectionTitle: 'Sigma 目标延迟',
-                options: [
-                    { displayText: '0ms（无延迟）', value: '0' },
-                    { displayText: '235ms（半）', value: '235' },
-                    { displayText: '470ms（原版 18 帧）', value: '470' },
-                    { displayText: '700ms（更滞后）', value: '700' }
-                ],
-                available: 'client',
-                label: 'Sigma 目标延迟'
             },
             {
                 key: 'desktopLyricsFont',
