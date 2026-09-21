@@ -7,12 +7,14 @@ let silentCheck = false;
 let suppressUpdateAvailableDialog = 0;
 autoUpdater.autoDownload = false; // 自动下载更新
 autoUpdater.autoInstallOnAppQuit = false; // 自动安装更新
-// 开发环境模拟打包状态
-Object.defineProperty(app, 'isPackaged', {
-    get() {
-        return true;
-    }
-});
+// 开发环境模拟打包状态（仅开发期覆盖，避免影响生产环境的 app.isPackaged 判断）
+if (!app.isPackaged && process.env.NODE_ENV === 'development') {
+    Object.defineProperty(app, 'isPackaged', {
+        get() {
+            return true;
+        }
+    });
+}
 
 function showUpdateUnavailableMessage() {
     dialog.showMessageBox({

@@ -22,15 +22,13 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
-      - name: Debug API Key existence
+      - name: Check API Key existence
         run: |
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            echo "❌ OPENAI_API_KEY is NOT set"
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is NOT set"
             exit 1
-          else
-            echo "✅ OPENAI_API_KEY is set"
-            echo "API Key length: ${#OPENAI_API_KEY}"
           fi
+          echo "OPENAI_API_KEY is set"
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 

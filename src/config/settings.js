@@ -74,6 +74,15 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: '平滑系数'
             },
             {
+                key: 'spectrumAvDelay',
+                defaultValue: '590',
+                defaultDisplayText: '590ms',
+                itemIcon: 'fas fa-clock',
+                selectionTitle: '音画差补偿',
+                available: 'client',
+                label: '音画差补偿'
+            },
+            {
                 key: 'spectrumLocked',
                 defaultValue: 'on',
                 itemIcon: 'fas fa-lock',

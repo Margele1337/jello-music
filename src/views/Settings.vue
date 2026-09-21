@@ -69,7 +69,7 @@
                 <h3>{{ getSettingItem(selectionType)?.selectionTitle }}</h3>
                 <input v-if="isFontSelection()" class="font-search" placeholder="搜索字体..."
                     v-model="fontSearch" />
-                <ul v-if="!isFontSelection() && selectionType !== 'audioOutputDevice' && selectionType !== 'spectrumScale' && selectionType !== 'spectrumSigmaSmoothing'">
+                <ul v-if="!isFontSelection() && selectionType !== 'audioOutputDevice' && selectionType !== 'spectrumScale' && selectionType !== 'spectrumSigmaSmoothing' && selectionType !== 'spectrumAvDelay'">
                     <li v-for="option in getSettingItem(selectionType)?.options || []" :key="option.value"
                         @click="selectOption(option)">
                         {{ option.displayText }}
@@ -92,10 +92,7 @@
                         <li v-if="!fontSearch || option.displayText.toLowerCase().includes(fontSearch.toLowerCase())"
                             :style="{ fontFamily: option.value }"
                             @click="selectFontOption(option)"
-                            v-html="fontSearch? option.displayText.replace(
-                                new RegExp(fontSearch, 'ig'),
-                                `<mark>${fontSearch}</mark>`
-                            ): option.displayText">
+                            v-html="highlightFontName(option.displayText)">
                         </li>
                     </template>
                     
@@ -142,6 +139,23 @@
                             <span>0.335</span>
                             <span>0.7</span>
                             <span>1.0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="selectionType === 'spectrumAvDelay'" class="scale-slider-container">
+                    <div class="scale-slider-label">
+                        音画差补偿: {{ spectrumAvDelay }}ms
+                        <span class="scale-slider-hint">预读提前量：频谱领先声音的量（原版领先 420ms；声音本身零延迟）</span>
+                    </div>
+                    <div class="scale-slider-wrapper">
+                        <input type="range" min="0" max="1500" step="10" v-model.number="spectrumAvDelay"
+                            class="scale-slider" @change="saveSpectrumAvDelay" />
+                        <div class="scale-marks">
+                            <span>0</span>
+                            <span>590</span>
+                            <span>1000</span>
+                            <span>1500</span>
                         </div>
                     </div>
                 </div>
@@ -404,6 +418,11 @@ const openSelection = (type, helpLink) => {
         spectrumSigmaSmoothing.value = Number.isFinite(saved) ? Math.min(1, Math.max(0.001, saved)) : 0.335;
     }
 
+    if (type === 'spectrumAvDelay') {
+        const saved = parseFloat(selectedSettings.value.spectrumAvDelay?.value ?? '');
+        spectrumAvDelay.value = Number.isFinite(saved) ? Math.min(1500, Math.max(0, saved)) : 590;
+    }
+
     if (isFontSelection(type)) void loadLocalFonts();
 
     if (type === 'proxy') {
@@ -614,6 +633,31 @@ const selectOption = async (option) => {
     markRefreshHint(selectionType.value);
 };
 
+const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[char]));
+
+// 字体搜索高亮：正则转义（特殊字符不抛异常）+ HTML 转义（不注入）
+const highlightFontName = (text) => {
+    const source = String(text ?? '');
+    const query = fontSearch.value;
+    if (!query) return escapeHtml(source);
+    let pattern;
+    try {
+        pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
+    } catch (error) {
+        return escapeHtml(source);
+    }
+    let result = '';
+    let lastIndex = 0;
+    for (const match of source.matchAll(pattern)) {
+        result += escapeHtml(source.slice(lastIndex, match.index))
+            + '<mark>' + escapeHtml(match[0]) + '</mark>';
+        lastIndex = match.index + match[0].length;
+    }
+    return result + escapeHtml(source.slice(lastIndex));
+};
+
 const selectFontOption = (option) => {
     const key = selectionType.value;
     selectedSettings.value[key] = {
@@ -696,6 +740,11 @@ onMounted(() => {
             if (key === 'spectrumSigmaSmoothing') {
                 const value = savedSettings[key] || '0.335';
                 selectedSettings.value[key] = { displayText: value, value: value };
+                continue;
+            }
+            if (key === 'spectrumAvDelay') {
+                const value = savedSettings[key] || '590';
+                selectedSettings.value[key] = { displayText: `${value}ms`, value: value };
                 continue;
             }
             if (isFontSelection(key)) {
@@ -1082,6 +1131,7 @@ const clearShortcut = (key) => {
 const dpiScale = ref(1.0);
 const spectrumScale = ref(1.0);
 const spectrumSigmaSmoothing = ref(0.335);
+const spectrumAvDelay = ref(590);
 
 const previewSpectrumScale = () => {
     if (!isElectron()) return;
@@ -1112,6 +1162,15 @@ const saveSpectrumSmoothing = () => {
     const value = spectrumSigmaSmoothing.value.toFixed(3);
     selectedSettings.value.spectrumSigmaSmoothing = {
         displayText: value,
+        value
+    };
+    saveSettings();
+};
+
+const saveSpectrumAvDelay = () => {
+    const value = String(Math.round(spectrumAvDelay.value));
+    selectedSettings.value.spectrumAvDelay = {
+        displayText: `${value}ms`,
         value
     };
     saveSettings();
