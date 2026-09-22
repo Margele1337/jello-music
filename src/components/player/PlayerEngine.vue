@@ -1248,6 +1248,14 @@ const playbackSpeeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 let cleanupAudioOutputDeviceWatcher = null;
 let lastAudioOutputDeviceSignature = null;
 let audioOutputDeviceChangeHandler = null;
+// 音频事件/响度开关的具名 handler：onMounted 注册与 onUnmounted 解绑必须是同一函数引用
+let handleAudioPlay = null;
+let handleAudioPause = null;
+let handleAudioError = null;
+let handleAudioSeeking = null;
+let handleAudioSeeked = null;
+let handleAudioRateChange = null;
+let handleLoudnessChange = null;
 
 const setupAudioOutputDeviceWatcher = () => {
     if (cleanupAudioOutputDeviceWatcher) return;
@@ -1395,7 +1403,7 @@ onMounted(() => {
     window.addEventListener('audio-output-device-change', audioOutputDeviceChangeHandler);
 
     // 监听响度规格化开关变更
-    const handleLoudnessChange = (event) => {
+    handleLoudnessChange = (event) => {
         const enabled = event.detail.enabled;
         console.log('[PlayerEngine] 响度规格化开关变更:', enabled);
         toggleLoudnessNormalization(enabled);
@@ -1505,30 +1513,35 @@ onMounted(() => {
     }
 
     // 设置播放引擎的监听器
-    audio.addEventListener('pause', () => {
+    handleAudioPause = () => {
         playing.value = false;
         console.log('[PlayerEngine] 暂停事件');
         syncLookahead(audio.currentTime, false, currentSpeed.value);
         // 暂停时清除SMTC位置状态
         mediaSession.clearPositionState();
         if (isElectron()) window.electron.ipcRenderer.send('play-pause-action', playing.value, audio.currentTime);
-    });
+    };
+    audio.addEventListener('pause', handleAudioPause);
 
-    audio.addEventListener('play', () => {
+    handleAudioPlay = () => {
         playing.value = true;
         console.log('[PlayerEngine] 播放事件');
         if (audio.src) setLookaheadSource(audio.src);
         syncLookahead(audio.currentTime, true, currentSpeed.value, true);
         if (!lyricsData.value.length) getCurrentLyrics();
         if (isElectron()) window.electron.ipcRenderer.send('play-pause-action', playing.value, audio.currentTime);
-    });
+    };
+    audio.addEventListener('play', handleAudioPlay);
 
     // 拖动进度 / 倍速变化时，预读播放器强制重新对齐
-    audio.addEventListener('seeking', () => syncLookahead(audio.currentTime, playing.value, currentSpeed.value, true));
-    audio.addEventListener('seeked', () => syncLookahead(audio.currentTime, playing.value, currentSpeed.value, true));
-    audio.addEventListener('ratechange', () => syncLookahead(audio.currentTime, playing.value, audio.playbackRate, true));
+    handleAudioSeeking = () => syncLookahead(audio.currentTime, playing.value, currentSpeed.value, true);
+    handleAudioSeeked = () => syncLookahead(audio.currentTime, playing.value, currentSpeed.value, true);
+    handleAudioRateChange = () => syncLookahead(audio.currentTime, playing.value, audio.playbackRate, true);
+    audio.addEventListener('seeking', handleAudioSeeking);
+    audio.addEventListener('seeked', handleAudioSeeked);
+    audio.addEventListener('ratechange', handleAudioRateChange);
 
-    audio.addEventListener('error', async (e) => {
+    handleAudioError = async (e) => {
         console.log('[PlayerEngine] 音频错误代码:', audio.error?.code);
         console.error('[PlayerEngine] 音频错误:', e);
         if(audio.error?.code == 4){
@@ -1539,7 +1552,8 @@ onMounted(() => {
         }else{
             window.$modal.alert(t('yin-pin-jia-zai-shi-bai'));
         }
-    });
+    };
+    audio.addEventListener('error', handleAudioError);
 
     console.log('[PlayerEngine] 音频初始化完成');
 });
@@ -1559,6 +1573,10 @@ onUnmounted(() => {
     // 清除自动切换定时器
     clearAutoSwitchTimer();
 
+    // 清除歌词滚动恢复定时器
+    if (lyricScrollTimer) clearTimeout(lyricScrollTimer);
+    lyricScrollTimer = null;
+
     // 停止频谱采集（AudioWorklet 帧块订阅 + 空闲补发定时器）
     disposeSpectrumTap?.();
     disposeSpectrumTap = null;
@@ -1577,15 +1595,39 @@ onUnmounted(() => {
     cleanupAudioOutputDeviceWatcher = null;
 
     // 移除响度规格化事件监听
-    window.removeEventListener('loudness-normalization-change', () => {});
+    if (handleLoudnessChange) {
+        window.removeEventListener('loudness-normalization-change', handleLoudnessChange);
+        handleLoudnessChange = null;
+    }
+
+    // 清理组件特定的监听器（必须传注册时的同一函数引用；先解绑再销毁控制器，避免销毁过程触发暂停 IPC）
+    if (handleAudioPause) {
+        audio.removeEventListener('pause', handleAudioPause);
+        handleAudioPause = null;
+    }
+    if (handleAudioPlay) {
+        audio.removeEventListener('play', handleAudioPlay);
+        handleAudioPlay = null;
+    }
+    if (handleAudioError) {
+        audio.removeEventListener('error', handleAudioError);
+        handleAudioError = null;
+    }
+    if (handleAudioSeeking) {
+        audio.removeEventListener('seeking', handleAudioSeeking);
+        handleAudioSeeking = null;
+    }
+    if (handleAudioSeeked) {
+        audio.removeEventListener('seeked', handleAudioSeeked);
+        handleAudioSeeked = null;
+    }
+    if (handleAudioRateChange) {
+        audio.removeEventListener('ratechange', handleAudioRateChange);
+        handleAudioRateChange = null;
+    }
 
     // 使用AudioController的销毁方法清理基本监听器
     audioController.destroy();
-
-    // 清理组件特定的监听器
-    audio.removeEventListener('pause', () => { });
-    audio.removeEventListener('play', () => { });
-    audio.removeEventListener('error', () => { });
 
     // 清理系统媒体快捷键
     if (isElectron()) {
