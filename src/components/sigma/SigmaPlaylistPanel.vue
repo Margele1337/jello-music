@@ -16,12 +16,13 @@
 <script setup>
 // 对应 sigmarebase 左栏歌单列表（原版 musicTabs 的内容）
 // 从上到下：每日推荐、我喜欢、我的歌单…
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { get } from '../../utils/request';
 import { MoeAuthStore } from '../../stores/store';
 
 const emit = defineEmits(['select']);
 
+const auth = MoeAuthStore();
 const items = ref([]);
 const selectedKey = ref('');
 
@@ -37,7 +38,6 @@ const load = async () => {
     { key: 'daily', type: 'daily', name: '每日推荐' }
   ];
   try {
-    const auth = MoeAuthStore();
     const response = await get('/user/playlist', { pagesize: 500, t: localStorage.getItem('t') });
     if (response?.status === 1) {
       const info = Array.isArray(response.data?.info) ? [...response.data.info] : [];
@@ -66,6 +66,11 @@ const load = async () => {
   }
   items.value = list;
 };
+
+// 面板随播放器常驻（v-show），登录前就已挂载：登录/切换账号后需重新拉取歌单
+watch(() => auth.UserInfo?.userid, () => {
+  load();
+});
 
 onMounted(load);
 </script>

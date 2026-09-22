@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // ── IPC 通道白名单 ──
 // 渲染端只能使用应用自身用到的通道；扩展页面使用 electron/preload-extension.cjs（不含原始 ipcRenderer）。
 const SEND_CHANNELS = new Set([
+    'auth-changed',
     'custom-shortcut',
     'desktop-keystrokes-action',
     'desktop-lyrics-action',
@@ -15,8 +16,11 @@ const SEND_CHANNELS = new Set([
     'server-lyrics',
     'set-ignore-mouse-events',
     'set-spectrum-ignore-mouse-events',
+    'settings-changed',
     'set-tray-title',
     'sigma-command',
+    'sigma-hotkey-suspend',
+    'sigma-request-settings',
     'sigma-request-state',
     'sigma-state',
     'sigma-window-animate-done',
