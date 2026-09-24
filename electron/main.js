@@ -193,6 +193,12 @@ if (settings?.gpuAcceleration === 'on') {
     app.commandLine.appendSwitch('disable-gpu-compositing');
 }
 
+// 全屏游戏等场景下主窗口会被遮挡：Chromium 默认会「后台化」被遮挡的渲染进程
+// （降低进程优先级、节流定时器），导致频谱数据生产与 HUD 刷新卡顿。
+// 关闭渲染进程后台化与后台定时器节流，保证遮挡时频谱依然流畅。
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+
 if (settings?.preventAppSuspension === 'on') {
     blockerId = powerSaveBlocker.start('prevent-display-sleep');
 }
