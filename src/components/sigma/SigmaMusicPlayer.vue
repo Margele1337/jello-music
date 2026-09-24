@@ -13,17 +13,17 @@
     <!-- 专辑封面 114x114 @ (68,430) -->
     <div class="smp-artwork" :style="artworkStyle"></div>
 
-    <!-- 歌名 / 歌手（无歌手时为单行 Jello Music，位于 y=562） -->
-    <div class="smp-title" :class="{ single: !titleLine2 }">{{ titleLine1 }}</div>
-    <div class="smp-subtitle" v-if="titleLine2">{{ titleLine2 }}</div>
+    <!-- 歌名 / 歌手（无歌手时为单行 Jello Music，位于 y=562）：Java2D 图集渲染 -->
+    <SigmaText class="smp-title" :class="{ single: !titleLine2 }" :text="titleLine1" :size="14" :box-width="190" :box-height="16" align="center" />
+    <SigmaText class="smp-subtitle" v-if="titleLine2" :text="titleLine2" :size="14" :box-width="190" :box-height="16" align="center" />
 
     <!-- 时长 -->
-    <div class="smp-time-left">{{ elapsedText }}</div>
-    <div class="smp-time-right">{{ durationText }}</div>
+    <SigmaText class="smp-time-left" :text="elapsedText" :size="14" :box-height="16" />
+    <SigmaText class="smp-time-right" :text="durationText" :size="14" :box-width="50" :box-height="16" align="right" />
 
     <!-- Logo -->
-    <div class="smp-logo">Jello</div>
-    <div class="smp-logo-sub">music</div>
+    <SigmaText class="smp-logo" text="Jello" :size="40" :box-height="44" />
+    <SigmaText class="smp-logo-sub" text="music" :size="20" :box-height="22" />
 
     <!-- 左栏歌单（每日推荐 / 我喜欢 / 我的歌单…），位于封面之下 -->
     <SigmaPlaylistPanel class="smp-playlist" @select="onPlaylistSelect" />
@@ -71,6 +71,7 @@ import SigmaProgressBar from './SigmaProgressBar.vue';
 import SigmaSpectrumButton from './SigmaSpectrumButton.vue';
 import SigmaSearchBox from './SigmaSearchBox.vue';
 import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
+import SigmaText from './SigmaText.vue';
 import { get } from '../../utils/request';
 
 const props = defineProps({
