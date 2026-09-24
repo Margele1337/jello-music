@@ -22,6 +22,8 @@ const props = defineProps({
 const canvasRef = ref(null);
 const atlas = ref(null);
 const lineHeight = computed(() => (atlas.value ? atlas.value.lineHeight : props.size));
+// 缺字（中文）走浏览器度量时需要临时 context
+const measureCtx = document.createElement('canvas').getContext('2d');
 
 const canvasStyle = computed(() => ({
   width: props.boxWidth ? props.boxWidth + 'px' : 'auto',
@@ -32,7 +34,7 @@ const render = () => {
   const canvas = canvasRef.value;
   if (!canvas) return;
   const a = atlas.value;
-  const cssW = props.boxWidth || (a ? measureSigmaText(a, props.text) : 1);
+  const cssW = props.boxWidth || (a ? measureSigmaText(a, props.text, measureCtx) : 1);
   const cssH = props.boxHeight || (a ? a.lineHeight : props.size);
   canvas.width = Math.max(1, Math.round(cssW));
   canvas.height = Math.max(1, Math.round(cssH));
@@ -40,7 +42,7 @@ const render = () => {
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!a || !props.text) return;
-  const textWidth = measureSigmaText(a, props.text);
+  const textWidth = measureSigmaText(a, props.text, measureCtx);
   let x = 0;
   if (props.align === 'center') x = Math.floor((cssW - textWidth) / 2);
   else if (props.align === 'right') x = cssW - textWidth;

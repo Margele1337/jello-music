@@ -45,14 +45,33 @@ export const loadSigmaAtlas = (size) => {
   return promise;
 };
 
+// 图集中没有的字形（如中文）改用浏览器字体渲染，与改造前的观感一致
+const FALLBACK_STACK = "'JelloLight', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', sans-serif";
+
 // 与 Slick TrueTypeFont.getWidth 一致：逐字符 advance 累加（无字距调整）
-export const measureSigmaText = (atlas, text) => {
+// ctx 可选：提供时缺失字形用浏览器度量（中文），否则按半字号估算
+export const measureSigmaText = (atlas, text, ctx = null) => {
   if (!atlas || !text) return 0;
   let width = 0;
+  let measured = null;
   for (const ch of String(text)) {
     const glyph = atlas.glyphs[ch.codePointAt(0)];
-    width += glyph ? glyph.adv : Math.round(atlas.size / 2);
+    if (glyph) {
+      width += glyph.adv;
+      continue;
+    }
+    if (ctx) {
+      if (measured === null) {
+        ctx.save();
+        ctx.font = atlas.size + 'px ' + FALLBACK_STACK;
+        measured = true;
+      }
+      width += Math.ceil(ctx.measureText(ch).width);
+    } else {
+      width += Math.round(atlas.size / 2);
+    }
   }
+  if (measured) ctx.restore();
   return width;
 };
 
@@ -87,9 +106,17 @@ export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#fffff
     if (glyph) {
       ctx.drawImage(source, glyph.x, glyph.y, glyph.w, glyph.h, penX, y, glyph.w, glyph.h);
       penX += glyph.adv;
-    } else {
-      penX += Math.round(atlas.size / 2);
+      continue;
     }
+    // 图集缺失字形（中文等）：浏览器字体渲染，基线对齐图集 ascent
+    ctx.save();
+    ctx.font = atlas.size + 'px ' + FALLBACK_STACK;
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(ch, penX, y + atlas.ascent);
+    const w = Math.ceil(ctx.measureText(ch).width);
+    ctx.restore();
+    penX += w;
   }
   ctx.globalAlpha = prevAlpha;
   return penX - x;
