@@ -117,7 +117,7 @@
     },
     "mac": {
       "x64ArchFiles": "*",
-      "icon": "build/icons/icon.icns",
+      "icon": "build/icons/logo.png",
       "target": [
         "dmg",
         "zip"
