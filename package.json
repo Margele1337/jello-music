@@ -1,6 +1,6 @@
 {
   "name": "jello-music",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "homepage": "https://github.com/Margele1337/jello-music",
   "main": "electron/main.js",
   "repository": {
