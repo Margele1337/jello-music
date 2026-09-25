@@ -48,7 +48,14 @@ public class FontAtlas {
     }
 
     static void build(File ttf, File outDir, int size, String prefix) throws Exception {
-        Font font = Font.createFont(Font.TRUETYPE_FONT, ttf).deriveFont((float) size);
+        // 文件路径 = TrueType 字体；否则按 Java 逻辑字体名（SansSerif/Dialog 等）处理，
+        // 后者用于复刻 ResourceRegistry.getChineseFont（缩略图卡片用它渲染中英文）
+        Font font;
+        if (ttf.isFile()) {
+            font = Font.createFont(Font.TRUETYPE_FONT, ttf).deriveFont((float) size);
+        } else {
+            font = new Font(ttf.getName(), Font.PLAIN, size);
+        }
 
         // probe metrics the same way Slick does
         BufferedImage probe = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
