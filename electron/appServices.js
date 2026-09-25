@@ -109,6 +109,12 @@ export function createWindow() {
     });
 
     mainWindow.on('close', (event) => {
+        // 开发模式：关闭主窗口即退出应用（连带关闭频谱/歌词等子窗口，dev 脚本随之中止）
+        if (process.env.NODE_ENV === 'development') {
+            app.isQuitting = true;
+            app.quit();
+            return;
+        }
         const savedConfig = store.get('settings');
         if (savedConfig?.minimizeToTray === 'off') {
             app.isQuitting = true;

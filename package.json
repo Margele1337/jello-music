@@ -16,7 +16,7 @@
     "preview": "vite preview",
     "electron:serve": "cross-env NODE_ENV=development node electron/start-electron.cjs",
     "api": "node api/app.js --platform=lite --port=6521",
-    "dev": "npm run api & npm run serve & npm run electron:serve",
+    "dev": "run-p --race api serve electron:serve",
     "build:api:win": "npm run --prefix ./api pkgwin",
     "build:api:linux": "npm run --prefix ./api pkglinux",
     "build:api:linux-arm64": "npm run --prefix ./api pkglinux-arm64",
