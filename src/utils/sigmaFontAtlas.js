@@ -7,8 +7,9 @@ const META_IMPORTS = {
   'light-20': () => import('../assets/sigma/fonts/atlas-light-20.json'),
   'light-25': () => import('../assets/sigma/fonts/atlas-light-25.json'),
   'light-40': () => import('../assets/sigma/fonts/atlas-light-40.json'),
-  // sans：Java 逻辑字体，对应 ResourceRegistry.getChineseFont（缩略图卡片中英文都用它）
-  'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.json')
+  // sans：Java 逻辑字体，对应 ResourceRegistry.getChineseFont（缩略图卡片/输入框用）
+  'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.json'),
+  'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.json')
 };
 
 const PNG_IMPORTS = {
@@ -18,7 +19,8 @@ const PNG_IMPORTS = {
   'light-20': () => import('../assets/sigma/fonts/atlas-light-20.png?url'),
   'light-25': () => import('../assets/sigma/fonts/atlas-light-25.png?url'),
   'light-40': () => import('../assets/sigma/fonts/atlas-light-40.png?url'),
-  'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.png?url')
+  'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.png?url'),
+  'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.png?url')
 };
 
 const cache = new Map();
