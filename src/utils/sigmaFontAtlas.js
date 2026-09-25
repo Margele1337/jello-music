@@ -1,31 +1,36 @@
 // Java2D 字形图集：与 sigmarebase 的 Slick TrueTypeFont 同源光栅化（见 tools/font-atlas/FontAtlas.java）
 // 浏览器端只做 1:1 贴图，不做文本排版，从而保证英文与原版逐像素一致。
 const META_IMPORTS = {
-  13: () => import('../assets/sigma/fonts/atlas-light-13.json'),
-  14: () => import('../assets/sigma/fonts/atlas-light-14.json'),
-  20: () => import('../assets/sigma/fonts/atlas-light-20.json'),
-  25: () => import('../assets/sigma/fonts/atlas-light-25.json'),
-  40: () => import('../assets/sigma/fonts/atlas-light-40.json')
+  'light-12': () => import('../assets/sigma/fonts/atlas-light-12.json'),
+  'light-13': () => import('../assets/sigma/fonts/atlas-light-13.json'),
+  'light-14': () => import('../assets/sigma/fonts/atlas-light-14.json'),
+  'light-20': () => import('../assets/sigma/fonts/atlas-light-20.json'),
+  'light-25': () => import('../assets/sigma/fonts/atlas-light-25.json'),
+  'light-40': () => import('../assets/sigma/fonts/atlas-light-40.json'),
+  // sans：Java 逻辑字体，对应 ResourceRegistry.getChineseFont（缩略图卡片中英文都用它）
+  'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.json')
 };
 
 const PNG_IMPORTS = {
-  13: () => import('../assets/sigma/fonts/atlas-light-13.png?url'),
-  14: () => import('../assets/sigma/fonts/atlas-light-14.png?url'),
-  20: () => import('../assets/sigma/fonts/atlas-light-20.png?url'),
-  25: () => import('../assets/sigma/fonts/atlas-light-25.png?url'),
-  40: () => import('../assets/sigma/fonts/atlas-light-40.png?url')
+  'light-12': () => import('../assets/sigma/fonts/atlas-light-12.png?url'),
+  'light-13': () => import('../assets/sigma/fonts/atlas-light-13.png?url'),
+  'light-14': () => import('../assets/sigma/fonts/atlas-light-14.png?url'),
+  'light-20': () => import('../assets/sigma/fonts/atlas-light-20.png?url'),
+  'light-25': () => import('../assets/sigma/fonts/atlas-light-25.png?url'),
+  'light-40': () => import('../assets/sigma/fonts/atlas-light-40.png?url'),
+  'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.png?url')
 };
 
 const cache = new Map();
 
-// 加载指定字号的图集（含位图与字形度量），重复调用返回同一实例
-export const loadSigmaAtlas = (size) => {
-  const key = Number(size);
+// 加载指定字体族/字号的图集（含位图与字形度量），重复调用返回同一实例
+export const loadSigmaAtlas = (size, family = 'light') => {
+  const key = family + '-' + Number(size);
   if (cache.has(key)) return cache.get(key);
   const promise = (async () => {
     const metaLoader = META_IMPORTS[key];
     const pngLoader = PNG_IMPORTS[key];
-    if (!metaLoader || !pngLoader) throw new Error('no atlas for size ' + size);
+    if (!metaLoader || !pngLoader) throw new Error('no atlas for ' + key);
     const meta = (await metaLoader()).default;
     const url = (await pngLoader()).default;
     const image = await new Promise((resolve, reject) => {
@@ -35,7 +40,8 @@ export const loadSigmaAtlas = (size) => {
       img.src = url;
     });
     const atlas = {
-      size: key,
+      size: Number(size),
+      family,
       lineHeight: meta.lineHeight,
       ascent: meta.ascent,
       glyphs: meta.glyphs,

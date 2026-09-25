@@ -17,6 +17,9 @@ const MARQUEE_FADE = 0.75;
 const props = defineProps({
   text: { type: String, default: '' },
   size: { type: Number, default: 14 },
+  // 字体族：light = helvetica-neue-light（原版 JelloLightFont*）
+  //        sans  = Java 逻辑字体（原版 getChineseFont，缩略图卡片）
+  family: { type: String, default: 'light' },
   // 布局盒子（对应原 CSS 盒子的宽/高）：用于居中/右对齐、裁切与垂直对齐
   boxWidth: { type: Number, default: 0 },
   boxHeight: { type: Number, default: 0 },
@@ -143,6 +146,15 @@ const render = () => {
   renderStatic(ctx, a, cssW, cssH, text);
 };
 
+const loadAtlas = async () => {
+  try {
+    atlas.value = await loadSigmaAtlas(props.size, props.family);
+  } catch (error) {
+    console.error('[SigmaText] 字体图集加载失败:', error);
+  }
+  render();
+};
+
 onMounted(async () => {
   if (props.fluid && typeof ResizeObserver !== 'undefined' && canvasRef.value) {
     resizeObserver = new ResizeObserver((entries) => {
@@ -154,18 +166,16 @@ onMounted(async () => {
     });
     resizeObserver.observe(canvasRef.value);
   }
-  try {
-    atlas.value = await loadSigmaAtlas(props.size);
-  } catch (error) {
-    console.error('[SigmaText] 字体图集加载失败:', error);
-  }
-  render();
+  await loadAtlas();
 });
 
 watch(
-  () => [props.text, props.size, props.boxWidth, props.boxHeight, props.align, props.color, props.alpha, props.scroll, props.phase, props.truncate, props.fluid],
+  () => [props.text, props.size, props.boxWidth, props.boxHeight, props.align, props.color, props.alpha, props.scroll, props.phase, props.truncate, props.fluid, props.family],
   render
 );
+watch(() => [props.size, props.family], (next, prev) => {
+  if (prev && (next[0] !== prev[0] || next[1] !== prev[1])) loadAtlas();
+});
 watch(atlas, render);
 onBeforeUnmount(() => {
   stopMarquee();

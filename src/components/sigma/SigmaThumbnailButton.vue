@@ -8,10 +8,10 @@
     <img class="sigma-thumbnail-cover" :src="cover" loading="lazy" alt="" />
     <img class="sigma-thumbnail-cover-blur" :src="cover" loading="lazy" alt="" />
     <img class="sigma-thumbnail-play" :src="playIcon" alt="" />
-    <div v-if="type === 'playlist'" class="sigma-thumbnail-title single">{{ title }}</div>
+    <SigmaText v-if="type === 'playlist'" class="sigma-thumbnail-title single" :text="title" :size="12" family="sans" fluid :box-height="13" align="center" />
     <template v-else>
-      <div class="sigma-thumbnail-title">{{ title }}</div>
-      <div class="sigma-thumbnail-artist">{{ artist }}</div>
+      <SigmaText class="sigma-thumbnail-title" :text="title" :size="12" family="sans" fluid :box-height="13" align="center" />
+      <SigmaText class="sigma-thumbnail-artist" :text="artist" :size="12" family="sans" fluid :box-height="13" align="center" />
     </template>
   </button>
 </template>
@@ -21,6 +21,7 @@
 // 卡片 183x220：封面 153x153 @(15,15)；歌曲卡 #010101、歌单卡 #037C8C；
 // 悬停封面放大 1.0654 + 模糊封面(14px)交叉淡入 + 播放图标 25→50
 import playIcon from '../../assets/sigma/notifications/play-icon.png';
+import SigmaText from './SigmaText.vue';
 
 defineProps({
   type: { type: String, default: 'song' },
