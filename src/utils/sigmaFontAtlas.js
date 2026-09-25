@@ -1,6 +1,7 @@
 // Java2D 字形图集：与 sigmarebase 的 Slick TrueTypeFont 同源光栅化（见 tools/font-atlas/FontAtlas.java）
 // 浏览器端只做 1:1 贴图，不做文本排版，从而保证英文与原版逐像素一致。
 const META_IMPORTS = {
+  13: () => import('../assets/sigma/fonts/atlas-light-13.json'),
   14: () => import('../assets/sigma/fonts/atlas-light-14.json'),
   20: () => import('../assets/sigma/fonts/atlas-light-20.json'),
   25: () => import('../assets/sigma/fonts/atlas-light-25.json'),
@@ -8,6 +9,7 @@ const META_IMPORTS = {
 };
 
 const PNG_IMPORTS = {
+  13: () => import('../assets/sigma/fonts/atlas-light-13.png?url'),
   14: () => import('../assets/sigma/fonts/atlas-light-14.png?url'),
   20: () => import('../assets/sigma/fonts/atlas-light-20.png?url'),
   25: () => import('../assets/sigma/fonts/atlas-light-25.png?url'),
@@ -73,6 +75,40 @@ export const measureSigmaText = (atlas, text, ctx = null) => {
   }
   if (measured) ctx.restore();
   return width;
+};
+
+// 超宽截断（对应 CSS text-overflow: ellipsis）
+export const truncateSigmaText = (atlas, text, maxWidth, ctx = null) => {
+  const full = String(text ?? '');
+  if (!atlas || !full) return full;
+  if (measureSigmaText(atlas, full, ctx) <= maxWidth) return full;
+  let dotsWidth = Math.max(1, Math.round(atlas.size / 2));
+  if (ctx) {
+    ctx.save();
+    ctx.font = atlas.size + 'px ' + FALLBACK_STACK;
+    dotsWidth = Math.ceil(ctx.measureText('…').width);
+    ctx.restore();
+  }
+  let result = '';
+  let width = 0;
+  for (const ch of full) {
+    const glyph = atlas.glyphs[ch.codePointAt(0)];
+    let adv;
+    if (glyph) {
+      adv = glyph.adv;
+    } else if (ctx) {
+      ctx.save();
+      ctx.font = atlas.size + 'px ' + FALLBACK_STACK;
+      adv = Math.ceil(ctx.measureText(ch).width);
+      ctx.restore();
+    } else {
+      adv = Math.round(atlas.size / 2);
+    }
+    if (width + adv > maxWidth - dotsWidth) break;
+    width += adv;
+    result += ch;
+  }
+  return result + '…';
 };
 
 // 按颜色着色（等价于 Slick 的 glColor 染色）：白色字形 + source-in 上色，带缓存
