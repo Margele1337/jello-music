@@ -7,8 +7,17 @@
       class="sigma-playlist-item"
       :class="{ active: item.key === selectedKey }"
       @click="onSelect(item)"
+      @pointerenter="hoveredKey = item.key"
+      @pointerleave="hoveredKey = ''"
     >
-      {{ item.name }}
+      <SigmaText
+        :text="item.name"
+        :size="13"
+        fluid
+        truncate
+        align="center"
+        :alpha="item.key === selectedKey || item.key === hoveredKey ? 1 : 0.55"
+      />
     </button>
   </div>
 </template>
@@ -19,12 +28,14 @@
 import { onMounted, ref, watch } from 'vue';
 import { get } from '../../utils/request';
 import { MoeAuthStore } from '../../stores/store';
+import SigmaText from './SigmaText.vue';
 
 const emit = defineEmits(['select']);
 
 const auth = MoeAuthStore();
 const items = ref([]);
 const selectedKey = ref('');
+const hoveredKey = ref('');
 
 const onSelect = (item) => {
   selectedKey.value = item.key;

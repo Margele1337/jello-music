@@ -8,7 +8,7 @@
 // scroll=true 时复刻 MusicPlayer.method13192 的跑马灯：8500ms 周期、前 40% 静止、
 // QuadraticEasing.easeInOutQuad 缓动，滑出副本按 (1 - t*0.75) 淡出，后方跟一份全亮副本。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { loadSigmaAtlas, measureSigmaText, drawSigmaText } from '../../utils/sigmaFontAtlas';
+import { loadSigmaAtlas, measureSigmaText, truncateSigmaText, drawSigmaText } from '../../utils/sigmaFontAtlas';
 
 const MARQUEE_CYCLE_MS = 8500;
 const MARQUEE_EXTRA_SHIFT = 50;
@@ -20,6 +20,10 @@ const props = defineProps({
   // 布局盒子（对应原 CSS 盒子的宽/高）：用于居中/右对齐、裁切与垂直对齐
   boxWidth: { type: Number, default: 0 },
   boxHeight: { type: Number, default: 0 },
+  // fluid：宽度跟随父容器（百分比 + ResizeObserver），用于宽度不固定的列表项
+  fluid: { type: Boolean, default: false },
+  // truncate：超宽时省略号截断（对应 CSS text-overflow: ellipsis）
+  truncate: { type: Boolean, default: false },
   align: { type: String, default: 'left' },
   color: { type: String, default: '#fefefe' },
   alpha: { type: Number, default: 1 },
@@ -30,16 +34,21 @@ const props = defineProps({
 
 const canvasRef = ref(null);
 const atlas = ref(null);
+const measuredWidth = ref(0);
 const lineHeight = computed(() => (atlas.value ? atlas.value.lineHeight : props.size));
 // 缺字（中文）走浏览器度量时需要临时 context
 const measureCtx = document.createElement('canvas').getContext('2d');
 
 const canvasStyle = computed(() => ({
-  width: props.boxWidth ? props.boxWidth + 'px' : 'auto',
+  width: props.fluid ? '100%' : (props.boxWidth ? props.boxWidth + 'px' : 'auto'),
   height: (props.boxHeight || lineHeight.value) + 'px'
 }));
 
+// 有效盒宽：显式 boxWidth 优先，其次 fluid 测量值
+const effectiveWidth = () => props.boxWidth || measuredWidth.value || 0;
+
 let rafId = null;
+let resizeObserver = null;
 
 const stopMarquee = () => {
   if (rafId !== null) {
@@ -56,6 +65,11 @@ const easeInOutQuad = (t, b = 0, c = 1, d = 1) => {
   return (-c / 2) * (ratio * (ratio - 2) - 1) + b;
 };
 
+const displayText = (atlasValue, width) => {
+  if (!props.truncate || !atlasValue || width <= 0) return props.text;
+  return truncateSigmaText(atlasValue, props.text, width, measureCtx);
+};
+
 const prepareCanvas = (width, height) => {
   const canvas = canvasRef.value;
   canvas.width = Math.max(1, Math.round(width));
@@ -66,23 +80,24 @@ const prepareCanvas = (width, height) => {
   return ctx;
 };
 
-const renderStatic = (ctx, atlasValue, cssW, cssH) => {
-  const textWidth = measureSigmaText(atlasValue, props.text, measureCtx);
+const renderStatic = (ctx, atlasValue, cssW, cssH, text) => {
+  const textWidth = measureSigmaText(atlasValue, text, measureCtx);
   let x = 0;
   if (props.align === 'center') x = Math.floor((cssW - textWidth) / 2);
   else if (props.align === 'right') x = cssW - textWidth;
   // 半行距：让字形在盒子里的垂直位置与原 CSS 文本一致
   const y = Math.floor((cssH - atlasValue.lineHeight) / 2);
-  drawSigmaText(ctx, atlasValue, props.text, x, y, props.alpha, props.color);
+  drawSigmaText(ctx, atlasValue, text, x, y, props.alpha, props.color);
 };
 
 const renderMarqueeFrame = () => {
   const a = atlas.value;
   const canvas = canvasRef.value;
   if (!a || !canvas) return;
-  const cssW = props.boxWidth;
+  const cssW = effectiveWidth();
   const cssH = props.boxHeight || a.lineHeight;
-  const textWidth = measureSigmaText(a, props.text, measureCtx);
+  const text = displayText(a, cssW);
+  const textWidth = measureSigmaText(a, text, measureCtx);
   const y = Math.floor((cssH - a.lineHeight) / 2);
   const ctx = prepareCanvas(cssW, cssH);
 
@@ -96,11 +111,11 @@ const renderMarqueeFrame = () => {
   const baseX = Math.floor((cssW - visible) / 2);
   const shift = textWidth * eased;
   // 主副本：随缓动左移，按 (1 - t*0.75) 淡出
-  drawSigmaText(ctx, a, props.text, baseX - shift - MARQUEE_EXTRA_SHIFT * eased, y,
+  drawSigmaText(ctx, a, text, baseX - shift - MARQUEE_EXTRA_SHIFT * eased, y,
     props.alpha * Math.min(1, Math.max(0, 1 - eased * MARQUEE_FADE)), props.color);
   // 跟随副本：从右侧进入，全亮
   if (eased > 0) {
-    drawSigmaText(ctx, a, props.text, baseX - shift + textWidth, y, props.alpha, props.color);
+    drawSigmaText(ctx, a, text, baseX - shift + textWidth, y, props.alpha, props.color);
   }
   rafId = requestAnimationFrame(renderMarqueeFrame);
 };
@@ -110,23 +125,35 @@ const render = () => {
   const canvas = canvasRef.value;
   if (!canvas) return;
   const a = atlas.value;
+  const boxW = effectiveWidth();
   if (!a) {
-    prepareCanvas(props.boxWidth || 1, props.boxHeight || props.size);
+    prepareCanvas(boxW || 1, props.boxHeight || props.size);
     return;
   }
-  const cssW = props.boxWidth || measureSigmaText(a, props.text, measureCtx);
+  const text = displayText(a, boxW);
+  const cssW = boxW || measureSigmaText(a, text, measureCtx);
   const cssH = props.boxHeight || a.lineHeight;
-  const textWidth = measureSigmaText(a, props.text, measureCtx);
+  const textWidth = measureSigmaText(a, text, measureCtx);
   // 只有超宽才滚动（原版：var10 <= var3 时 var9 = 0）
-  if (props.scroll && props.boxWidth > 0 && textWidth > props.boxWidth) {
+  if (props.scroll && !props.truncate && boxW > 0 && textWidth > boxW) {
     renderMarqueeFrame();
     return;
   }
   const ctx = prepareCanvas(cssW, cssH);
-  renderStatic(ctx, a, cssW, cssH);
+  renderStatic(ctx, a, cssW, cssH, text);
 };
 
 onMounted(async () => {
+  if (props.fluid && typeof ResizeObserver !== 'undefined' && canvasRef.value) {
+    resizeObserver = new ResizeObserver((entries) => {
+      const width = Math.round(entries[0]?.contentRect?.width || 0);
+      if (width > 0 && width !== measuredWidth.value) {
+        measuredWidth.value = width;
+        render();
+      }
+    });
+    resizeObserver.observe(canvasRef.value);
+  }
   try {
     atlas.value = await loadSigmaAtlas(props.size);
   } catch (error) {
@@ -136,11 +163,15 @@ onMounted(async () => {
 });
 
 watch(
-  () => [props.text, props.size, props.boxWidth, props.boxHeight, props.align, props.color, props.alpha, props.scroll, props.phase],
+  () => [props.text, props.size, props.boxWidth, props.boxHeight, props.align, props.color, props.alpha, props.scroll, props.phase, props.truncate, props.fluid],
   render
 );
 watch(atlas, render);
-onBeforeUnmount(stopMarquee);
+onBeforeUnmount(() => {
+  stopMarquee();
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+});
 </script>
 
 <style scoped>
