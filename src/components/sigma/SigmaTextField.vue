@@ -12,6 +12,7 @@
       style="background: transparent !important; background-color: transparent !important; border: none !important; border-radius: 0 !important; box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;"
       @input="onInput"
       @scroll="render"
+      @select="render"
       @keydown.enter="$emit('submit')"
       @focus="onFocus"
       @blur="onBlur"
@@ -29,7 +30,7 @@
 // 透明度同原版：(field20744/2 + 0.4) * (聚焦且有内容 ? 1 : 0.5)
 //   聚焦且有内容 0.9 / 聚焦空 0.45 / 未聚焦 0.2
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { loadSigmaAtlas, drawSigmaText } from '../../utils/sigmaFontAtlas';
+import { loadSigmaAtlas, measureSigmaText, drawSigmaText } from '../../utils/sigmaFontAtlas';
 
 const FIELD_FONT = 'Arial, "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
 const FIELD_SIZE = 25;
@@ -106,7 +107,19 @@ const render = () => {
   ctx.beginPath();
   ctx.rect(0, 0, width, height);
   ctx.clip();
-  drawSigmaText(ctx, atlasValue, text, FIELD_PAD_LEFT - (input.scrollLeft || 0), y, alpha, '#fefefe');
+  const scrollLeft = input.scrollLeft || 0;
+  // 选区底色自绘（原生 ::selection 已设为透明，否则会盖住 canvas 文字）
+  const selStart = input.selectionStart ?? 0;
+  const selEnd = input.selectionEnd ?? 0;
+  if (focused.value && hasValue && selEnd > selStart) {
+    const lineTop = Math.round((height - (ascent + descent)) / 2);
+    const lineHeight = Math.round(ascent + descent);
+    const x1 = FIELD_PAD_LEFT + measureSigmaText(atlasValue, props.modelValue.slice(0, selStart), measureCtx) - scrollLeft;
+    const x2 = FIELD_PAD_LEFT + measureSigmaText(atlasValue, props.modelValue.slice(0, selEnd), measureCtx) - scrollLeft;
+    ctx.fillStyle = 'rgba(254, 254, 254, 0.22)';
+    ctx.fillRect(Math.round(x1), lineTop, Math.round(x2 - x1), lineHeight);
+  }
+  drawSigmaText(ctx, atlasValue, text, FIELD_PAD_LEFT - scrollLeft, y, alpha, '#fefefe');
   ctx.restore();
 };
 
@@ -182,6 +195,11 @@ onBeforeUnmount(() => {
 
 .sigma-text-field-input::placeholder {
   color: transparent;
+}
+
+/* 选区底色由 canvas 自绘（见 render），否则原生底色会盖住 canvas 文字 */
+.sigma-text-field-input::selection {
+  background: transparent;
 }
 </style>
 
