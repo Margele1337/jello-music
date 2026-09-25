@@ -13,9 +13,9 @@
     <!-- 专辑封面 114x114 @ (68,430) -->
     <div class="smp-artwork" :style="artworkStyle"></div>
 
-    <!-- 歌名 / 歌手（无歌手时为单行 Jello Music，位于 y=562）：Java2D 图集渲染 -->
-    <SigmaText class="smp-title" :class="{ single: !titleLine2 }" :text="titleLine1" :size="14" :box-width="190" :box-height="16" align="center" />
-    <SigmaText class="smp-subtitle" v-if="titleLine2" :text="titleLine2" :size="14" :box-width="190" :box-height="16" align="center" />
+    <!-- 歌名 / 歌手（无歌手时为单行 Jello Music，位于 y=562）：Java2D 图集渲染 + 原版跑马灯 -->
+    <SigmaText class="smp-title" :class="{ single: !titleLine2 }" :text="titleLine1" :size="14" :box-width="190" :box-height="16" align="center" scroll :phase="0" />
+    <SigmaText class="smp-subtitle" v-if="titleLine2" :text="titleLine2" :size="14" :box-width="190" :box-height="16" align="center" scroll :phase="-1000" />
 
     <!-- 时长 -->
     <SigmaText class="smp-time-left" :text="elapsedText" :size="14" :box-height="16" />
