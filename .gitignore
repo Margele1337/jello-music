@@ -17,6 +17,7 @@ test
 bin/*
 .serena/*
 api/.serena/*
+tools/font-atlas/*.class
 
 # Editor directories and files
 .codebuddy/*
