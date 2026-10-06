@@ -43,6 +43,18 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 action: actions.showTutorial
             },
             {
+                key: 'sigmaAcrylic',
+                defaultValue: 'on',
+                itemIcon: 'fas fa-glass',
+                selectionTitle: 'Sigma 毛玻璃背景',
+                options: [
+                    { displayText: t('da-kai'), value: 'on' },
+                    { displayText: t('guan-bi'), value: 'off' }
+                ],
+                available: 'client',
+                label: 'Sigma 毛玻璃背景'
+            },
+            {
                 key: 'desktopSpectrum',
                 selectAction: 'toggleDesktopSpectrum',
                 defaultValue: 'off',

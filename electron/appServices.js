@@ -13,6 +13,14 @@ import { bindExternalLinkHandler } from './services/externalLinkHandler.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
 import { checkForUpdates } from './services/updater.js';
 import { watchForegroundFullscreen, stopForegroundFullscreenWatcher } from './services/fullscreenWatcher.js';
+import {
+    attachSigmaAcrylic,
+    showSigmaAcrylic,
+    hideSigmaAcrylic,
+    isSigmaAcrylicVisible,
+    isSigmaAcrylicEnabled,
+    setSigmaAcrylicHiddenCallback
+} from './services/sigmaAcrylic.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const store = new Store();
 const { TouchBarLabel, TouchBarButton, TouchBarGroup, TouchBarSpacer } = TouchBar;
@@ -735,6 +743,7 @@ export function createSigmaWindow() {
 
     sigmaWindow.once('ready-to-show', () => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+            showSigmaAcrylic(sigmaWindow.getBounds());
             sigmaWindow.show();
         }
     });
@@ -746,6 +755,9 @@ export function createSigmaWindow() {
         cancelSigmaAnimation();
         // 关闭 Sigma 窗口不再回退主界面（主窗口是隐藏播放宿主）；左键托盘可随时重新打开
     });
+
+    // 毛玻璃底层跟随本窗口的 bounds / 可见性 / 焦点
+    attachSigmaAcrylic(sigmaWindow);
 
     if (isDev) {
         sigmaWindow.loadURL('http://localhost:8080/#/sigma');
@@ -765,6 +777,7 @@ export function createSigmaWindow() {
 }
 
 export function closeSigmaWindow() {
+    hideSigmaAcrylic();
     if (sigmaWindow && !sigmaWindow.isDestroyed()) {
         sigmaWindow.destroy();
     }
@@ -777,18 +790,51 @@ export function getSigmaWindow() {
     return sigmaWindow;
 }
 
+// 毛玻璃层用 'floating'，Sigma 呼出时用 'screen-saver'。
+// 只要毛玻璃还亮着，Sigma 就必须留在 'screen-saver'（否则会掉到毛玻璃下面被糊住），
+// 因此"600ms 后降级"这一步要等毛玻璃撤掉之后才能做。
+const resetSigmaAlwaysOnTop = () => {
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
+    if (isSigmaAcrylicVisible()) return;
+    sigmaWindow.setAlwaysOnTop(false);
+};
+
 // 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
     win.setAlwaysOnTop(true, 'screen-saver');
+    // 先亮毛玻璃再 show，保证 Sigma 压在上层
+    showSigmaAcrylic(win.getBounds());
     win.show();
     win.moveTop();
     win.focus();
     setTimeout(() => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            sigmaWindow.setAlwaysOnTop(false);
+            resetSigmaAlwaysOnTop();
         }
     }, 600);
+};
+
+// 毛玻璃撤掉（失焦 / 隐藏 / 关闭开关）时，把 Sigma 的置顶层级降回去，
+// 否则会永久停在 'screen-saver'，压住其它应用
+setSigmaAcrylicHiddenCallback(() => {
+    if (sigmaWindow && !sigmaWindow.isDestroyed() && sigmaWindow.isVisible()) {
+        sigmaWindow.setAlwaysOnTop(false);
+    }
+});
+
+// 设置里开关毛玻璃后立即生效（设置变更由主进程转发过来）
+export const refreshSigmaAcrylic = () => {
+    if (!sigmaWindow || sigmaWindow.isDestroyed() || !sigmaWindow.isVisible()) {
+        hideSigmaAcrylic();
+        return;
+    }
+    if (!isSigmaAcrylicEnabled()) {
+        hideSigmaAcrylic();
+        resetSigmaAlwaysOnTop();
+        return;
+    }
+    showSigmaAcrylic(sigmaWindow.getBounds());
 };
 
 // RSHIFT 全局热键（复刻 sigmarebase 的 ClickGui 开关）：

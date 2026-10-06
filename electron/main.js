@@ -9,8 +9,9 @@ import {
     createKeystrokesWindow, closeKeystrokesWindow, getKeystrokesWindow,
     createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
-    toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow
+    toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow, refreshSigmaAcrylic
 } from './appServices.js';
+import { hideSigmaAcrylic } from './services/sigmaAcrylic.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
 import statusBarLyricsService from './services/statusBarLyricsService.js';
@@ -226,6 +227,8 @@ app.on('before-quit', () => {
     setImmediate(() => {
         statusBarLyricsService.cleanup();
         customTrayMenuService.cleanup();
+        // 毛玻璃层是隐藏的常驻窗口，window-all-closed 不会等它，退出前显式收起
+        hideSigmaAcrylic();
 
         stopApiServer();
                 stopSpectrumFullscreenWatcher();
@@ -273,6 +276,7 @@ app.on('will-quit', () => {
 });
 ipcMain.on('save-settings', (event, settings) => {
     store.set('settings', settings);
+    refreshSigmaAcrylic();
     if (['on', 'off'].includes(settings?.autoStart)) {
         app.setLoginItemSettings({
             openAtLogin: settings?.autoStart === 'on',
