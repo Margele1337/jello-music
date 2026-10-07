@@ -587,6 +587,9 @@ const animateSigmaWindow = (targetX, targetY) => {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
     const start = sigmaWindow.getBounds();
     if (Math.abs(start.x - targetX) < 1 && Math.abs(start.y - targetY) < 1) {
+        // 必须先停掉在跑的动画：否则旧动画会继续往它自己的目标推进，
+        // 面板就与毛玻璃/目标位各走各的（连按时表现为"分散开"）。
+        cancelSigmaAnimation();
         return;
     }
 
@@ -689,12 +692,17 @@ export function finishSigmaDrag() {
 
 // 从收起状态滑出（原版 var11 = parentWidth - 20 - width）
 export function restoreSigmaWindow() {
-    if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
+    // 同 dockSigmaWindow：连按时要能打断反向，不能被动画卡死保护拦下
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
     const bounds = sigmaWindow.getBounds();
     const display = screen.getDisplayMatching(bounds);
     const area = display.workArea;
     const right = area.x + area.width;
-    if (bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
+    // 不要用"是否越过右边缘"来判断是否需要滑出：收起动画进行中面板可能还在
+    // 屏幕中间（如 x=1100），按几何位置判定会误判成"无需滑出"而直接返回，
+    // 于是调用方已点亮的毛玻璃出现了、面板却不动（表现为玻璃与面板分离）。
+    // sigmaDocked 才是权威标志。
+    if (!sigmaDocked && bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
     setSigmaDocked(false);
     // 注意：这里不要 requestSigmaAcrylicReveal()。
@@ -834,15 +842,18 @@ export const raiseSigmaWindow = (win) => {
 // 撤掉毛玻璃并把面板吸附到右侧收起位（点面板外区域的关闭手势）
 // 吸附到右侧收起位（共用逻辑：点模糊区域关闭 / 快捷键与托盘切换收起）
 const dockSigmaWindow = () => {
-    if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
+    // 不用 sigmaAnimationBlocked() 拦截：连按时第二次调用必须能打断并反向，
+    // 被拦下会造成「意图已置位（玻璃点亮）但动画没启动」，正是分离的成因。
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
     const bounds = sigmaWindow.getBounds();
     const display = screen.getDisplayMatching(bounds);
     const area = display.workArea;
     const right = area.x + area.width;
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
     setSigmaDocked(true);
-    // 已在收起位则不必再动画
+    // 已在收起位则不必再动画，但要确保旧动画已停
     if (Math.abs(bounds.x - (right - SIGMA_DOCK_VISIBLE)) < 1 && Math.abs(bounds.y - centerY) < 1) {
+        cancelSigmaAnimation();
         return;
     }
     animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
