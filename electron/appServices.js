@@ -503,6 +503,11 @@ const SIGMA_ANIM_TICK_MS = 4;             // 主进程接管时的步进间隔
 const SIGMA_ANIM_MAX_DT = 40;             // dt 上限，避免偶发迟到造成大跳
 const SIGMA_ANIM_RENDERER_TIMEOUT = 150;  // 渲染进程超过该时间没回帧 → 主进程接管
 
+// 触发节流：连续按键时丢弃过密的请求。
+// 参照 sigmarebase 的 TabGUI.animationCooldown(80 ticks) 与
+// ModuleCardButton.CLICK_THROTTLE_MS(30ms) 两个先例，取两者之间的量级。
+const SIGMA_TOGGLE_THROTTLE_MS = 120;
+
 let sigmaAnimationTimer = null;
 let sigmaAnimationWatchdog = null;
 let sigmaAnimationStartedAt = 0;
@@ -512,6 +517,10 @@ let sigmaLastX = 0;
 let sigmaLastY = 0;
 let sigmaTargetX = 0;
 let sigmaTargetY = 0;
+
+let sigmaLastTargetX = 0;
+let sigmaLastTargetY = 0;
+let sigmaToggleAcceptedAt = 0;
 
 const cancelSigmaAnimation = () => {
     if (sigmaAnimationTimer) {
@@ -524,6 +533,15 @@ const cancelSigmaAnimation = () => {
     }
     sigmaAnimationMode = null;
     sigmaAnimating = false;
+};
+
+// 触发节流：距上次接受的切换不足 SIGMA_TOGGLE_THROTTLE_MS 则丢弃本次请求。
+// 动画本身仍会跑完，只是连按不再反复反转。
+const sigmaToggleThrottled = () => {
+    const now = Date.now();
+    if (now - sigmaToggleAcceptedAt < SIGMA_TOGGLE_THROTTLE_MS) return true;
+    sigmaToggleAcceptedAt = now;
+    return false;
 };
 
 // 动画卡死保护：超过 3 秒仍未结束则强制取消
@@ -590,6 +608,8 @@ const animateSigmaWindow = (targetX, targetY) => {
         // 必须先停掉在跑的动画：否则旧动画会继续往它自己的目标推进，
         // 面板就与毛玻璃/目标位各走各的（连按时表现为"分散开"）。
         cancelSigmaAnimation();
+        sigmaLastTargetX = targetX;
+        sigmaLastTargetY = targetY;
         return;
     }
 
@@ -602,6 +622,9 @@ const animateSigmaWindow = (targetX, targetY) => {
     sigmaLastX = start.x;
     sigmaLastY = start.y;
     sigmaLastFrameAt = Date.now();
+    // 记录上一个目标，供下一帧判断是否发生反向（进度保持用）
+    sigmaLastTargetX = targetX;
+    sigmaLastTargetY = targetY;
 
     sigmaWindow.webContents.send('sigma-animate-to', {
         x: Math.round(targetX),
@@ -866,8 +889,11 @@ const dismissSigmaWithGlass = () => {
 
 // 显示 ↔ 收起 互切（面板只有这两种状态，没有"完全隐藏"）
 // 已收起 → 滑出；已展开 → 吸附到右侧收起位
-export const toggleSigmaDocked = () => {
+// 外层叠 120ms 触发节流（参照 sigmarebase 的 TabGUI 冷却 80 ticks 与
+// ModuleCardButton 的 30ms 点击防抖）：动画仍会跑完，但连按不再反复反转。
+export const toggleSigmaDocked = (force = false) => {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
+    if (!force && sigmaToggleThrottled()) return;
     if (sigmaDocked) {
         requestSigmaAcrylicReveal();
         restoreSigmaWindow();
@@ -986,13 +1012,14 @@ label: t('show-dock'),
             icon: getIconPath('show.png', 'menu'),
             click: () => {
                 // 主窗口是隐藏播放宿主：显示/收起切换作用于 Sigma 窗口
+                // force：菜单点击是显式操作，不受连按节流限制
                 const win = getSigmaWindow();
                 if (!win || win.isDestroyed()) {
                     // 窗口还没创建：创建即显示
                     createSigmaWindow();
                     return;
                 }
-                toggleSigmaDocked();
+                toggleSigmaDocked(true);
             }
         },
         { type: 'separator' },
@@ -1311,6 +1338,7 @@ export function registerShortcut() {
 
         clickFunc = () => {
             // 主窗口是隐藏播放宿主：快捷键切换 Sigma 窗口 显示 ↔ 收起
+            // 走节流：全局快捷键可被按住连发（按住 Shift 本身就会重复触发）
             const win = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
             if (!win || win.isDestroyed()) return;
             toggleSigmaDocked();

@@ -1,5 +1,5 @@
 <template>
-  <div class="sigma-shell">
+  <div class="sigma-shell" :class="shellClass">
     <SigmaMusicPlayer v-show="view === 'player'" :player="player" />
 
     <!-- 新手教程（首次安装打开的新手引导模板，第一步是 Keybind Manager） -->
@@ -43,7 +43,7 @@
 <script setup>
 // 对应 sigmarebase: gui/impl/jello/ingame/clickgui/ClickGuiScreen.java（承载 MusicPlayer 的屏幕）
 // 面板铺满窗口；元素尺寸/字号保持原版 1:1（左 250、封面条 94、控件坐标按右侧区域居中）
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, computed, watch } from 'vue';
 import SigmaMusicPlayer from './sigma/SigmaMusicPlayer.vue';
 import SigmaKeybindManager from './sigma/SigmaKeybindManager.vue';
 import Settings from '@/views/Settings.vue';
@@ -143,10 +143,25 @@ const onSettingsChange = (event) => {
   }
 };
 
+// 面板缩放动画（1:1 复刻 sigmarebase ClickGuiScreen.draw 的 scale 1.5→1.0）。
+// dock 变 false = 展开播放 450ms；变 true = 收起 125ms。
+// 靠 class 交替自然重播：主进程 setSigmaDocked 在值未变时 early-return，
+// 所以这里收到的 dock 事件必然是真·状态切换，CSS animation 每次都会重放。
+// 不要加 :key 强制重建，那会销毁播放器子组件状态。
+const sigmaDockedState = ref(false);
+const shellClass = computed(() => (sigmaDockedState.value
+  ? 'sigma-shell--docked'
+  : 'sigma-shell--reveal'));
+
+const onSigmaDockChangedForReveal = (_event, docked) => {
+  sigmaDockedState.value = !!docked;
+  onSigmaDockChanged(_event, docked);
+};
+
 onMounted(() => {
   window.electron?.ipcRenderer?.on('open-settings', onOpenSettings);
   window.addEventListener('settings-change', onSettingsChange);
-  window.electron?.ipcRenderer?.on('sigma-dock-changed', onSigmaDockChanged);
+  window.electron?.ipcRenderer?.on('sigma-dock-changed', onSigmaDockChangedForReveal);
   // 启动时带 --settings（跳转列表任务）且 Sigma 窗口未就绪：主进程记为 pending，这里领取
   window.electron?.ipcRenderer?.invoke?.('consume-pending-settings').then((pending) => {
     if (pending) view.value = 'settings';
@@ -162,7 +177,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.electron?.ipcRenderer?.removeListener('open-settings', onOpenSettings);
   window.removeEventListener('settings-change', onSettingsChange);
-  window.electron?.ipcRenderer?.removeListener('sigma-dock-changed', onSigmaDockChanged);
+  window.electron?.ipcRenderer?.removeListener('sigma-dock-changed', onSigmaDockChangedForReveal);
   if (dockSwitchTimer) {
     clearTimeout(dockSwitchTimer);
     dockSwitchTimer = null;
@@ -190,7 +205,29 @@ watch(() => MoeAuth.UserInfo, (info) => {
   z-index: 200;
   /* DWM 亚克力自身已带冷色偏与暗化，这里只补很轻的一层，避免叠色发灰发浑 */
   background: rgba(6, 8, 12, 0.16);
+  /* 原版 ClickGuiScreen.draw 的面板动画（1:1 复刻可移植部分）：
+   offset = (panelCenter - viewportCenter) × (1 - a) × 0.5
+   scale  = 1.5 - a × 0.5        （绕自身中心）
+   a      = easeOutElastic(p)，p = t / 450ms（开）或 t / 125ms（关）
+   Sigma 面板固定居中，offset 项恒为 0，故实际只有缩放可见。 */
+  animation: sigma-reveal 450ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: 50% 50%;
   overflow: hidden;
+}
+
+.sigma-shell--docked {
+  animation: sigma-reveal 125ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 展开：1.5 → 1.0，收起：反向退回 1.5 */
+@keyframes sigma-reveal {
+  from {
+    transform: scale(1.5);
+  }
+
+  to {
+    transform: scale(1);
+  }
 }
 
 .sigma-view {
