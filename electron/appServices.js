@@ -17,6 +17,7 @@ import {
     attachSigmaAcrylic,
     showSigmaAcrylic,
     hideSigmaAcrylic,
+    requestSigmaAcrylicReveal,
     isSigmaAcrylicVisible,
     isSigmaAcrylicEnabled,
     setSigmaAcrylicHiddenCallback
@@ -743,6 +744,8 @@ export function createSigmaWindow() {
 
     sigmaWindow.once('ready-to-show', () => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+            // 毛玻璃只在用户主动呼出时亮（revealRequested），
+            // 冷启动自动创建窗口时不显示全屏模糊
             showSigmaAcrylic(sigmaWindow);
             sigmaWindow.show();
         }
@@ -777,7 +780,7 @@ export function createSigmaWindow() {
 }
 
 export function closeSigmaWindow() {
-    hideSigmaAcrylic();
+    hideSigmaAcrylic(true);
     if (sigmaWindow && !sigmaWindow.isDestroyed()) {
         sigmaWindow.destroy();
     }
@@ -802,6 +805,8 @@ const resetSigmaAlwaysOnTop = () => {
 // 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
+    // 标记为主动呼出，本轮才允许亮毛玻璃
+    requestSigmaAcrylicReveal();
     win.setAlwaysOnTop(true, 'screen-saver');
     // 先亮毛玻璃再 show，保证 Sigma 压在上层
     showSigmaAcrylic(win);
@@ -826,11 +831,12 @@ setSigmaAcrylicHiddenCallback(() => {
 // 设置里开关毛玻璃后立即生效（设置变更由主进程转发过来）
 export const refreshSigmaAcrylic = () => {
     if (!sigmaWindow || sigmaWindow.isDestroyed() || !sigmaWindow.isVisible()) {
-        hideSigmaAcrylic();
+        hideSigmaAcrylic(true);
         return;
     }
     if (!isSigmaAcrylicEnabled()) {
-        hideSigmaAcrylic();
+        // 关开关属于主动关闭，连呼出意图一起清掉
+        hideSigmaAcrylic(true);
         resetSigmaAlwaysOnTop();
         return;
     }

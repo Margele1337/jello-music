@@ -228,7 +228,7 @@ app.on('before-quit', () => {
         statusBarLyricsService.cleanup();
         customTrayMenuService.cleanup();
         // 毛玻璃层是隐藏的常驻窗口，window-all-closed 不会等它，退出前显式收起
-        hideSigmaAcrylic();
+        hideSigmaAcrylic(true);
 
         stopApiServer();
                 stopSpectrumFullscreenWatcher();

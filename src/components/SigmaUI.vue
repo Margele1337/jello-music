@@ -188,10 +188,8 @@ watch(() => MoeAuth.UserInfo, (info) => {
   inset: 0;
   /* 原播放器栏 z-index 为 98，必须高于它才能盖住，避免出现两条进度条 */
   z-index: 200;
-  /* 原版是浮在虚化的游戏画面之上：半透明深色 + 背景模糊（虚化 Rise 背景） */
-  background: rgba(6, 8, 12, 0.45);
-  backdrop-filter: blur(24px) saturate(0.9);
-  -webkit-backdrop-filter: blur(24px) saturate(0.9);
+  /* DWM 亚克力自身已带冷色偏与暗化，这里只补很轻的一层，避免叠色发灰发浑 */
+  background: rgba(6, 8, 12, 0.16);
   overflow: hidden;
 }
 
