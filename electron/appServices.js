@@ -800,21 +800,26 @@ export function getSigmaWindow() {
 }
 
 // 毛玻璃层用 'floating'，Sigma 呼出时用 'screen-saver'。
-// 只要毛玻璃还亮着，Sigma 就必须留在 'screen-saver'（否则会掉到毛玻璃下面被糊住），
-// 因此"600ms 后降级"这一步要等毛玻璃撤掉之后才能做。
+// 只要毛玻璃还亮着，Sigma 就必须留在 'screen-saver'，否则会掉到全屏毛玻璃
+// 之下被完全遮住（表现为"只有模糊层、没有面板"）。
 const resetSigmaAlwaysOnTop = () => {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
-    if (isSigmaAcrylicVisible()) return;
+    if (isSigmaAcrylicVisible()) {
+        sigmaWindow.setAlwaysOnTop(true, 'screen-saver');
+        return;
+    }
     sigmaWindow.setAlwaysOnTop(false);
 };
 
 // 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）
+// 面板与毛玻璃必须同进同出：二者由 revealRequested + 置顶层级共同决定，
+// 任何一边单独变化都会露出「只有面板」或「只有模糊层」的半截状态。
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
-    // 标记为主动呼出，本轮才允许亮毛玻璃
+    // 顺序很关键：先置为呼出意图，再置顶，最后才点亮玻璃并显示面板。
+    // 若反过来先 show/focus，Sigma 的 blur 事件会把刚点亮的玻璃撤掉。
     requestSigmaAcrylicReveal();
     win.setAlwaysOnTop(true, 'screen-saver');
-    // 先亮毛玻璃再 show，保证 Sigma 压在上层
     showSigmaAcrylic(win);
     win.show();
     win.moveTop();
@@ -827,8 +832,8 @@ export const raiseSigmaWindow = (win) => {
 };
 
 // 撤掉毛玻璃并把面板吸附到右侧收起位（点面板外区域的关闭手势）
-const dismissSigmaWithGlass = () => {
-    hideSigmaAcrylic(true);
+// 吸附到右侧收起位（共用逻辑：点模糊区域关闭 / 快捷键与托盘切换收起）
+const dockSigmaWindow = () => {
     if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
     const bounds = sigmaWindow.getBounds();
     const display = screen.getDisplayMatching(bounds);
@@ -841,6 +846,25 @@ const dismissSigmaWithGlass = () => {
         return;
     }
     animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
+};
+
+const dismissSigmaWithGlass = () => {
+    hideSigmaAcrylic(true);
+    dockSigmaWindow();
+};
+
+// 显示 ↔ 收起 互切（面板只有这两种状态，没有"完全隐藏"）
+// 已收起 → 滑出；已展开 → 吸附到右侧收起位
+export const toggleSigmaDocked = () => {
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
+    if (sigmaDocked) {
+        requestSigmaAcrylicReveal();
+        restoreSigmaWindow();
+        raiseSigmaWindow(sigmaWindow);
+        return;
+    }
+    hideSigmaAcrylic(true);
+    dockSigmaWindow();
 };
 
 // 毛玻璃撤掉（失焦 / 隐藏 / 关闭开关）时，把 Sigma 的置顶层级降回去，
@@ -869,39 +893,16 @@ export const refreshSigmaAcrylic = () => {
     showSigmaAcrylic(sigmaWindow);
 };
 
-// RSHIFT 全局热键（复刻 sigmarebase 的 ClickGui 开关）：
-// 已显示且聚焦 → 收起；否则无论之前在哪，都从右侧收起位播放"抽出"动画并临时置顶
+// RSHIFT 全局热键：与托盘菜单同一套逻辑，共用 toggleSigmaDocked
 export function toggleSigmaWindowFromHotkey() {
-    let win = sigmaWindow;
-    if (!win || win.isDestroyed()) {
-        win = createSigmaWindow();
+    if (!sigmaWindow || sigmaWindow.isDestroyed()) {
+        const win = createSigmaWindow();
         if (win && !win.isDestroyed()) {
             raiseSigmaWindow(win);
         }
         return;
     }
-
-    if (win.isVisible() && win.isFocused()) {
-        win.hide();
-        return;
-    }
-
-    const bounds = win.getBounds();
-    const display = screen.getDisplayMatching(bounds);
-    const area = display.workArea;
-    const right = area.x + area.width;
-    const dockX = right - SIGMA_DOCK_VISIBLE;
-    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
-
-    // 先隐藏并归位到右侧收起位，避免看到"瞬移"；再从收起位播放滑出动画
-    cancelSigmaAnimation();
-    if (win.isVisible()) {
-        win.hide();
-    }
-    setSigmaDocked(true);
-    win.setPosition(dockX, centerY);
-    raiseSigmaWindow(win);
-    restoreSigmaWindow();
+    toggleSigmaDocked();
 }
 
 const getIconPath = (iconName, subPath = '') => path.join(
@@ -970,21 +971,17 @@ export function createTray(mainWindow, title = '') {
 
     const contextMenu = Menu.buildFromTemplate([
         {
-            label: t('show-hide'),
-                        icon: getIconPath('show.png', 'menu'),
+label: t('show-dock'),
+            icon: getIconPath('show.png', 'menu'),
             click: () => {
-                // 主窗口是隐藏播放宿主：显示/隐藏作用于 Sigma 窗口
+                // 主窗口是隐藏播放宿主：显示/收起切换作用于 Sigma 窗口
                 const win = getSigmaWindow();
                 if (!win || win.isDestroyed()) {
                     // 窗口还没创建：创建即显示
                     createSigmaWindow();
                     return;
                 }
-                if (win.isVisible()) {
-                    win.hide();
-                } else {
-                    revealSigmaWindow(win);
-                }
+                toggleSigmaDocked();
             }
         },
         { type: 'separator' },
@@ -1302,14 +1299,10 @@ export function registerShortcut() {
         }
 
         clickFunc = () => {
-            // 主窗口是隐藏播放宿主：快捷键切换 Sigma 窗口显示
+            // 主窗口是隐藏播放宿主：快捷键切换 Sigma 窗口 显示 ↔ 收起
             const win = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
             if (!win || win.isDestroyed()) return;
-            if (win.isVisible()) {
-                win.hide();
-            } else {
-                revealSigmaWindow(win);
-            }
+            toggleSigmaDocked();
         }
         if (settings?.shortcuts?.mainWindow) {
             globalShortcut.register(settings?.shortcuts?.mainWindow, clickFunc);
