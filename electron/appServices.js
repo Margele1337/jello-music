@@ -20,7 +20,8 @@ import {
     requestSigmaAcrylicReveal,
     isSigmaAcrylicVisible,
     isSigmaAcrylicEnabled,
-    setSigmaAcrylicHiddenCallback
+    setSigmaAcrylicHiddenCallback,
+    setSigmaAcrylicOutsideClickCallback
 } from './services/sigmaAcrylic.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const store = new Store();
@@ -696,6 +697,8 @@ export function restoreSigmaWindow() {
     if (bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
     setSigmaDocked(false);
+    // 从收起位滑出属于显式呼出（悬停边缘 / 托盘 / 快捷键），毛玻璃应一并回来
+    requestSigmaAcrylicReveal();
     animateSigmaWindow(right - bounds.width - SIGMA_RESTORE_MARGIN, centerY);
 }
 
@@ -820,6 +823,23 @@ export const raiseSigmaWindow = (win) => {
     }, 600);
 };
 
+// 撤掉毛玻璃并把面板吸附到右侧收起位（点面板外区域的关闭手势）
+const dismissSigmaWithGlass = () => {
+    hideSigmaAcrylic(true);
+    if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
+    const bounds = sigmaWindow.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const area = display.workArea;
+    const right = area.x + area.width;
+    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+    setSigmaDocked(true);
+    // 已在收起位则不必再动画
+    if (Math.abs(bounds.x - (right - SIGMA_DOCK_VISIBLE)) < 1 && Math.abs(bounds.y - centerY) < 1) {
+        return;
+    }
+    animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
+};
+
 // 毛玻璃撤掉（失焦 / 隐藏 / 关闭开关）时，把 Sigma 的置顶层级降回去，
 // 否则会永久停在 'screen-saver'，压住其它应用
 setSigmaAcrylicHiddenCallback(() => {
@@ -827,6 +847,9 @@ setSigmaAcrylicHiddenCallback(() => {
         sigmaWindow.setAlwaysOnTop(false);
     }
 });
+
+// 点击毛玻璃区域（面板外）→ 撤层 + 面板吸附到右侧
+setSigmaAcrylicOutsideClickCallback(dismissSigmaWithGlass);
 
 // 设置里开关毛玻璃后立即生效（设置变更由主进程转发过来）
 export const refreshSigmaAcrylic = () => {
