@@ -697,8 +697,11 @@ export function restoreSigmaWindow() {
     if (bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
     setSigmaDocked(false);
-    // 从收起位滑出属于显式呼出（悬停边缘 / 托盘 / 快捷键），毛玻璃应一并回来
-    requestSigmaAcrylicReveal();
+    // 注意：这里不要 requestSigmaAcrylicReveal()。
+    // 收起后仅右侧 40px 露在外面，鼠标扫过就会触发本函数；桌面被窗口盖住时
+    // 那 40px 命中不到、没反应，桌面空着时一碰就滑出——若同时亮起毛玻璃，
+    // 就会表现成"桌面没窗口时模糊层莫名弹出"。
+    // 毛玻璃只跟随显式呼出（RSHIFT / 托盘 / 快捷键 / 点击图标），由 raiseSigmaWindow 置位。
     animateSigmaWindow(right - bounds.width - SIGMA_RESTORE_MARGIN, centerY);
 }
 
