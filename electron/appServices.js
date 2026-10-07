@@ -743,7 +743,7 @@ export function createSigmaWindow() {
 
     sigmaWindow.once('ready-to-show', () => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            showSigmaAcrylic(sigmaWindow.getBounds());
+            showSigmaAcrylic(sigmaWindow);
             sigmaWindow.show();
         }
     });
@@ -804,7 +804,7 @@ export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
     win.setAlwaysOnTop(true, 'screen-saver');
     // 先亮毛玻璃再 show，保证 Sigma 压在上层
-    showSigmaAcrylic(win.getBounds());
+    showSigmaAcrylic(win);
     win.show();
     win.moveTop();
     win.focus();
@@ -834,7 +834,7 @@ export const refreshSigmaAcrylic = () => {
         resetSigmaAlwaysOnTop();
         return;
     }
-    showSigmaAcrylic(sigmaWindow.getBounds());
+    showSigmaAcrylic(sigmaWindow);
 };
 
 // RSHIFT 全局热键（复刻 sigmarebase 的 ClickGui 开关）：
