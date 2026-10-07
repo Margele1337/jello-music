@@ -5,9 +5,11 @@
 // 单独一个 preload 而非复用 preload.cjs：那边是白名单通道，不适合这种内部坐标上报。
 const { ipcRenderer } = require('electron');
 
-window.addEventListener('mousedown', (event) => {
+window.addEventListener('mousedown', function (event) {
+    // 显式取基本类型再发送：sandboxed preload 里直接把事件对象塞进结构化
+    // 克隆会报 "object is not iterable"
     ipcRenderer.send('acrylic-click', {
-        x: event.clientX,
-        y: event.clientY
+        x: Number(event.clientX) || 0,
+        y: Number(event.clientY) || 0
     });
 });
