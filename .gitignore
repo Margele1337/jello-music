@@ -35,8 +35,5 @@ dev-dist/*
 pnpm-lock.yaml
 pnpm-workspace.yaml
 
-plugins/extensions/*
-!plugins/extensions/README.md
-
 # 本地 Windows 快捷方式（dev.bat.lnk）
 *.lnk

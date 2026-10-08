@@ -162,7 +162,7 @@ html:has(#app.rise-active) body {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
 }
 
-/* 输入框（Settings / CustomModal / ExtensionManager 里的 type=text） */
+/* 输入框（Settings / CustomModal 里的 type=text） */
 #app.rise-active input[type="text"] {
     background-color: rgba(255, 255, 255, var(--glass-input-opacity)) !important;
     backdrop-filter: blur(calc(var(--glass-blur) * 0.5)) saturate(var(--glass-saturate)) brightness(var(--glass-brightness));

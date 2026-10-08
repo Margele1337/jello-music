@@ -12,8 +12,7 @@
             <div v-for="(section, sectionIndex) in settingSections" :key="sectionIndex" class="setting-section"
                 v-show="activeTab === sectionIndex">
                 <h3>{{ section.title }}</h3>
-                <ExtensionManager v-if="section.title === t('cha-jian')" />
-                <div v-else class="settings-cards">
+                <div class="settings-cards">
                     <div v-for="(item, itemIndex) in getVisibleItems(section)" :key="itemIndex" class="setting-card"
                         :class="{ 'setting-card--toggle': isToggleItem(item) }" @click="handleCardClick(item)">
                         <div class="setting-card-header">
@@ -247,7 +246,6 @@
 import { ref, onMounted, getCurrentInstance, onUnmounted, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { MoeAuthStore } from '../stores/store';
-import ExtensionManager from '@/components/ExtensionManager.vue';
 import { applyCustomFont, requestMicrophonePermission } from '../utils/utils';
 import { DEFAULT_API_BASE_URL, validateApiBaseUrl, testApiBaseUrl as testApiBaseUrlRequest } from '@/utils/apiBaseUrl';
 import { useSettingsConfig } from '@/config/settings';

@@ -11,7 +11,6 @@ import {
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
     toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow
 } from './appServices.js';
-import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
 import statusBarLyricsService from './services/statusBarLyricsService.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
@@ -151,7 +150,6 @@ app.on('ready', () => {
                     win.webContents.send('keystrokes-input', payload);
                 }
             });
-            void initializeExtensions();
             setupDesktopShortcutIcon();
         } catch (error) {
             console.log('初始化应用时发生错误:', error);
@@ -230,7 +228,6 @@ app.on('before-quit', () => {
         stopApiServer();
                 stopSpectrumFullscreenWatcher();
         apiService.stop();
-        cleanupExtensions();
         app.exit(0);
     });
 });
