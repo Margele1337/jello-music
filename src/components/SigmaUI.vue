@@ -205,29 +205,91 @@ watch(() => MoeAuth.UserInfo, (info) => {
   z-index: 200;
   /* DWM 亚克力自身已带冷色偏与暗化，这里只补很轻的一层，避免叠色发灰发浑 */
   background: rgba(6, 8, 12, 0.16);
-  /* 原版 ClickGuiScreen.draw 的面板动画（1:1 复刻可移植部分）：
-   offset = (panelCenter - viewportCenter) × (1 - a) × 0.5
-   scale  = 1.5 - a × 0.5        （绕自身中心）
-   a      = easeOutElastic(p)，p = t / 450ms（开）或 t / 125ms（关）
-   Sigma 面板固定居中，offset 项恒为 0，故实际只有缩放可见。 */
-  animation: sigma-reveal 450ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  /* 原版 ClickGuiScreen.draw:304-346 的面板动画，1:1 复刻：
+     offset = (panelCenter - viewportCenter) × (1 - a) × 0.5   → Sigma 固定居中，恒为 0
+     scale  = 1.5 - a × 0.5        （method13279 → glScalef，以自身中心为原点）
+     a      = easeOutElastic(p)，p = t / 450ms（开）或 t / 125ms（关）
+     底色 alpha = 0.16 × a         （原版 :315 背景 alpha = 0.2 × partialTicks × a）
+     内容 alpha = min(1, a)        （原版 :346 super.draw(partialTicks × min(1, a) × fade)）
+
+     缓动是 elastic 而非线性：a 会冲过 1 再回弹，所以 scale 先过冲到 ~0.978
+     再回到 1.0。这一段过冲是原版观感的一部分，不能换成 cubic-bezier 抹平。
+
+     打开与关闭用的 period 不同（见 @keyframes 注释），故拆成两组关键帧。 */
+  animation: sigma-reveal 450ms linear both;
   transform-origin: 50% 50%;
   overflow: hidden;
 }
 
 .sigma-shell--docked {
-  animation: sigma-reveal 125ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: sigma-hide 125ms linear both;
 }
 
-/* 展开：1.5 → 1.0，收起：反向退回 1.5 */
-@keyframes sigma-reveal {
-  from {
-    transform: scale(1.5);
-  }
+/* 关键帧由原版公式离线采样 26 点生成：
+   elastic(p,period) = 2^(-10p) × sin((p - period/4) × 2π / period) + 1
+   （ClickGuiScreen.method13317:300）
 
-  to {
-    transform: scale(1);
-  }
+   打开：a = elastic(p, 0.8) × 0.5 + 0.5
+   → 起始 a=0.5 即 scale 1.25（不是 1.5），前 20% 就冲到 1.0 附近，
+     随后 elastic 回弹在 0.978 ↔ 1.001 之间收敛，最后 40% 几乎静止。 */
+@keyframes sigma-reveal {
+  0% { transform: scale(1.25); background-color: rgba(6, 8, 12, 0.08); opacity: 0.5; }
+  3.85% { transform: scale(1.1828); background-color: rgba(6, 8, 12, 0.1015); opacity: 0.6343; }
+  7.69% { transform: scale(1.1207); background-color: rgba(6, 8, 12, 0.1214); opacity: 0.7586; }
+  11.54% { transform: scale(1.0693); background-color: rgba(6, 8, 12, 0.1378); opacity: 0.8614; }
+  15.38% { transform: scale(1.0305); background-color: rgba(6, 8, 12, 0.1502); opacity: 0.939; }
+  19.23% { transform: scale(1.004); background-color: rgba(6, 8, 12, 0.1587); opacity: 0.992; }
+  23.08% { transform: scale(0.9879); background-color: rgba(6, 8, 12, 0.1639); opacity: 1; }
+  26.92% { transform: scale(0.98); background-color: rgba(6, 8, 12, 0.1664); opacity: 1; }
+  30.77% { transform: scale(0.9778); background-color: rgba(6, 8, 12, 0.1671); opacity: 1; }
+  34.62% { transform: scale(0.9793); background-color: rgba(6, 8, 12, 0.1666); opacity: 1; }
+  38.46% { transform: scale(0.9827); background-color: rgba(6, 8, 12, 0.1655); opacity: 1; }
+  42.31% { transform: scale(0.9869); background-color: rgba(6, 8, 12, 0.1642); opacity: 1; }
+  46.15% { transform: scale(0.991); background-color: rgba(6, 8, 12, 0.1629); opacity: 1; }
+  50% { transform: scale(0.9945); background-color: rgba(6, 8, 12, 0.1618); opacity: 1; }
+  53.85% { transform: scale(0.9972); background-color: rgba(6, 8, 12, 0.1609); opacity: 1; }
+  57.69% { transform: scale(0.9992); background-color: rgba(6, 8, 12, 0.1603); opacity: 1; }
+  61.54% { transform: scale(1.0004); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9992; }
+  65.38% { transform: scale(1.0011); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9978; }
+  69.23% { transform: scale(1.0014); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9973; }
+  73.08% { transform: scale(1.0014); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9973; }
+  76.92% { transform: scale(1.0012); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9977; }
+  80.77% { transform: scale(1.0009); background-color: rgba(6, 8, 12, 0.1597); opacity: 0.9982; }
+  84.62% { transform: scale(1.0007); background-color: rgba(6, 8, 12, 0.1598); opacity: 0.9987; }
+  88.46% { transform: scale(1.0004); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9991; }
+  92.31% { transform: scale(1.0002); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9995; }
+  96.15% { transform: scale(1.0001); background-color: rgba(6, 8, 12, 0.16); opacity: 0.9998; }
+  100% { transform: scale(1); background-color: rgba(6, 8, 12, 0.16); opacity: 1; }
+}
+
+@keyframes sigma-hide {
+  0% { transform: scale(1); background-color: rgba(6, 8, 12, 0.16); }
+  3.85% { transform: scale(1.0006); background-color: rgba(6, 8, 12, 0.1598); }
+  7.69% { transform: scale(1.0007); background-color: rgba(6, 8, 12, 0.1598); }
+  11.54% { transform: scale(1.0008); background-color: rgba(6, 8, 12, 0.1597); }
+  15.38% { transform: scale(1.0008); background-color: rgba(6, 8, 12, 0.1597); }
+  19.23% { transform: scale(1.0007); background-color: rgba(6, 8, 12, 0.1598); }
+  23.08% { transform: scale(1.0003); background-color: rgba(6, 8, 12, 0.1599); }
+  26.92% { transform: scale(0.9996); background-color: rgba(6, 8, 12, 0.1601); }
+  30.77% { transform: scale(0.9985); background-color: rgba(6, 8, 12, 0.1605); }
+  34.62% { transform: scale(0.9969); background-color: rgba(6, 8, 12, 0.161); }
+  38.46% { transform: scale(0.9947); background-color: rgba(6, 8, 12, 0.1617); }
+  42.31% { transform: scale(0.9919); background-color: rgba(6, 8, 12, 0.1626); }
+  46.15% { transform: scale(0.9884); background-color: rgba(6, 8, 12, 0.1637); }
+  50% { transform: scale(0.9844); background-color: rgba(6, 8, 12, 0.165); }
+  53.85% { transform: scale(0.9802); background-color: rgba(6, 8, 12, 0.1663); }
+  57.69% { transform: scale(0.9764); background-color: rgba(6, 8, 12, 0.1675); }
+  61.54% { transform: scale(0.974); background-color: rgba(6, 8, 12, 0.1683); }
+  65.38% { transform: scale(0.9742); background-color: rgba(6, 8, 12, 0.1683); }
+  69.23% { transform: scale(0.979); background-color: rgba(6, 8, 12, 0.1667); }
+  73.08% { transform: scale(0.9907); background-color: rgba(6, 8, 12, 0.163); }
+  76.92% { transform: scale(1.0122); background-color: rgba(6, 8, 12, 0.1561); }
+  80.77% { transform: scale(1.0468); background-color: rgba(6, 8, 12, 0.145); }
+  84.62% { transform: scale(1.0978); background-color: rgba(6, 8, 12, 0.1287); }
+  88.46% { transform: scale(1.1682); background-color: rgba(6, 8, 12, 0.1062); }
+  92.31% { transform: scale(1.2598); background-color: rgba(6, 8, 12, 0.0769); }
+96.15% { transform: scale(1.3719); background-color: rgba(6, 8, 12, 0.041); }
+  100% { transform: scale(1.5); background-color: rgba(6, 8, 12, 0); }
 }
 
 .sigma-view {
