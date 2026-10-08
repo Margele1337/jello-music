@@ -87,11 +87,14 @@ jobs:
   build-and-upload:
     name: Build and Upload
     needs: increment-version
-    strategy:
-      matrix:
-        node: [lts/*]
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    # 只发布 Windows 版：
+    # - Sigma 面板的毛玻璃层依赖 Windows 11 22H2+ 的 DWM Acrylic
+    #   （electron/services/sigmaAcrylic.js 的 isSigmaAcrylicSupported），
+    #   非 Windows 平台本就没有该效果
+    # - uiohook-napi（按键钩子）与 koffi（Win32 FFI）只在 Windows 打包里被引用，
+    #   macOS / Linux 产物功能不完整，发出去只会让人误用
+    # 需要其他平台时改回 matrix: os: [windows-latest] 再按需扩。
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -102,19 +105,18 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version: lts/*
           cache: 'npm' # use cache
 
       - name: Build
         env:
-          os: ${{ runner.os == 'Windows' && 'win' || runner.os == 'macOS' && 'macos' || 'linux' }}
           RELEASE_VERSION: ${{ needs.increment-version.outputs.version }}
         run: |
           npm run install-all
           # 把 tag 版本写进 package.json，保证产物命名/latest.yml/应用内版本与 tag 一致（否则自动更新收不到）
           node -e "const fs=require('fs');const v=process.env.RELEASE_VERSION.replace(/^v/,'');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.version=v;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('build version =',v)"
           npm run build
-          npm run electron:build:${{ env.os }}
+          npm run electron:build:win
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
@@ -124,8 +126,5 @@ jobs:
           files: |
             ./dist_electron/*.exe
             ./dist_electron/*.zip
-            ./dist_electron/*.dmg
-            ./dist_electron/*.AppImage
-            ./dist_electron/*.deb
             ./dist_electron/*.blockmap
             ./dist_electron/latest*.yml
