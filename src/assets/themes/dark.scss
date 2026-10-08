@@ -647,8 +647,6 @@ html.dark {
         .track-list-header,
         .track-list-header-row {
             background-color: rgba(18, 18, 18, var(--glass-opacity)) !important;
-            backdrop-filter: var(--glass-backdrop) !important;
-            -webkit-backdrop-filter: var(--glass-backdrop) !important;
         }
 
         .collapsed-play-btn {
