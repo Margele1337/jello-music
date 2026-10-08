@@ -221,10 +221,13 @@ watch(() => MoeAuth.UserInfo, (info) => {
   overflow: hidden;
 }
 
-/* 收起态：scale 的 100% 已改为精确回到 1，forwards 直接钉住正确的静止形态。
-   40px 触发条因此不会被放大、位置也不会漂移。 */
+/* 收起态：刻意不给缩放动画。
+   原版里缩放只绑定 GUI 开/关（RSHIFT 触发 animationProgress），拖拽吸附走的是
+   updatePanelDimensions 的 dock 分支，完全不碰 alphaFactor，所以 scale 恒为 1。
+   早先这里复用了 sigma-reveal，收起时会播一段 1.5 → 1 的缩小，那是自创的。
+   dock 的反馈只需要滑出本身，不要额外缩放。 */
 .sigma-shell--docked {
-  animation: sigma-hide 125ms linear forwards;
+  animation: none;
 }
 
 /* 关键帧由原版公式离线采样 26 点生成：
@@ -262,46 +265,6 @@ watch(() => MoeAuth.UserInfo, (info) => {
   92.31% { transform: scale(1.0002); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9995; }
   96.15% { transform: scale(1.0001); background-color: rgba(6, 8, 12, 0.16); opacity: 0.9998; }
   100% { transform: scale(1); background-color: rgba(6, 8, 12, 0.16); opacity: 1; }
-}
-
-/* 关闭：a = elastic(p, 1.0)（period 不同，且不乘 0.5 偏移）
-
-   ⚠ 这里与原版有一处刻意的偏离。
-   原版 a→0 时 scale→1.5，但那之后它立刻 setScreen(null) 关掉整个 GUI
-   （ClickGuiScreen.java:268），1.5 从来不会被看见。
-   Jello 收起后仍留着 40px 触发条，若照搬会先冲到 ~1.37、再被 animationend
-   硬切回 1.0 —— 那一帧的跳变肉眼可见，就是「收进去后闪一下」。
-   故保留前 80% 的弹性（0.974 下探 + 1.10 过冲，弹性特征仍在），
-   尾段改为平滑落回精确的 1.0，让 fill-mode forwards 直接钉住正确的静止形态。
-   底色与 opacity 不参与：收起态必须和展开态长得一样，否则触发条会闪。 */
-@keyframes sigma-hide {
-  0% { transform: scale(1); }
-  3.85% { transform: scale(1.0006); }
-  7.69% { transform: scale(1.0007); }
-  11.54% { transform: scale(1.0008); }
-  15.38% { transform: scale(1.0008); }
-  19.23% { transform: scale(1.0007); }
-  23.08% { transform: scale(1.0003); }
-  26.92% { transform: scale(0.9996); }
-  30.77% { transform: scale(0.9985); }
-  34.62% { transform: scale(0.9969); }
-  38.46% { transform: scale(0.9947); }
-  42.31% { transform: scale(0.9919); }
-  46.15% { transform: scale(0.9884); }
-  50% { transform: scale(0.9844); }
-  53.85% { transform: scale(0.9802); }
-  57.69% { transform: scale(0.9764); }
-  61.54% { transform: scale(0.974); }
-  65.38% { transform: scale(0.9742); }
-  69.23% { transform: scale(0.979); }
-  73.08% { transform: scale(0.9907); }
-  76.92% { transform: scale(1.0122); }
-  80.77% { transform: scale(1.0466); }
-  84.62% { transform: scale(1.0846); }
-  88.46% { transform: scale(1.1034); }
-  92.31% { transform: scale(1.0857); }
-  96.15% { transform: scale(1.036); }
-100% { transform: scale(1); }
 }
 
 .sigma-view {
