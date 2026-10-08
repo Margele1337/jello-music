@@ -494,7 +494,6 @@ const playGuessYouLike = async () => {
 /* ================= 贴边收起（原版 dock / reShowView 行为） ================= */
 const docked = ref(false);
 let dockedTimer = null;
-let ipcDockState = null;
 
 const restoreWindow = () => {
   if (window.electron?.ipcRenderer) {
@@ -508,29 +507,39 @@ const readDockedByPosition = () => {
   const areaWidth = Number.isFinite(screenRef.availWidth) ? screenRef.availWidth : Number(screenRef.width) || 0;
   const areaRight = areaLeft + areaWidth;
   const windowRight = window.screenX + (window.outerWidth || 0);
-  // 1:1 对齐原版 MusicPlayer.draw 的判据 getXA() + getWidthA() > parent.getWidthA()：
-  // 纯位置驱动、无 boolean 参与渲染，所以拖拽中右缘一越过屏幕右缘就淡到 50%，
-  // 不必等松手
+  // 1:1 对齐原版 MusicPlayer.draw 的判据 getXA() + getWidthA() > parent.getWidthA()
   return areaWidth > 0 && windowRight > areaRight;
 };
 
-// 透明度以「位置」为准（原版行为）。主进程 dock 标志只做两点兜底：
-// 1) 主动滑出时（点收起条）位置仍在屏幕外，应以 ipcDockState=false 为准让它
-//    淡回完全不透明，对齐原版的 !field20874；
-// 2) 吸附动画刚起步、位置尚未越界时提前进入半透明态，避免松手瞬间跳变。
+// 透明度以「位置」为准（原版行为）。两个来源：
+// 1) 主进程拖拽时实时推送的 sigma-overhang-changed —— 权威值。渲染进程读
+//    window.screenX 对 transparent + frameless 窗口并不可靠（会含不可见边框），
+//    且 200ms 轮询明显滞后，拖拽中跟不上。
+// 2) window.screenX 仅在尚未收到任何主进程信号时兜底。
+let ipcOverhang = null;
+
 const updateDockedState = () => {
-  const byPosition = readDockedByPosition();
-  const next = ipcDockState === false ? false : byPosition;
-  if (docked.value !== next) {
-    docked.value = next;
-    if (next) endDrag();
-  }
+  const byPosition = ipcOverhang !== null ? ipcOverhang : readDockedByPosition();
+  if (docked.value === byPosition) return;
+  docked.value = byPosition;
+  // 注意：这里绝不能调 endDrag()。
+  // endDrag 会发 sigma-window-drag-end → 主进程 finishSigmaDrag() → 立刻吸附到收起位。
+  // 而原版在拖拽过程中变半透明时并不吸附（吸附只发生在松手）。
+  // 之前把 endDrag() 留在这里，导致 200ms 轮询一检测到越界就替用户松手，
+  // 表现为「右缘刚越过屏幕右缘就被瞬间吸走」，看不到半透明过渡。
 };
 
 if (window.electron?.ipcRenderer) {
-  window.electron.ipcRenderer.on('sigma-dock-changed', (_event, value) => {
-    ipcDockState = !!value;
-    if (ipcDockState) endDrag();
+  window.electron?.ipcRenderer.on('sigma-overhang-changed', (_event, value) => {
+    ipcOverhang = !!value;
+    updateDockedState();
+  });
+  window.electron?.ipcRenderer.on('sigma-dock-changed', (_event, value) => {
+    // dock 标志只在「已吸附」时强制半透明；滑出/正常位置一律以位置为准，
+    // 对齐原版 field20873.changeDirection(右缘越界 && !undockRequested)
+    // 注意这里同样不能调 endDrag()：dock 变化时可能正处在吸附/滑出动画中，
+    // 调它会打断动画并触发一次多余的 finishSigmaDrag。
+    ipcOverhang = value ? true : null;
     updateDockedState();
   });
 }

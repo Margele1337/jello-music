@@ -491,6 +491,18 @@ const SIGMA_DRAG_OVERHANG = 12;
 const SIGMA_DOCK_VISIBLE = 40;   // 贴右边缘收起后保留可见的宽度（原版 var8 = parentWidth - 40）
 const SIGMA_RESTORE_MARGIN = 20; // 滑出后距右边缘的间距（原版 var11 = parentWidth - 20 - width）
 
+// 拖拽中的「右缘是否越过屏幕右缘」信号（连续，1:1 对齐原版
+// MusicPlayer.draw 的 getXA() + getWidthA() > parent.getWidthA()）。
+// 与 sigmaDocked 分开：后者是离散吸附态，前者只描述几何位置。
+let sigmaOverhanging = false;
+const setSigmaOverhanging = (overhanging) => {
+    if (sigmaOverhanging === overhanging) return;
+    sigmaOverhanging = overhanging;
+    if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+        sigmaWindow.webContents.send('sigma-overhang-changed', overhanging);
+    }
+};
+
 const setSigmaDocked = (docked) => {
     if (sigmaDocked === docked) return;
     sigmaDocked = docked;
@@ -686,6 +698,7 @@ export function moveSigmaWindow(x, y, movedX = 0) {
     if (x + bounds.width > right + 200 && movedX > 70) {
         const excess = x - bounds.x - 200;
         const pushedX = Math.round(bounds.x + excess * 0.5);
+        setSigmaOverhanging(pushedX + bounds.width > right);
         if (pushedX !== bounds.x || nextY !== bounds.y) {
             sigmaWindow.setBounds({ x: pushedX, y: nextY, width: bounds.width, height: bounds.height });
         }
@@ -694,6 +707,8 @@ export function moveSigmaWindow(x, y, movedX = 0) {
 
     // 允许右缘越界 SIGMA_DRAG_OVERHANG，使拖拽中右缘能越过屏幕右缘 → 触发位置驱动的半透明
     const nextX = Math.min(Math.max(Math.round(x), area.x), right - bounds.width + SIGMA_DRAG_OVERHANG);
+    // 越界状态用最终生效的 nextX 判断（橡皮筋分支已单独 return）
+    setSigmaOverhanging(nextX + bounds.width > right);
     if (nextX !== bounds.x || nextY !== bounds.y) {
         sigmaWindow.setBounds({ x: nextX, y: nextY, width: bounds.width, height: bounds.height });
     }
@@ -721,6 +736,8 @@ if (bounds.x + bounds.width > right + SIGMA_DRAG_OVERHANG) {
     setSigmaDocked(false);
     const nextX = Math.min(Math.max(bounds.x, area.x), right - bounds.width);
     const nextY = Math.min(Math.max(bounds.y, area.y), bottom - bounds.height);
+    // 未收起：清掉拖拽期的越界信号，之后透明度只跟 sigma-dock-changed 走
+    setSigmaOverhanging(false);
     if (nextX !== bounds.x || nextY !== bounds.y) {
         sigmaWindow.setBounds({ x: nextX, y: nextY, width: bounds.width, height: bounds.height });
     }

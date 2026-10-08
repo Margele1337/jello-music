@@ -63,6 +63,7 @@ const RECEIVE_CHANNELS = new Set([
     'sigma-animate-to',
     'sigma-command',
     'sigma-dock-changed',
+    'sigma-overhang-changed',
     'sigma-request-state',
     'sigma-state',
     'spectrum-data',
