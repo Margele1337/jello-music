@@ -143,8 +143,13 @@ const onSettingsChange = (event) => {
   }
 };
 
-// 面板缩放动画（1:1 复刻 sigmarebase ClickGuiScreen.draw 的 scale 1.5→1.0）。
-// dock 变 false = 展开播放 450ms；变 true = 收起 125ms。
+// 面板缩放动画（复刻 sigmarebase ClickGuiScreen.draw 的 scale 曲线，1.25 起、
+// 弹性过冲到 0.978 再回 1.0）。
+//
+// 只在展开（dock=false）时播；收起态用 .sigma-shell--docked 的 animation:none，
+// 不播任何缩放 —— 早期版本这里复用了 sigma-reveal，收起时会播一段 1.5 → 1，
+// 表现为「收起状态下先抖一下再弹出来」，那是要避免的。
+//
 // 靠 class 交替自然重播：主进程 setSigmaDocked 在值未变时 early-return，
 // 所以这里收到的 dock 事件必然是真·状态切换，CSS animation 每次都会重放。
 // 不要加 :key 强制重建，那会销毁播放器子组件状态。
@@ -221,11 +226,12 @@ watch(() => MoeAuth.UserInfo, (info) => {
   overflow: hidden;
 }
 
-/* 收起态：刻意不给缩放动画。
-   原版里缩放只绑定 GUI 开/关（RSHIFT 触发 animationProgress），拖拽吸附走的是
-   updatePanelDimensions 的 dock 分支，完全不碰 alphaFactor，所以 scale 恒为 1。
-   早先这里复用了 sigma-reveal，收起时会播一段 1.5 → 1 的缩小，那是自创的。
-   dock 的反馈只需要滑出本身，不要额外缩放。 */
+/* 收起态：不给缩放动画。
+   这里曾经复用 sigma-reveal（from: scale(1.5)），于是收起时会在屏幕最右侧
+   先播一段 1.5 → 1 的缩小，之后再滑出 —— 就是那个「先在最右侧抖一下」。
+   原版里缩放也只绑定 GUI 开/关，吸附走的是另一条分支、不碰 alphaFactor，
+   scale 恒为 1。中间还短暂用过终点为 scale(1.5) 的 sigma-hide，
+   配合 fill-mode both 会把面板永久钉在 1.5（触发条被放大、位置漂移）。 */
 .sigma-shell--docked {
   animation: none;
 }
