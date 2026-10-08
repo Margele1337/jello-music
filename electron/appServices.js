@@ -939,9 +939,10 @@ export const toggleSigmaDocked = (force = false) => {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
     if (!force && sigmaToggleThrottled()) return;
     if (sigmaDocked) {
-        requestSigmaAcrylicReveal();
+        // 与点右侧 41px 触发条（sigma-window-restore）完全同一条路径：
+        // 只调 restoreSigmaWindow，不再额外走 requestSigmaAcrylicReveal /
+        // raiseSigmaWindow。即「所有弹出方式统一为边缘触发条那种弹出」。
         restoreSigmaWindow();
-        raiseSigmaWindow(sigmaWindow);
         return;
     }
     hideSigmaAcrylic(true);
