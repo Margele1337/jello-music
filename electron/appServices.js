@@ -484,9 +484,11 @@ let sigmaWindowLoaded = false;
 let sigmaDocked = false;
 let sigmaAnimating = false;
 
-// 拖拽时允许的右缘越界余量：越过这个量才算"位置驱动"的半透明判据成立。
-// 取 12px——足够越过判据边界，又不至于让面板在正常拖拽中跑得太远。
-const SIGMA_DRAG_OVERHANG = 12;
+// 注意：这里刻意没有「越界余量」常量。原版 AnimatedIconPanel 的夹取是精确的
+// xA + widthA <= parentWidth，普通拖拽永远无法让右缘越过屏幕右缘，因此
+// MusicPlayer.draw 的半透明判据（getXA() + getWidthA() > parent.getWidthA()）
+// 在普通拖拽中永不成立 —— 半透明只来自橡皮筋越界与已吸附态。
+// 早先为「让拖拽也能半透明」加了 12px 余量，那是偏离原版的自创行为。
 
 const SIGMA_DOCK_VISIBLE = 40;   // 贴右边缘收起后保留可见的宽度（原版 var8 = parentWidth - 40）
 const SIGMA_RESTORE_MARGIN = 20; // 滑出后距右边缘的间距（原版 var11 = parentWidth - 20 - width）
@@ -673,15 +675,17 @@ export function finishSigmaAnimate() {
     cancelSigmaAnimation();
 }
 
-// 拖动过程中（复刻原版 handleMovementAndCheckBoundaries + MusicPlayer.updatePanelDimensions）：
-// 1) 平时四边硬夹在显示器内（碰到右边缘不会收起）
-// 2) 鼠标相对起手点向右超过 70px 且目标超出屏幕右边 200px 以上时，向屏幕外推（每次推进超出量的一半）
-// 3) 松手时若已在屏幕外，才吸附收起到 40px
+// 拖动过程中，1:1 对齐原版 AnimatedIconPanel.handleMovementAndCheckBoundaries
+// 与 MusicPlayer.updatePanelDimensions 的 else（拖拽中）分支。原版每 tick 顺序：
+//   1) AnimatedIconPanel 先 setXA(desired)，再把 xA 精确夹在 [0, parentW - width]
+//   2) MusicPlayer 再判 var12(=desired) + width > parentW + 200 && movedX > 70
+//      成立则 var15 = desired - xA - 200，xA = (int)(xA + var15 * 0.5)
 //
-// 右缘允许越界 SIGMA_DRAG_OVERHANG：原版面板在拖拽中一旦右缘越过屏幕右缘就开始
-// 淡到 50%（MusicPlayer.draw 的判据是纯位置比较）。这里若硬夹在 right - width，
-// 右缘永远等于屏幕右缘，那条判据永不成立，半透明就只能在松手后瞬间跳变。
-// 给一点越界余量，半透明就能在拖拽中自然渐入 —— 越界量由后续橡皮筋分支收敛。
+// 关键：第 2 步的基准 xA 是「本 tick 刚从 desired 夹出来的值」，不是上一次留下的
+// 窗口位置。基准取错会让橡皮筋不动点从「纯光标函数」退化成「完整超出量」：
+//   原版不动点 = clamp + 0.5*(desired - clamp - 200)，desired=1900 时停在 x=1410
+//   误用 bounds.x 时每帧在已推出的位置上再推一半，收敛到 x=1700（右缘 2500，
+//   越界 580px，原版仅 290px）—— 面板一路爬出屏幕且越来越难抓回来。
 export function moveSigmaWindow(x, y, movedX = 0) {
     if (!sigmaWindow || sigmaWindow.isDestroyed() || sigmaAnimationBlocked()) return;
 
@@ -694,10 +698,13 @@ export function moveSigmaWindow(x, y, movedX = 0) {
     const bottom = area.y + area.height;
     const nextY = Math.min(Math.max(Math.round(y), area.y), bottom - bounds.height);
 
-    // 原版：var14 = 200, newHeight - mouseX > 70
+    // 原版第 1 步：精确夹取，无越界余量（见 SIGMA_DOCK_VISIBLE 上方说明）
+    const clampedX = Math.min(Math.max(Math.round(x), area.x), right - bounds.width);
+
+    // 原版第 2 步：var14 = 200, newHeight - mouseX > 70
     if (x + bounds.width > right + 200 && movedX > 70) {
-        const excess = x - bounds.x - 200;
-        const pushedX = Math.round(bounds.x + excess * 0.5);
+        // var15 = desired - xA_clamped - var14；Math.trunc 对应 Java 的 (int) 向零取整
+        const pushedX = clampedX + Math.trunc((x - clampedX - 200) * 0.5);
         setSigmaOverhanging(pushedX + bounds.width > right);
         if (pushedX !== bounds.x || nextY !== bounds.y) {
             sigmaWindow.setBounds({ x: pushedX, y: nextY, width: bounds.width, height: bounds.height });
@@ -705,12 +712,9 @@ export function moveSigmaWindow(x, y, movedX = 0) {
         return;
     }
 
-    // 允许右缘越界 SIGMA_DRAG_OVERHANG，使拖拽中右缘能越过屏幕右缘 → 触发位置驱动的半透明
-    const nextX = Math.min(Math.max(Math.round(x), area.x), right - bounds.width + SIGMA_DRAG_OVERHANG);
-    // 越界状态用最终生效的 nextX 判断（橡皮筋分支已单独 return）
-    setSigmaOverhanging(nextX + bounds.width > right);
-    if (nextX !== bounds.x || nextY !== bounds.y) {
-        sigmaWindow.setBounds({ x: nextX, y: nextY, width: bounds.width, height: bounds.height });
+    setSigmaOverhanging(clampedX + bounds.width > right);
+    if (clampedX !== bounds.x || nextY !== bounds.y) {
+        sigmaWindow.setBounds({ x: clampedX, y: nextY, width: bounds.width, height: bounds.height });
     }
 }
 
@@ -724,10 +728,11 @@ export function finishSigmaDrag() {
     const bottom = area.y + area.height;
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
 
-    // 松手：若窗口明显已在屏幕外 → 吸附收起。
-// 容差 SIGMA_DRAG_OVERHANG：拖拽允许 12px 越界余量（用于触发半透明），
-// 若按严格 >right 判定，轻微拖到边缘就会误判为「已在屏幕外」而收起。
-if (bounds.x + bounds.width > right + SIGMA_DRAG_OVERHANG) {
+    // 松手：若窗口已在屏幕外（几何越界）→ 吸附收起。
+    // 判据是严格 > right，1:1 对齐原版 MusicPlayer.java:309
+    // （getXA() + getWidthA() > parent.getWidthA()）。
+    // 夹取已无余量，普通拖拽不可能触发这条分支，只有橡皮筋越界才会。
+    if (bounds.x + bounds.width > right) {
         setSigmaDocked(true);
         animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
         return;
@@ -755,7 +760,7 @@ export function restoreSigmaWindow() {
     // 屏幕中间（如 x=1100），按几何位置判定会误判成"无需滑出"而直接返回，
     // 于是调用方已点亮的毛玻璃出现了、面板却不动（表现为玻璃与面板分离）。
     // sigmaDocked 才是权威标志。
-    if (!sigmaDocked && bounds.x + bounds.width <= right + SIGMA_DRAG_OVERHANG) return; // 未在屏幕外，无需滑出
+    if (!sigmaDocked && bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
     setSigmaDocked(false);
     // 注意：这里不要 requestSigmaAcrylicReveal()。
@@ -989,8 +994,8 @@ export const revealSigmaWindow = (win = sigmaWindow) => {
     const display = screen.getDisplayMatching(bounds);
     const area = display.workArea;
     const right = area.x + area.width;
-    // 容差与 SIGMA_DRAG_OVERHANG 对齐：拖拽留下的 12px 越界不该被当成「已收起」
-  if (sigmaDocked || bounds.x + bounds.width > right + SIGMA_DRAG_OVERHANG) {
+    // 判据与 SIGMA_DOCK_VISIBLE 上方一致：夹取无余量，只有橡皮筋越界/吸附态才越界
+    if (sigmaDocked || bounds.x + bounds.width > right) {
         if (!sigmaDocked) {
             const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
             win.setPosition(right - SIGMA_DOCK_VISIBLE, centerY);

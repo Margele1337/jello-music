@@ -1,5 +1,5 @@
 <template>
-  <div class="sigma-music-player" :class="{ docked }" @pointerdown="onPointerDown">
+  <div class="sigma-music-player" :class="{ translucent }" @pointerdown="onPointerDown">
     <!-- 右侧面板 #262626 80% -->
     <div class="smp-right-panel"></div>
     <!-- 左侧面板 black 95% -->
@@ -492,8 +492,22 @@ const playGuessYouLike = async () => {
 };
 
 /* ================= 贴边收起（原版 dock / reShowView 行为） ================= */
+// docked = 几何越界（原版 field20865.setWidthA(xA + widthA <= parentW ? 0 : 41)，
+// 即收起条的显示条件）。它同时是 41px 触发条的 v-if 条件。
 const docked = ref(false);
 let dockedTimer = null;
+
+// 原版 field20874：「已请求滑出」。点收起条置位并每 tick 重复置位，滑出结束时清零。
+// 它是半透明判据的否定项，与 docked 是两个独立量，不能合并 —— 合并会导致
+// 「保持半透明滑出、末尾才变亮」，偏离原版。
+// 必须是 ref：translucent 是 computed，只会因响应式依赖变化而重算。
+// 用普通 let 时 docked 保持 true 不变，computed 会一直返回缓存值，
+// 表现成「滑出全程半透明、直到末尾才变亮」—— 正是要修的那个 bug。
+const undockRequested = ref(false);
+
+// 半透明判据 1:1 对齐原版 MusicPlayer.java:360-361
+//   changeDirection(xA + widthA > parentW && !field20874 ? FORWARDS : BACKWARDS)
+const translucent = computed(() => docked.value && !undockRequested.value);
 
 const restoreWindow = () => {
   if (window.electron?.ipcRenderer) {
@@ -520,6 +534,8 @@ let ipcOverhang = null;
 
 const updateDockedState = () => {
   const byPosition = ipcOverhang !== null ? ipcOverhang : readDockedByPosition();
+  // 重新回到屏幕内即视为滑出结束，清掉请求标志（原版 field20874 在滑出结束时置回 false）
+  if (!byPosition) undockRequested.value = false;
   if (docked.value === byPosition) return;
   docked.value = byPosition;
   // 注意：这里绝不能调 endDrag()。
@@ -535,12 +551,18 @@ if (window.electron?.ipcRenderer) {
     updateDockedState();
   });
   window.electron?.ipcRenderer.on('sigma-dock-changed', (_event, value) => {
-    // dock 标志只在「已吸附」时强制半透明；滑出/正常位置一律以位置为准，
-    // 对齐原版 field20873.changeDirection(右缘越界 && !undockRequested)
-    // 注意这里同样不能调 endDrag()：dock 变化时可能正处在吸附/滑出动画中，
-    // 调它会打断动画并触发一次多余的 finishSigmaDrag。
+    // value=true  → 吸附收起，undockRequested 应为 false
+    // value=false → 主进程开始滑出（restoreSigmaWindow 同步置位），undockRequested 置 true
+    //
+    // 这一项是原版 field20874，缺了它点收起条后面板会「保持半透明滑出」，
+    // 一直到完全进屏才变亮，还要等 200ms 轮询；原版是点击瞬间就开始 150ms 变亮，
+    // 哪怕面板还基本在屏幕外 —— 视觉上像「醒来」。
+    undockRequested.value = !value;
+    // dock 标志只在「已吸附」时强制半透明；滑出/正常位置一律以位置为准
     ipcOverhang = value ? true : null;
     updateDockedState();
+    // 注意这里同样不能调 endDrag()：dock 变化时可能正处在吸附/滑出动画中，
+    // 调它会打断动画并触发一次多余的 finishSigmaDrag。
   });
 }
 
@@ -599,7 +621,9 @@ onBeforeUnmount(() => {
   transition: opacity 150ms linear;
 }
 
-.sigma-music-player.docked {
+/* 原版 field20873 = new Animation(80, 150, BACKWARDS)：淡到 50% 用 80ms，
+   淡回 100% 用 150ms，两者都是线性、都在方向翻转时重新计时（不跳变）。 */
+.sigma-music-player.translucent {
   opacity: 0.5;
   transition-duration: 80ms;
 }
