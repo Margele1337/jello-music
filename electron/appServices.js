@@ -733,6 +733,15 @@ export function finishSigmaDrag() {
     // （getXA() + getWidthA() > parent.getWidthA()）。
     // 夹取已无余量，普通拖拽不可能触发这条分支，只有橡皮筋越界才会。
     if (bounds.x + bounds.width > right) {
+        // 拖拽吸附同样要撤掉全屏毛玻璃。
+        // 另两条收起路径都做了：toggleSigmaDocked（RSHIFT/托盘）是
+        // hideSigmaAcrylic(true) + dockSigmaWindow()，点面板外关闭走
+        // dismissSigmaWithGlass() 也是先 hideSigmaAcrylic(true)。
+        // 只有这里漏了，表现为「RSHIFT 亮起毛玻璃 → 往右拖进去 → 面板收进
+        // 边缘但毛玻璃留在屏幕上」，整屏一直糊着直到再按一次 RSHIFT。
+        // 用 dismiss=true：用户主动把面板收走，属于主动收起，连「本轮允许
+        // 亮毛玻璃」的意图一起清掉。
+        hideSigmaAcrylic(true);
         setSigmaDocked(true);
         animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
         return;
