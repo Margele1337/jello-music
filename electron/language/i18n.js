@@ -251,4 +251,3 @@ export function t(key) {
   return translations[locale]?.[key] || translations['zh-CN']?.[key] || key;
 }
 
-export default { t };

@@ -1,6 +1,6 @@
 import { shell } from 'electron';
 
-export function shouldOpenExternally(targetUrl, currentUrl = '') {
+function shouldOpenExternally(targetUrl, currentUrl = '') {
     try {
         const target = new URL(targetUrl);
         if (target.protocol === 'mailto:' || target.protocol === 'tel:') {

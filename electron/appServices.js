@@ -614,7 +614,7 @@ const animateSigmaWindow = (targetX, targetY) => {
     const start = sigmaWindow.getBounds();
     if (Math.abs(start.x - targetX) < 1 && Math.abs(start.y - targetY) < 1) {
         // 必须先停掉在跑的动画：否则旧动画会继续往它自己的目标推进，
-        // 面板就与毛玻璃/目标位各走各的（连按时表现为"分散开"）。
+        // 面板就与目标位各走各的（连按时表现为"分散开"）。
         cancelSigmaAnimation();
         sigmaLastTargetX = targetX;
         sigmaLastTargetY = targetY;
@@ -843,8 +843,7 @@ export function getSigmaWindow() {
 }
 
 // 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）。
-// 置顶用普通层级而不是 'screen-saver'：原本需要 screen-saver 是为了压住
-// 铺满工作区的毛玻璃层，删掉那层之后没有理由再压到最顶层。
+// 用普通置顶层级即可，随后 600ms 降回，避免长期压住其它应用。
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
     win.setAlwaysOnTop(true);
@@ -882,7 +881,7 @@ const dockSigmaWindow = () => {
 // 已收起 → 滑出；已展开 → 吸附到右侧收起位
 // 外层叠 120ms 触发节流（参照 sigmarebase 的 TabGUI 冷却 80 ticks 与
 // ModuleCardButton 的 30ms 点击防抖）：动画仍会跑完，但连按不再反复反转。
-export const toggleSigmaDocked = (force = false) => {
+const toggleSigmaDocked = (force = false) => {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
     if (!force && sigmaToggleThrottled()) return;
     if (sigmaDocked) {

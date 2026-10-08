@@ -88,9 +88,6 @@ jobs:
     name: Build and Upload
     needs: increment-version
     # 只发布 Windows 版：
-    # - Sigma 面板的毛玻璃层依赖 Windows 11 22H2+ 的 DWM Acrylic
-    #   （electron/services/sigmaAcrylic.js 的 isSigmaAcrylicSupported），
-    #   非 Windows 平台本就没有该效果
     # - uiohook-napi（按键钩子）与 koffi（Win32 FFI）只在 Windows 打包里被引用，
     #   macOS / Linux 产物功能不完整，发出去只会让人误用
     # 需要其他平台时改回 matrix: os: [windows-latest] 再按需扩。

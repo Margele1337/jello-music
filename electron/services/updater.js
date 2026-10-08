@@ -126,37 +126,3 @@ export function checkForUpdates(silent = false) {
         });
 }
 
-export async function startUpdateDownload() {
-    silentCheck = true;
-
-    if (!autoUpdater.isUpdaterActive()) {
-        return {
-            success: false,
-            reason: 'unsupported'
-        };
-    }
-
-    try {
-        if (!autoUpdater.updateInfoAndProvider) {
-            const result = await checkForUpdatesSilently();
-            if (!result?.isUpdateAvailable) {
-                return {
-                    success: false,
-                    reason: 'not-available'
-                };
-            }
-        }
-
-        await autoUpdater.downloadUpdate();
-        return {
-            success: true
-        };
-    } catch (error) {
-        console.error('Start update download error:', error);
-        return {
-            success: false,
-            reason: 'error',
-            message: error?.message || String(error)
-        };
-    }
-}

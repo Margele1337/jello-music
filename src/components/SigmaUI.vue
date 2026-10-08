@@ -63,7 +63,7 @@ const SETTINGS_NO_DRAG_SELECTOR = [
   'button', 'input', 'select', 'textarea', 'a',
   '.setting-card', '.sidebar-item', '.settings-cards', '.settings-sidebar',
   '.scale-slider-container', '.api-settings-container', '.proxy-settings-container',
-  '.font-list', '.font-search', '.modal', '.custom-modal', '.message-notification'
+  '.font-list', '.font-search', '.modal', '.message-container'
 ].join(', ');
 const { onPointerDown: onSigmaDragPointerDown } = useSigmaWindowDrag(SETTINGS_NO_DRAG_SELECTOR);
 

@@ -97,9 +97,7 @@ const queueVerify = (eventId, requestRiskApi) => {
     return current;
 };
 
-export const getRiskEventIdFromResponse = (response) => {
-    return getRiskEventId(response?.data, response?.headers);
-};
+
 
 export const handleRiskResponse = async (response, requestAgain, requestRiskApi) => {
     const payload = response?.data || {};
