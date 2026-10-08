@@ -1,5 +1,10 @@
 <template>
-  <div class="sigma-shell" :class="shellClass">
+  <div
+  ref="shellRef"
+  class="sigma-shell"
+  :class="shellClass"
+  @animationend="onShellAnimationEnd"
+>
     <SigmaMusicPlayer v-show="view === 'player'" :player="player" />
 
     <!-- 新手教程（首次安装打开的新手引导模板，第一步是 Keybind Manager） -->
@@ -149,12 +154,28 @@ const onSettingsChange = (event) => {
 // 所以这里收到的 dock 事件必然是真·状态切换，CSS animation 每次都会重放。
 // 不要加 :key 强制重建，那会销毁播放器子组件状态。
 const sigmaDockedState = ref(false);
-const shellClass = computed(() => (sigmaDockedState.value
-  ? 'sigma-shell--docked'
-  : 'sigma-shell--reveal'));
+const hideAnimDone = ref(false);
+const shellRef = ref(null);
+const shellClass = computed(() => {
+  if (!sigmaDockedState.value) return 'sigma-shell--reveal';
+  return hideAnimDone.value
+    ? 'sigma-shell--docked sigma-shell--hide-done'
+    : 'sigma-shell--docked';
+});
+
+// 退场动画播完 → 解除动画、让 scale 归 1。
+// 原版 scale = 1.5 - a*0.5 在 a→0 时等于 1.5，但原版此刻已 setScreen(null) 关闭，
+// 不存在停在 1.5 的静止态。Jello 收起后仍留 40px 触发条，必须归位，
+// 否则触发条被放大到 60px 且位置漂移。
+const onShellAnimationEnd = (event) => {
+  if (event.target !== shellRef.value) return;
+  if (event.animationName.startsWith('sigma-hide')) hideAnimDone.value = true;
+};
 
 const onSigmaDockChangedForReveal = (_event, docked) => {
   sigmaDockedState.value = !!docked;
+  // 每次进入收起态都要重置，让退场动画能再次播放
+  if (docked) hideAnimDone.value = false;
   onSigmaDockChanged(_event, docked);
 };
 
@@ -221,8 +242,23 @@ watch(() => MoeAuth.UserInfo, (info) => {
   overflow: hidden;
 }
 
+/* 收起态：scale 必须落回 1，否则 40px 触发条会被放大到 60px 且位置漂移。
+   sigma-hide 的 100% 是 scale(1.5)（原版 a→0 的中间态），配合 fill-mode both
+   会永久停在那里，所以这里显式覆盖动画结果。
+   animation-name 仍保留 sigma-hide，用于播放退场动画；用 animation-play-state
+   暂停而非 none，是为了让退场动画播完再由下面的 scale 接管。 */
 .sigma-shell--docked {
-  animation: sigma-hide 125ms linear both;
+  animation: sigma-hide 125ms linear forwards;
+}
+
+/* 退场动画播完后（animationend 由脚本置位）切到 sigma-hidden-rest，把 scale 归 1。
+   不能用 animation:none —— 虽然视觉等价，但会让 .sigma-shell 的 animation
+   计算值变成 none，调试与后续判断都失去参照。用一个 1ms 的静止关键帧，
+   既显式又保留了 animation-name。 */
+.sigma-shell--docked.sigma-shell--hide-done {
+  animation: sigma-hidden-rest 1ms linear forwards;
+  transform: scale(1);
+  background: rgba(6, 8, 12, 0.16);
 }
 
 /* 关键帧由原版公式离线采样 26 点生成：
@@ -290,6 +326,14 @@ watch(() => MoeAuth.UserInfo, (info) => {
   92.31% { transform: scale(1.2598); background-color: rgba(6, 8, 12, 0.0769); }
 96.15% { transform: scale(1.3719); background-color: rgba(6, 8, 12, 0.041); }
   100% { transform: scale(1.5); background-color: rgba(6, 8, 12, 0); }
+}
+/* 收起态的静止形态单独一组：scale 归 1、底色回到 0.16。
+   不把 sigma-hide 的 100% 改成 scale(1)，那样收起的观感就没有"拉远退场"了；
+   也不靠 fill-mode 兜底（both 会把 scale(1.5) 永久钉住）。 */
+@keyframes sigma-hidden-rest {
+  from { transform: scale(1); background-color: rgba(6, 8, 12, 0.16); }
+
+  to { transform: scale(1); background-color: rgba(6, 8, 12, 0.16); }
 }
 
 .sigma-view {
