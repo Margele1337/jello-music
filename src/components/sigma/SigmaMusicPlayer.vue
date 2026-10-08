@@ -505,34 +505,33 @@ const restoreWindow = () => {
 const readDockedByPosition = () => {
   const screenRef = window.screen || {};
   const areaLeft = Number.isFinite(screenRef.availLeft) ? screenRef.availLeft : 0;
-  const areaWidth = Number(screenRef.availWidth) || Number(screenRef.width) || 0;
+  const areaWidth = Number.isFinite(screenRef.availWidth) ? screenRef.availWidth : Number(screenRef.width) || 0;
   const areaRight = areaLeft + areaWidth;
   const windowRight = window.screenX + (window.outerWidth || 0);
-  return areaWidth > 0 && windowRight > areaRight + 1;
+  // 1:1 对齐原版 MusicPlayer.draw 的判据 getXA() + getWidthA() > parent.getWidthA()：
+  // 纯位置驱动、无 boolean 参与渲染，所以拖拽中右缘一越过屏幕右缘就淡到 50%，
+  // 不必等松手
+  return areaWidth > 0 && windowRight > areaRight;
 };
 
-// 透明度的 dock 状态以主进程为准：滑出开始就立即变亮（原版 field20873 方向切换行为）；
-// IPC 状态未知时才用窗口位置兜底
+// 透明度以「位置」为准（原版行为）。主进程 dock 标志只做两点兜底：
+// 1) 主动滑出时（点收起条）位置仍在屏幕外，应以 ipcDockState=false 为准让它
+//    淡回完全不透明，对齐原版的 !field20874；
+// 2) 吸附动画刚起步、位置尚未越界时提前进入半透明态，避免松手瞬间跳变。
 const updateDockedState = () => {
-  if (ipcDockState !== null) {
-    if (docked.value !== ipcDockState) {
-      docked.value = ipcDockState;
-      if (ipcDockState) endDrag();
-    }
-    return;
-  }
   const byPosition = readDockedByPosition();
-  if (byPosition && !docked.value) {
-    endDrag();
+  const next = ipcDockState === false ? false : byPosition;
+  if (docked.value !== next) {
+    docked.value = next;
+    if (next) endDrag();
   }
-  docked.value = byPosition;
 };
 
 if (window.electron?.ipcRenderer) {
   window.electron.ipcRenderer.on('sigma-dock-changed', (_event, value) => {
     ipcDockState = !!value;
-    docked.value = ipcDockState;
     if (ipcDockState) endDrag();
+    updateDockedState();
   });
 }
 
@@ -786,7 +785,9 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   top: 0;
-  width: 40px;
+  /* 原版 field20865.setWidthA(... ? 0 : 41)：点击热区刻意比 40px 可见边条宽 1px，
+     盖住最外侧那个像素，否则屏幕右缘最后 1px 点不中 */
+  width: 41px;
   height: 100%;
   z-index: 50;
   cursor: pointer;
