@@ -288,6 +288,16 @@ const startWindowAnimation = (target) => {
   if (!Number.isFinite(currentX)) currentX = window.screenX;
   if (!Number.isFinite(currentY)) currentY = window.screenY;
   let lastTime = performance.now();
+  // 位移总跨度，用于反推 0→1 的进度去驱动毛玻璃模糊半径渐变
+  const spanX = Math.abs(target.x - currentX) || 1;
+  // 毛玻璃半径只需约 24 档（每档 4%）就能覆盖 ×4 曲线，避免每帧发 IPC
+  let lastRevealStep = -1;
+  const pushReveal = (reveal) => {
+    const step = Math.round(reveal * 24);
+    if (step === lastRevealStep) return;
+    lastRevealStep = step;
+    window.electron?.ipcRenderer.send('sigma-glass-reveal', { reveal });
+  };
 
   const step = (now) => {
     if (!animateActive) return;
@@ -303,9 +313,14 @@ const startWindowAnimation = (target) => {
       ? Math.min(currentY + (target.y - currentY) * 0.2 * frameFactor, target.y)
       : Math.max(currentY + (target.y - currentY) * 0.2 * frameFactor, target.y);
 
+    // 毛玻璃模糊半径随位移进度同步渐变（1 - 位移完成度 → 展开，反向即收起）
+    const reveal = 1 - Math.min(1, Math.abs(target.x - currentX) / spanX);
+    pushReveal(reveal);
+
     if (Math.abs(target.x - currentX) < 0.5 && Math.abs(target.y - currentY) < 0.5) {
       window.electron?.ipcRenderer.send('sigma-window-animate-position', { x: target.x, y: target.y });
       window.electron?.ipcRenderer.send('sigma-window-animate-done');
+      pushReveal(1);
       animateActive = false;
       animateRaf = null;
       return;

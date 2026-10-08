@@ -29,6 +29,7 @@ const SEND_CHANNELS = new Set([
     'sigma-window-enter',
     'sigma-window-move',
     'sigma-window-restore',
+    'sigma-glass-reveal',
     'spectrum-data',
     'spectrum-hud-ready',
     'spectrum-setting-update',

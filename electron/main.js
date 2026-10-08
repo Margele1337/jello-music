@@ -11,7 +11,7 @@ import {
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
     toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow, refreshSigmaAcrylic
 } from './appServices.js';
-import { hideSigmaAcrylic } from './services/sigmaAcrylic.js';
+import { hideSigmaAcrylic, setSigmaAcrylicRevealProgress } from './services/sigmaAcrylic.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
 import statusBarLyricsService from './services/statusBarLyricsService.js';
@@ -513,6 +513,11 @@ ipcMain.on('sigma-request-state', () => {
 // 收起状态下从右侧滑出（悬停/点击收起条时触发）
 ipcMain.on('sigma-window-restore', () => {
     restoreSigmaWindow();
+});
+
+// 面板滑入/滑出进度 → 驱动毛玻璃模糊半径渐变（复刻原版 Radius 0→20）
+ipcMain.on('sigma-glass-reveal', (_event, payload) => {
+    setSigmaAcrylicRevealProgress(payload?.reveal);
 });
 
 // 自绘拖拽：渲染进程发来期望位置，主进程负责夹取范围/贴边收起
