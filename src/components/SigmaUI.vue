@@ -143,30 +143,18 @@ const onSettingsChange = (event) => {
   }
 };
 
-// 面板缩放动画（复刻 sigmarebase ClickGuiScreen.draw 的 scale 曲线）。
-//
-// 只在「应用首次出现」时播，RSHIFT 从收起态弹出时不再播 —— 因为收起态下窗口
-// 只有左侧 40px 在屏幕内，而缩放是以自身中心 (400,300) 为原点的：
-//     scale=1.25 → x=0 映射到 400+(0-400)×1.25 = -100  触发条整个在屏幕外
-//     scale=1.10 → x=0 映射到 -40，只剩 3.6px 可见
-//     scale=1.00 → x=0 映射到 0，40px 完整可见
-// 于是弹性开头那 ~90ms 里面板还没滑动，40px 触发条会先缩到看不见再弹回来，
-// 表现为「先在最右侧抖一下，然后才弹出来」。弹出改为纯滑出。
-//
+// 面板缩放动画（1:1 复刻 sigmarebase ClickGuiScreen.draw 的 scale 1.5→1.0）。
+// dock 变 false = 展开播放 450ms；变 true = 收起 125ms。
 // 靠 class 交替自然重播：主进程 setSigmaDocked 在值未变时 early-return，
-// 所以这里收到的 dock 事件必然是真·状态切换。
+// 所以这里收到的 dock 事件必然是真·状态切换，CSS animation 每次都会重放。
 // 不要加 :key 强制重建，那会销毁播放器子组件状态。
 const sigmaDockedState = ref(false);
-// 第一次收到 dock 事件即视为「已经出现过」，之后不再播缩放
-const hasAppeared = ref(false);
-const shellClass = computed(() => {
-  if (sigmaDockedState.value) return 'sigma-shell--docked';
-  return hasAppeared.value ? 'sigma-shell--plain' : 'sigma-shell--reveal';
-});
+const shellClass = computed(() => (sigmaDockedState.value
+  ? 'sigma-shell--docked'
+  : 'sigma-shell--reveal'));
 
 const onSigmaDockChangedForReveal = (_event, docked) => {
   sigmaDockedState.value = !!docked;
-  if (docked) hasAppeared.value = true;
   onSigmaDockChanged(_event, docked);
 };
 
@@ -220,31 +208,25 @@ watch(() => MoeAuth.UserInfo, (info) => {
   /* 原版 ClickGuiScreen.draw:304-346 的面板动画，1:1 复刻：
      offset = (panelCenter - viewportCenter) × (1 - a) × 0.5   → Sigma 固定居中，恒为 0
      scale  = 1.5 - a × 0.5        （method13279 → glScalef，以自身中心为原点）
-a      = easeOutElastic(p)，p = t / 450ms
-     底色 alpha = 0.16 × a
-     内容 alpha = min(1, a)
+     a      = easeOutElastic(p)，p = t / 450ms（开）或 t / 125ms（关）
+     底色 alpha = 0.16 × a         （原版 :315 背景 alpha = 0.2 × partialTicks × a）
+     内容 alpha = min(1, a)        （原版 :346 super.draw(partialTicks × min(1, a) × fade)）
 
      缓动是 elastic 而非线性：a 会冲过 1 再回弹，所以 scale 先过冲到 ~0.978
      再回到 1.0。这一段过冲是原版观感的一部分，不能换成 cubic-bezier 抹平。
 
-     仅用于应用首次出现（shellClass 里的 hasAppeared）。之后的 RSHIFT 弹出走
-     .sigma-shell--plain，不缩放。 */
+     打开与关闭用的 period 不同（见 @keyframes 注释），故拆成两组关键帧。 */
   animation: sigma-reveal 450ms linear both;
   transform-origin: 50% 50%;
   overflow: hidden;
 }
 
-/* 收起态：不给缩放动画。
-   原版里缩放只绑定 GUI 开/关，拖拽吸附走的是另一条分支、完全不碰 alphaFactor，
-   所以 scale 恒为 1；Jello 的弹出也应如此 —— 只滑出，不缩放。 */
+/* 收起态：刻意不给缩放动画。
+   原版里缩放只绑定 GUI 开/关（RSHIFT 触发 animationProgress），拖拽吸附走的是
+   updatePanelDimensions 的 dock 分支，完全不碰 alphaFactor，所以 scale 恒为 1。
+   早先这里复用了 sigma-reveal，收起时会播一段 1.5 → 1 的缩小，那是自创的。
+   dock 的反馈只需要滑出本身，不要额外缩放。 */
 .sigma-shell--docked {
-  animation: none;
-}
-
-/* 已出现过之后的展开：同样不缩放，纯滑出。
-   见上面 shellClass 的注释：收起态只有左侧 40px 在屏幕内，缩放会把那条触发条
-   推出屏幕再弹回来。 */
-.sigma-shell--plain {
   animation: none;
 }
 
