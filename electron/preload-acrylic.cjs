@@ -34,8 +34,13 @@ contextBridge.exposeInMainWorld('acrylicBridge', {
                 sourceId: String(info.sourceId),
                 width: Number(info.width) || 0,
                 height: Number(info.height) || 0,
-                maxFrameRate: Number(info.maxFrameRate) || 30
+                maxFrameRate: Number(info.maxFrameRate) || 30,
+                // show 时带上当前模糊进度，让页面先落位再起流
+                reveal: Number(info.reveal) || 0,
+                radius: Number(info.radius) || 0
             });
         });
-    }
+    },
+    // 起流失败时告诉主进程：多半是缓存的 sourceId 失效了
+    reportCaptureFailure: () => ipcRenderer.send('acrylic-capture-failed')
 });

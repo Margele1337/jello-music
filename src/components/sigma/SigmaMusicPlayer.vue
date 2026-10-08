@@ -303,16 +303,25 @@ const startWindowAnimation = (target) => {
   let currentY = Number(target.fromY);
   if (!Number.isFinite(currentX)) currentX = window.screenX;
   if (!Number.isFinite(currentY)) currentY = window.screenY;
-  let lastTime = performance.now();
+  // 不要在这里预设 lastTime：收起期间窗口离屏，rAF 被节流，重新显示后的第一帧
+  // dt 会很大（被钳到上限 40ms → frameFactor 2.2），一步就走出 45% 的路程，
+  // 表现为「弹出来时先猛跳一下」。第一帧改用最小步长。
+  let lastTime = 0;
   // 位移总跨度，用于反推 0→1 的进度去驱动毛玻璃模糊半径渐变
   const spanX = Math.abs(target.x - currentX) || 1;
   lastPushedReveal = null;
 
   const step = (now) => {
     if (!animateActive) return;
-    // dt 上限 40ms：偶发迟到不产生大跳（真正卡住超过 150ms 由主进程接管）
-    const dt = Math.min(40, Math.max(1, now - lastTime));
-    lastTime = now;
+    let dt;
+    if (!lastTime) {
+      lastTime = now;
+      dt = 1;
+    } else {
+      // dt 上限 40ms：偶发迟到不产生大跳（真正卡住超过 150ms 由主进程接管）
+      dt = Math.min(40, Math.max(1, now - lastTime));
+      lastTime = now;
+    }
     // 原版：var7 = dt / 18.10361ms；x 用 0.25、y 用 0.2，按方向夹到目标
     const frameFactor = dt / 18.10361;
     currentX = target.x > currentX

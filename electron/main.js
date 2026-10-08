@@ -11,7 +11,7 @@ import {
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
     toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow, refreshSigmaAcrylic
 } from './appServices.js';
-import { hideSigmaAcrylic, setSigmaAcrylicRevealProgress } from './services/sigmaAcrylic.js';
+import { hideSigmaAcrylic, setSigmaAcrylicRevealProgress, warmupSigmaAcrylic } from './services/sigmaAcrylic.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
 import statusBarLyricsService from './services/statusBarLyricsService.js';
@@ -256,6 +256,15 @@ app.on('activate', () => {
         revealSigmaWindow(createSigmaWindow());
     }
 });
+
+// 预热毛玻璃层：建窗口 + 解析并缓存采集源。
+// 建窗口实测同步阻塞主进程 ~482ms，desktopCapturer.getSources() 单次 215~697ms；
+// 都留在呼出的交互路径上会让面板「卡一下再跳过去」—— 渲染进程一帧帧送来的
+// 位置更新全排在被堵住的主进程后面。提前在启动后的空闲时段做完，
+// 之后呼出只剩 show() 与几个变量下发。
+app.whenReady().then(() => {
+    warmupSigmaAcrylic();
+}).catch(() => {});
 
 // 处理未捕获的异常
 process.on('uncaughtException', (error) => {
