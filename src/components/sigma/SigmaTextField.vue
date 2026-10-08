@@ -204,10 +204,10 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* 覆盖 App 全局的玻璃输入框样式（#app.rise-active input[type="text"] !important），
+/* 覆盖 App 全局的玻璃输入框样式（.rise-active input[type="text"] !important），
    还原 sigmarebase 的透明输入框：无底色、无边框、无圆角 */
-#app.rise-active .sigma-text-field-input,
-#app.rise-active .sigma-text-field-input:focus {
+.rise-active .sigma-text-field-input,
+.rise-active .sigma-text-field-input:focus {
   background-color: transparent !important;
   border: none !important;
   border-radius: 0 !important;
@@ -218,7 +218,7 @@ onBeforeUnmount(() => {
 }
 
 /* 输入法组字期间由原生输入框显示文字（含候选框定位），需覆盖上面的透明色 */
-#app.rise-active .sigma-text-field-input.is-composing {
+.rise-active .sigma-text-field-input.is-composing {
   color: rgba(254, 254, 254, 0.9) !important;
 }
 </style>

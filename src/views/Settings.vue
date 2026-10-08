@@ -500,23 +500,6 @@ const getUnavailableSettingText = (item) => {
 };
 
 const selectActions = {
-    applyThemeColor: (option) => proxy.$applyColorTheme(option.value),
-    applyTheme: (option) => proxy.$setTheme(option.value),
-    applyBackground: (option) => {
-        window.dispatchEvent(new CustomEvent('background-change', {
-            detail: { background: option.value }
-        }));
-    },
-    applyBlurStyle: (option) => {
-        window.dispatchEvent(new CustomEvent('blur-style-change', {
-            detail: { blurStyle: option.value }
-        }));
-    },
-    applyBlurRadius: (option) => {
-        window.dispatchEvent(new CustomEvent('blur-radius-change', {
-            detail: { blurRadius: option.value }
-        }));
-    },
     applyLanguage: (option) => {
         proxy.$i18n.locale = option.value;
         document.documentElement.lang = option.value;

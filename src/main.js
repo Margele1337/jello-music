@@ -3,11 +3,11 @@ import { createPinia } from 'pinia';
 import piniaPersistedstate from 'pinia-plugin-persistedstate';
 import App from './App.vue';
 import router from './router/router';
-import { formatMilliseconds, getCover, applyColorTheme, setTheme } from '../src/utils/utils';
+import { formatMilliseconds, getCover } from '../src/utils/utils';
 import ModalPlugin from './plugins/ModalPlugin';
 import MessagePlugin from './plugins/MessagePlugin';
 import i18n from './utils/i18n';
-import '@/assets/themes/dark.scss';
+
 import { registerSW } from 'virtual:pwa-register'
 
 const app = createApp(App);
@@ -15,8 +15,6 @@ const pinia = createPinia();
 pinia.use(piniaPersistedstate);
 app.config.globalProperties.$getCover = getCover;
 app.config.globalProperties.$formatMilliseconds = formatMilliseconds;
-app.config.globalProperties.$applyColorTheme = applyColorTheme;
-app.config.globalProperties.$setTheme = setTheme;
 app.config.errorHandler = (err, vm, info) => {
   console.error(`全局捕获异常: ${info}`, err);
 };
