@@ -13,16 +13,6 @@ import { bindExternalLinkHandler } from './services/externalLinkHandler.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
 import { checkForUpdates } from './services/updater.js';
 import { watchForegroundFullscreen, stopForegroundFullscreenWatcher } from './services/fullscreenWatcher.js';
-import {
-    attachSigmaAcrylic,
-    showSigmaAcrylic,
-    hideSigmaAcrylic,
-    requestSigmaAcrylicReveal,
-    isSigmaAcrylicVisible,
-    isSigmaAcrylicEnabled,
-    setSigmaAcrylicHiddenCallback,
-    setSigmaAcrylicOutsideClickCallback
-} from './services/sigmaAcrylic.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const store = new Store();
 const { TouchBarLabel, TouchBarButton, TouchBarGroup, TouchBarSpacer } = TouchBar;
@@ -733,15 +723,6 @@ export function finishSigmaDrag() {
     // （getXA() + getWidthA() > parent.getWidthA()）。
     // 夹取已无余量，普通拖拽不可能触发这条分支，只有橡皮筋越界才会。
     if (bounds.x + bounds.width > right) {
-        // 拖拽吸附同样要撤掉全屏毛玻璃。
-        // 另两条收起路径都做了：toggleSigmaDocked（RSHIFT/托盘）是
-        // hideSigmaAcrylic(true) + dockSigmaWindow()，点面板外关闭走
-        // dismissSigmaWithGlass() 也是先 hideSigmaAcrylic(true)。
-        // 只有这里漏了，表现为「RSHIFT 亮起毛玻璃 → 往右拖进去 → 面板收进
-        // 边缘但毛玻璃留在屏幕上」，整屏一直糊着直到再按一次 RSHIFT。
-        // 用 dismiss=true：用户主动把面板收走，属于主动收起，连「本轮允许
-        // 亮毛玻璃」的意图一起清掉。
-        hideSigmaAcrylic(true);
         setSigmaDocked(true);
         animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
         return;
@@ -767,16 +748,10 @@ export function restoreSigmaWindow() {
     const right = area.x + area.width;
     // 不要用"是否越过右边缘"来判断是否需要滑出：收起动画进行中面板可能还在
     // 屏幕中间（如 x=1100），按几何位置判定会误判成"无需滑出"而直接返回，
-    // 于是调用方已点亮的毛玻璃出现了、面板却不动（表现为玻璃与面板分离）。
-    // sigmaDocked 才是权威标志。
+    // 面板就卡在中间不动。sigmaDocked 才是权威标志。
     if (!sigmaDocked && bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
     const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
     setSigmaDocked(false);
-    // 注意：这里不要 requestSigmaAcrylicReveal()。
-    // 收起后仅右侧 40px 露在外面，鼠标扫过就会触发本函数；桌面被窗口盖住时
-    // 那 40px 命中不到、没反应，桌面空着时一碰就滑出——若同时亮起毛玻璃，
-    // 就会表现成"桌面没窗口时模糊层莫名弹出"。
-    // 毛玻璃只跟随显式呼出（RSHIFT / 托盘 / 快捷键 / 点击图标），由 raiseSigmaWindow 置位。
     animateSigmaWindow(right - bounds.width - SIGMA_RESTORE_MARGIN, centerY);
 }
 
@@ -825,9 +800,6 @@ export function createSigmaWindow() {
 
     sigmaWindow.once('ready-to-show', () => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            // 毛玻璃只在用户主动呼出时亮（revealRequested），
-            // 冷启动自动创建窗口时不显示全屏模糊
-            showSigmaAcrylic(sigmaWindow);
             sigmaWindow.show();
         }
     });
@@ -839,9 +811,6 @@ export function createSigmaWindow() {
         cancelSigmaAnimation();
         // 关闭 Sigma 窗口不再回退主界面（主窗口是隐藏播放宿主）；左键托盘可随时重新打开
     });
-
-    // 毛玻璃底层跟随本窗口的 bounds / 可见性 / 焦点
-    attachSigmaAcrylic(sigmaWindow);
 
     if (isDev) {
         sigmaWindow.loadURL('http://localhost:8080/#/sigma');
@@ -861,7 +830,6 @@ export function createSigmaWindow() {
 }
 
 export function closeSigmaWindow() {
-    hideSigmaAcrylic(true);
     if (sigmaWindow && !sigmaWindow.isDestroyed()) {
         sigmaWindow.destroy();
     }
@@ -874,40 +842,24 @@ export function getSigmaWindow() {
     return sigmaWindow;
 }
 
-// 毛玻璃层用 'floating'，Sigma 呼出时用 'screen-saver'。
-// 只要毛玻璃还亮着，Sigma 就必须留在 'screen-saver'，否则会掉到全屏毛玻璃
-// 之下被完全遮住（表现为"只有模糊层、没有面板"）。
-const resetSigmaAlwaysOnTop = () => {
-    if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
-    if (isSigmaAcrylicVisible()) {
-        sigmaWindow.setAlwaysOnTop(true, 'screen-saver');
-        return;
-    }
-    sigmaWindow.setAlwaysOnTop(false);
-};
-
-// 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）
-// 面板与毛玻璃必须同进同出：二者由 revealRequested + 置顶层级共同决定，
-// 任何一边单独变化都会露出「只有面板」或「只有模糊层」的半截状态。
+// 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）。
+// 置顶用普通层级而不是 'screen-saver'：原本需要 screen-saver 是为了压住
+// 铺满工作区的毛玻璃层，删掉那层之后没有理由再压到最顶层。
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
-    // 顺序很关键：先置为呼出意图，再置顶，最后才点亮玻璃并显示面板。
-    // 若反过来先 show/focus，Sigma 的 blur 事件会把刚点亮的玻璃撤掉。
-    requestSigmaAcrylicReveal();
-    win.setAlwaysOnTop(true, 'screen-saver');
-    showSigmaAcrylic(win);
+    win.setAlwaysOnTop(true);
     win.show();
     win.moveTop();
     win.focus();
+    // 置顶只是「叫到前面」，一段时间后降回普通层级，避免长期压住其它应用
     setTimeout(() => {
         if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            resetSigmaAlwaysOnTop();
+            sigmaWindow.setAlwaysOnTop(false);
         }
     }, 600);
 };
 
-// 撤掉毛玻璃并把面板吸附到右侧收起位（点面板外区域的关闭手势）
-// 吸附到右侧收起位（共用逻辑：点模糊区域关闭 / 快捷键与托盘切换收起）
+// 吸附到右侧收起位（共用逻辑：快捷键与托盘切换收起）
 const dockSigmaWindow = () => {
     // 不用 sigmaAnimationBlocked() 拦截：连按时第二次调用必须能打断并反向，
     // 被拦下会造成「意图已置位（玻璃点亮）但动画没启动」，正是分离的成因。
@@ -926,11 +878,6 @@ const dockSigmaWindow = () => {
     animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
 };
 
-const dismissSigmaWithGlass = () => {
-    hideSigmaAcrylic(true);
-    dockSigmaWindow();
-};
-
 // 显示 ↔ 收起 互切（面板只有这两种状态，没有"完全隐藏"）
 // 已收起 → 滑出；已展开 → 吸附到右侧收起位
 // 外层叠 120ms 触发节流（参照 sigmarebase 的 TabGUI 冷却 80 ticks 与
@@ -939,40 +886,11 @@ export const toggleSigmaDocked = (force = false) => {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
     if (!force && sigmaToggleThrottled()) return;
     if (sigmaDocked) {
-        // 与点右侧 41px 触发条（sigma-window-restore）完全同一条路径：
-        // 只调 restoreSigmaWindow，不再额外走 requestSigmaAcrylicReveal /
-        // raiseSigmaWindow。即「所有弹出方式统一为边缘触发条那种弹出」。
+        // 与点右侧 41px 触发条（sigma-window-restore）完全同一条路径
         restoreSigmaWindow();
         return;
     }
-    hideSigmaAcrylic(true);
     dockSigmaWindow();
-};
-
-// 毛玻璃撤掉（失焦 / 隐藏 / 关闭开关）时，把 Sigma 的置顶层级降回去，
-// 否则会永久停在 'screen-saver'，压住其它应用
-setSigmaAcrylicHiddenCallback(() => {
-    if (sigmaWindow && !sigmaWindow.isDestroyed() && sigmaWindow.isVisible()) {
-        sigmaWindow.setAlwaysOnTop(false);
-    }
-});
-
-// 点击毛玻璃区域（面板外）→ 撤层 + 面板吸附到右侧
-setSigmaAcrylicOutsideClickCallback(dismissSigmaWithGlass);
-
-// 设置里开关毛玻璃后立即生效（设置变更由主进程转发过来）
-export const refreshSigmaAcrylic = () => {
-    if (!sigmaWindow || sigmaWindow.isDestroyed() || !sigmaWindow.isVisible()) {
-        hideSigmaAcrylic(true);
-        return;
-    }
-    if (!isSigmaAcrylicEnabled()) {
-        // 关开关属于主动关闭，连呼出意图一起清掉
-        hideSigmaAcrylic(true);
-        resetSigmaAlwaysOnTop();
-        return;
-    }
-    showSigmaAcrylic(sigmaWindow);
 };
 
 // RSHIFT 全局热键：与托盘菜单同一套逻辑，共用 toggleSigmaDocked

@@ -9,9 +9,8 @@ import {
     createKeystrokesWindow, closeKeystrokesWindow, getKeystrokesWindow,
     createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
-    toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow, refreshSigmaAcrylic
+    toggleSigmaWindowFromHotkey, raiseSigmaWindow, revealSigmaWindow
 } from './appServices.js';
-import { hideSigmaAcrylic, setSigmaAcrylicRevealProgress, warmupSigmaAcrylic } from './services/sigmaAcrylic.js';
 import { initializeExtensions, cleanupExtensions } from './extensions/extensions.js';
 import apiService from './services/apiService.js';
 import statusBarLyricsService from './services/statusBarLyricsService.js';
@@ -227,8 +226,6 @@ app.on('before-quit', () => {
     setImmediate(() => {
         statusBarLyricsService.cleanup();
         customTrayMenuService.cleanup();
-        // 毛玻璃层是隐藏的常驻窗口，window-all-closed 不会等它，退出前显式收起
-        hideSigmaAcrylic(true);
 
         stopApiServer();
                 stopSpectrumFullscreenWatcher();
@@ -257,15 +254,6 @@ app.on('activate', () => {
     }
 });
 
-// 预热毛玻璃层：建窗口 + 解析并缓存采集源。
-// 建窗口实测同步阻塞主进程 ~482ms，desktopCapturer.getSources() 单次 215~697ms；
-// 都留在呼出的交互路径上会让面板「卡一下再跳过去」—— 渲染进程一帧帧送来的
-// 位置更新全排在被堵住的主进程后面。提前在启动后的空闲时段做完，
-// 之后呼出只剩 show() 与几个变量下发。
-app.whenReady().then(() => {
-    warmupSigmaAcrylic();
-}).catch(() => {});
-
 // 处理未捕获的异常
 process.on('uncaughtException', (error) => {
     console.error('Unhandled Exception:', error);
@@ -285,7 +273,6 @@ app.on('will-quit', () => {
 });
 ipcMain.on('save-settings', (event, settings) => {
     store.set('settings', settings);
-    refreshSigmaAcrylic();
     if (['on', 'off'].includes(settings?.autoStart)) {
         app.setLoginItemSettings({
             openAtLogin: settings?.autoStart === 'on',
@@ -522,11 +509,6 @@ ipcMain.on('sigma-request-state', () => {
 // 收起状态下从右侧滑出（悬停/点击收起条时触发）
 ipcMain.on('sigma-window-restore', () => {
     restoreSigmaWindow();
-});
-
-// 面板滑入/滑出进度 → 驱动毛玻璃模糊半径渐变（复刻原版 Radius 0→20）
-ipcMain.on('sigma-glass-reveal', (_event, payload) => {
-    setSigmaAcrylicRevealProgress(payload?.reveal);
 });
 
 // 自绘拖拽：渲染进程发来期望位置，主进程负责夹取范围/贴边收起

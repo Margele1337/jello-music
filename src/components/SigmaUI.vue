@@ -208,8 +208,11 @@ watch(() => MoeAuth.UserInfo, (info) => {
   inset: 0;
   /* 原播放器栏 z-index 为 98，必须高于它才能盖住，避免出现两条进度条 */
   z-index: 200;
-  /* DWM 亚克力自身已带冷色偏与暗化，这里只补很轻的一层，避免叠色发灰发浑 */
-  background: rgba(6, 8, 12, 0.16);
+  /* 半透明深色底，让面板与桌面有层次。
+     原先这里配合 DWM 亚克力层用（补一点冷色偏、避免叠色发灰），
+     亚克力已删除，这层就是面板自身唯一的背衬。
+     alpha 与原版 ClickGuiScreen.draw:309 的 DEEP_TEAL 0.2×a 静息值对齐。 */
+  background: rgba(6, 8, 12, 0.2);
   /* 原版 ClickGuiScreen.draw:304-346 的面板动画，1:1 复刻：
      offset = (panelCenter - viewportCenter) × (1 - a) × 0.5   → Sigma 固定居中，恒为 0
      scale  = 1.5 - a × 0.5        （method13279 → glScalef，以自身中心为原点）
@@ -244,33 +247,33 @@ watch(() => MoeAuth.UserInfo, (info) => {
    → 起始 a=0.5 即 scale 1.25（不是 1.5），前 20% 就冲到 1.0 附近，
      随后 elastic 回弹在 0.978 ↔ 1.001 之间收敛，最后 40% 几乎静止。 */
 @keyframes sigma-reveal {
-  0% { transform: scale(1.25); background-color: rgba(6, 8, 12, 0.08); opacity: 0.5; }
-  3.85% { transform: scale(1.1828); background-color: rgba(6, 8, 12, 0.1015); opacity: 0.6343; }
-  7.69% { transform: scale(1.1207); background-color: rgba(6, 8, 12, 0.1214); opacity: 0.7586; }
-  11.54% { transform: scale(1.0693); background-color: rgba(6, 8, 12, 0.1378); opacity: 0.8614; }
-  15.38% { transform: scale(1.0305); background-color: rgba(6, 8, 12, 0.1502); opacity: 0.939; }
-  19.23% { transform: scale(1.004); background-color: rgba(6, 8, 12, 0.1587); opacity: 0.992; }
-  23.08% { transform: scale(0.9879); background-color: rgba(6, 8, 12, 0.1639); opacity: 1; }
-  26.92% { transform: scale(0.98); background-color: rgba(6, 8, 12, 0.1664); opacity: 1; }
-  30.77% { transform: scale(0.9778); background-color: rgba(6, 8, 12, 0.1671); opacity: 1; }
-  34.62% { transform: scale(0.9793); background-color: rgba(6, 8, 12, 0.1666); opacity: 1; }
-  38.46% { transform: scale(0.9827); background-color: rgba(6, 8, 12, 0.1655); opacity: 1; }
-  42.31% { transform: scale(0.9869); background-color: rgba(6, 8, 12, 0.1642); opacity: 1; }
-  46.15% { transform: scale(0.991); background-color: rgba(6, 8, 12, 0.1629); opacity: 1; }
-  50% { transform: scale(0.9945); background-color: rgba(6, 8, 12, 0.1618); opacity: 1; }
-  53.85% { transform: scale(0.9972); background-color: rgba(6, 8, 12, 0.1609); opacity: 1; }
-  57.69% { transform: scale(0.9992); background-color: rgba(6, 8, 12, 0.1603); opacity: 1; }
-  61.54% { transform: scale(1.0004); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9992; }
-  65.38% { transform: scale(1.0011); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9978; }
-  69.23% { transform: scale(1.0014); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9973; }
-  73.08% { transform: scale(1.0014); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9973; }
-  76.92% { transform: scale(1.0012); background-color: rgba(6, 8, 12, 0.1596); opacity: 0.9977; }
-  80.77% { transform: scale(1.0009); background-color: rgba(6, 8, 12, 0.1597); opacity: 0.9982; }
-  84.62% { transform: scale(1.0007); background-color: rgba(6, 8, 12, 0.1598); opacity: 0.9987; }
-  88.46% { transform: scale(1.0004); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9991; }
-  92.31% { transform: scale(1.0002); background-color: rgba(6, 8, 12, 0.1599); opacity: 0.9995; }
-  96.15% { transform: scale(1.0001); background-color: rgba(6, 8, 12, 0.16); opacity: 0.9998; }
-  100% { transform: scale(1); background-color: rgba(6, 8, 12, 0.16); opacity: 1; }
+  0% { transform: scale(1.25); background-color: rgba(6, 8, 12, 0.1); opacity: 0.5; }
+  3.85% { transform: scale(1.1828); background-color: rgba(6, 8, 12, 0.1269); opacity: 0.6343; }
+  7.69% { transform: scale(1.1207); background-color: rgba(6, 8, 12, 0.1517); opacity: 0.7586; }
+  11.54% { transform: scale(1.0693); background-color: rgba(6, 8, 12, 0.1723); opacity: 0.8614; }
+  15.38% { transform: scale(1.0305); background-color: rgba(6, 8, 12, 0.1878); opacity: 0.939; }
+  19.23% { transform: scale(1.004); background-color: rgba(6, 8, 12, 0.1984); opacity: 0.992; }
+  23.08% { transform: scale(0.9879); background-color: rgba(6, 8, 12, 0.2048); opacity: 1; }
+  26.92% { transform: scale(0.98); background-color: rgba(6, 8, 12, 0.208); opacity: 1; }
+  30.77% { transform: scale(0.9778); background-color: rgba(6, 8, 12, 0.2089); opacity: 1; }
+  34.62% { transform: scale(0.9793); background-color: rgba(6, 8, 12, 0.2083); opacity: 1; }
+  38.46% { transform: scale(0.9827); background-color: rgba(6, 8, 12, 0.2069); opacity: 1; }
+  42.31% { transform: scale(0.9869); background-color: rgba(6, 8, 12, 0.2052); opacity: 1; }
+  46.15% { transform: scale(0.991); background-color: rgba(6, 8, 12, 0.2036); opacity: 1; }
+  50% { transform: scale(0.9945); background-color: rgba(6, 8, 12, 0.2022); opacity: 1; }
+  53.85% { transform: scale(0.9972); background-color: rgba(6, 8, 12, 0.2011); opacity: 1; }
+  57.69% { transform: scale(0.9992); background-color: rgba(6, 8, 12, 0.2003); opacity: 1; }
+  61.54% { transform: scale(1.0004); background-color: rgba(6, 8, 12, 0.1998); opacity: 0.9992; }
+  65.38% { transform: scale(1.0011); background-color: rgba(6, 8, 12, 0.1996); opacity: 0.9978; }
+  69.23% { transform: scale(1.0014); background-color: rgba(6, 8, 12, 0.1995); opacity: 0.9973; }
+  73.08% { transform: scale(1.0014); background-color: rgba(6, 8, 12, 0.1995); opacity: 0.9973; }
+  76.92% { transform: scale(1.0012); background-color: rgba(6, 8, 12, 0.1995); opacity: 0.9977; }
+  80.77% { transform: scale(1.0009); background-color: rgba(6, 8, 12, 0.1996); opacity: 0.9982; }
+  84.62% { transform: scale(1.0007); background-color: rgba(6, 8, 12, 0.1997); opacity: 0.9987; }
+  88.46% { transform: scale(1.0004); background-color: rgba(6, 8, 12, 0.1998); opacity: 0.9991; }
+  92.31% { transform: scale(1.0002); background-color: rgba(6, 8, 12, 0.1999); opacity: 0.9995; }
+  96.15% { transform: scale(1.0001); background-color: rgba(6, 8, 12, 0.2); opacity: 0.9998; }
+  100% { transform: scale(1); background-color: rgba(6, 8, 12, 0.2); opacity: 1; }
 }
 
 .sigma-view {

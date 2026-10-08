@@ -266,29 +266,13 @@ const onSettingsChange = (event) => {
 /* ================= 窗口进出动画（rAF 与显示器垂直同步；主进程 150ms 收不到帧则接管） ================= */
 let animateRaf = null;
 let animateActive = false;
-let lastPushedReveal = null;
-
-// 毛玻璃半径的目标值。无论动画是跑完还是被打断都要下发一次，
-// 否则打断时最后那个中间值会永久留在 --reveal-target 上（表现为毛玻璃
-// 卡在半糊状态、和面板不同步）。
-const pushReveal = (reveal) => {
-    const v = Math.max(0, Math.min(1, Number(reveal) || 0));
-    // 只挡完全相同的重复值。原来量化成 24 档是为了少发 IPC，
-    // 现在过渡由毛玻璃层自己的 rAF 插值做，主进程这边不需要量化，
-    // 量化反而会把 0..20px 压成 21 个台阶，看上去是跳变而不是渐变。
-    if (v === lastPushedReveal) return;
-    lastPushedReveal = v;
-    window.electron?.ipcRenderer.send('sigma-glass-reveal', { reveal: v });
-};
 
 const stopWindowAnimation = (notifyMain = false) => {
-    const wasActive = animateActive;
-    animateActive = false;
+  animateActive = false;
     if (animateRaf !== null) {
       cancelAnimationFrame(animateRaf);
       animateRaf = null;
     }
-    if (wasActive) pushReveal(1);
     if (notifyMain) {
       window.electron?.ipcRenderer.send('sigma-window-animate-done');
     }
@@ -307,9 +291,6 @@ const startWindowAnimation = (target) => {
   // dt 会很大（被钳到上限 40ms → frameFactor 2.2），一步就走出 45% 的路程，
   // 表现为「弹出来时先猛跳一下」。第一帧改用最小步长。
   let lastTime = 0;
-  // 位移总跨度，用于反推 0→1 的进度去驱动毛玻璃模糊半径渐变
-  const spanX = Math.abs(target.x - currentX) || 1;
-  lastPushedReveal = null;
 
   const step = (now) => {
     if (!animateActive) return;
@@ -331,14 +312,9 @@ const startWindowAnimation = (target) => {
       ? Math.min(currentY + (target.y - currentY) * 0.2 * frameFactor, target.y)
       : Math.max(currentY + (target.y - currentY) * 0.2 * frameFactor, target.y);
 
-    // 毛玻璃模糊半径随位移进度同步渐变（1 - 位移完成度 → 展开，反向即收起）
-    const reveal = 1 - Math.min(1, Math.abs(target.x - currentX) / spanX);
-    pushReveal(reveal);
-
     if (Math.abs(target.x - currentX) < 0.5 && Math.abs(target.y - currentY) < 0.5) {
       window.electron?.ipcRenderer.send('sigma-window-animate-position', { x: target.x, y: target.y });
       window.electron?.ipcRenderer.send('sigma-window-animate-done');
-      pushReveal(1);
       animateActive = false;
       animateRaf = null;
       return;
