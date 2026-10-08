@@ -266,16 +266,32 @@ const onSettingsChange = (event) => {
 /* ================= 窗口进出动画（rAF 与显示器垂直同步；主进程 150ms 收不到帧则接管） ================= */
 let animateRaf = null;
 let animateActive = false;
+let lastPushedReveal = null;
+
+// 毛玻璃半径的目标值。无论动画是跑完还是被打断都要下发一次，
+// 否则打断时最后那个中间值会永久留在 --reveal-target 上（表现为毛玻璃
+// 卡在半糊状态、和面板不同步）。
+const pushReveal = (reveal) => {
+    const v = Math.max(0, Math.min(1, Number(reveal) || 0));
+    // 只挡完全相同的重复值。原来量化成 24 档是为了少发 IPC，
+    // 现在过渡由毛玻璃层自己的 rAF 插值做，主进程这边不需要量化，
+    // 量化反而会把 0..20px 压成 21 个台阶，看上去是跳变而不是渐变。
+    if (v === lastPushedReveal) return;
+    lastPushedReveal = v;
+    window.electron?.ipcRenderer.send('sigma-glass-reveal', { reveal: v });
+};
 
 const stopWindowAnimation = (notifyMain = false) => {
-  animateActive = false;
-  if (animateRaf !== null) {
-    cancelAnimationFrame(animateRaf);
-    animateRaf = null;
-  }
-  if (notifyMain) {
-    window.electron?.ipcRenderer.send('sigma-window-animate-done');
-  }
+    const wasActive = animateActive;
+    animateActive = false;
+    if (animateRaf !== null) {
+      cancelAnimationFrame(animateRaf);
+      animateRaf = null;
+    }
+    if (wasActive) pushReveal(1);
+    if (notifyMain) {
+      window.electron?.ipcRenderer.send('sigma-window-animate-done');
+    }
 };
 
 const startWindowAnimation = (target) => {
@@ -290,14 +306,7 @@ const startWindowAnimation = (target) => {
   let lastTime = performance.now();
   // 位移总跨度，用于反推 0→1 的进度去驱动毛玻璃模糊半径渐变
   const spanX = Math.abs(target.x - currentX) || 1;
-  // 毛玻璃半径只需约 24 档（每档 4%）就能覆盖 ×4 曲线，避免每帧发 IPC
-  let lastRevealStep = -1;
-  const pushReveal = (reveal) => {
-    const step = Math.round(reveal * 24);
-    if (step === lastRevealStep) return;
-    lastRevealStep = step;
-    window.electron?.ipcRenderer.send('sigma-glass-reveal', { reveal });
-  };
+  lastPushedReveal = null;
 
   const step = (now) => {
     if (!animateActive) return;
