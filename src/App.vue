@@ -127,8 +127,9 @@ onUnmounted(() => {
 </style>
 
 <style>
-/* ===== Rise 背景公共样式 ===== */
-#app.rise-active ~ body,
+/* ===== Rise 背景公共样式 =====
+   只用 :has() 两条：#app 是 body 的子元素，#app.rise-active ~ body 这种兄弟
+   选择器永远匹配不到，已删除。 */
 body:has(#app.rise-active),
 html:has(#app.rise-active) body {
     background: transparent !important;
