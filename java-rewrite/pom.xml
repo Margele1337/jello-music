@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.jello.music</groupId>
+  <artifactId>jello-music-java</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>Jello Music (Java Rewrite)</name>
+  <description>Jello Music 纯 Java 桌面版重构</description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <javafx.version>21.0.5</javafx.version>
+    <jackson.version>2.17.2</jackson.version>
+    <jnativehook.version>2.2.3</jnativehook.version>
+  </properties>
+
+  <dependencies>
+    <!-- JavaFX：按平台 classifier 取本地库（win / mac / linux） -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-base</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-media</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-fxml</artifactId>
+      <version>${javafx.version}</version>
+      <classifier>win</classifier>
+    </dependency>
+
+    <!-- 纯 Java MP3 解码器：用于旁路取 PCM 算 FFT。
+         已验证酷狗直链支持 Range（HTTP 206），因此可以只拉前若干 MB 做分析，
+         不需要整首下载。 -->
+    <dependency>
+      <groupId>javazoom</groupId>
+      <artifactId>jlayer</artifactId>
+      <version>1.0.1</version>
+    </dependency>
+
+    <!-- JSON：替代前端与 api 之间的 JSON.parse -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
+    <!-- 全局热键（RSHIFT）：替代 uiohook-napi，含本地库。
+         暂时移除：com.github.kohlschutterboy:jnativehook 在本机可达的仓库里都没有
+         （阿里云 public/central 无此构件，JitPack 需授权，Maven Central 不可达）。
+         接入全局热键时需在能联网的环境补回，并注意它是含 .dll/.dylib/.so 的本地库依赖，
+         jpackage 打包要一并处理。 -->
+    <!--
+    <dependency>
+      <groupId>com.github.kohlschutterboy</groupId>
+      <artifactId>jnativehook</artifactId>
+      <version>${jnativehook.version}</version>
+    </dependency>
+    -->
+
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>2.0.13</version>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.5.6</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+      </plugin>
+      <!-- 测试用的纯控制台入口：不拉起 JavaFX 窗口 -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.2.0</version>
+        <configuration>
+          <mainClass>com.jello.music.tools.PipelineProbe</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

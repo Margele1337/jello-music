@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  项目级 Maven 配置。
+
+  本机 Maven Central（repo1.maven.org）不可达，会导致所有依赖拉取超时，
+  因此统一走阿里云镜像。该仓库同步了 Maven Central 的全部内容，
+  含 javafx-* 与 jlayer。
+
+  用法：mvn -s java-rewrite/settings.xml <goal>
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <name>Aliyun Maven Mirror</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+      <mirrorOf>*</mirrorOf>
+    </mirror>
+  </mirrors>
+
+</settings>
