@@ -113,14 +113,29 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.2.5</version>
       </plugin>
-      <!-- 测试用的纯控制台入口：不拉起 JavaFX 窗口 -->
+      <!-- 两个可执行入口：
+             mvn -s settings.xml exec:java             -> 端到端链路探针（无窗口）
+             mvn -s settings.xml exec:java@gui         -> JavaFX 界面 + 播放
+           GUI 用独立 execution 而不是 -Dexec.mainClass，因为配置里写死的
+           mainClass 不会被该参数覆盖。 -->
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
         <version>3.2.0</version>
-        <configuration>
-          <mainClass>com.jello.music.tools.PipelineProbe</mainClass>
-        </configuration>
+        <executions>
+          <execution>
+            <id>probe</id>
+            <configuration>
+              <mainClass>com.jello.music.tools.PipelineProbe</mainClass>
+            </configuration>
+          </execution>
+          <execution>
+            <id>gui</id>
+            <configuration>
+              <mainClass>com.jello.music.MainApp</mainClass>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

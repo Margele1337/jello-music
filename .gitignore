@@ -40,3 +40,4 @@ pnpm-workspace.yaml
 # Java ??
 java-rewrite/target/
 java-rewrite/tools/maven.zip
+java-rewrite/cp.txt
