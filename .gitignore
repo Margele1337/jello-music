@@ -39,5 +39,5 @@ pnpm-workspace.yaml
 *.lnk
 # Java ??
 java-rewrite/target/
-java-rewrite/tools/maven.zip
+java-rewrite/tools/
 java-rewrite/cp.txt

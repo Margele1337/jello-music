@@ -26,6 +26,46 @@ Invoke-WebRequest https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/a
 Expand-Archive maven.zip -DestinationPath tools
 ```
 
+## 运行
+
+最简单的方式：
+
+```bat
+run.bat
+```
+
+`run.bat` 会自动找 Maven（优先 PATH，其次 `tools\apache-maven-3.9.9\`）、编译、解析依赖并以 module path 启动 GUI。
+
+```bat
+run.bat probe          :: 只跑无窗口的链路探针
+run.bat <直链URL>      :: 指定音频直链
+```
+
+Maven 本体需自行下载放到 `tools\`（该目录已 gitignore）：
+
+```powershell
+Invoke-WebRequest https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip -OutFile maven.zip
+Expand-Archive maven.zip -DestinationPath tools
+```
+
+凭据走环境变量，避免 token 进命令行历史：
+
+```powershell
+set JELLO_TOKEN=xxx
+set JELLO_USERID=xxx
+set JELLO_DFID=xxx
+set JELLO_HASH=歌曲hash
+```
+
+## 交互
+
+| 操作 | 行为 |
+|---|---|
+| 拖动面板 | 移动窗口 |
+| 拖到屏幕最右侧 | 自动贴边收起（露出 40px） |
+| `Shift+R` | 收起 / 展开（全局热键待接入，暂用窗口内快捷键代替） |
+| 频谱 | 后台线程拉流解码 + FFT，实时绘制 |
+
 ## 当前已跑通的部分
 
 `tools/PipelineProbe` 是一个不拉起窗口的端到端探针，覆盖三段：
@@ -43,16 +83,6 @@ Expand-Archive maven.zip -DestinationPath tools
     采样率=44100 Hz  声道=2  帧长=1024
     连续解码帧数=20
     24 频段: 0.00 0.00 0.00 0.00 0.01 0.01 0.03 0.10 0.58 0.06 0.04 0.11 0.10 0.08 ... 0.00
-```
-
-运行（凭据走环境变量，避免 token 进命令行历史）：
-
-```powershell
-set JELLO_TOKEN=<token>
-set JELLO_USERID=<userid>
-set JELLO_DFID=<dfid>
-set JELLO_HASH=<歌曲hash>
-mvn -s settings.xml exec:java
 ```
 
 ## 已验证的关键结论
