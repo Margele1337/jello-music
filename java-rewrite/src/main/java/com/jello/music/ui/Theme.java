@@ -3,44 +3,76 @@ package com.jello.music.ui;
 import javafx.scene.paint.Color;
 
 /**
- * 视觉常量，数值取自原 Vue 版 Sigma 面板的 CSS / JS。
+ * 视觉常量 —— 全部取自原 Vue 版 {@code SigmaMusicPlayer.vue} / {@code SigmaUI.vue}，
+ * 数值 1:1 照搬，不做"差不多"的近似。
  *
- * <p>来源对应关系：
- * <ul>
- *   <li>{@code .sigma-shell} 的 rgba(6, 8, 12, 0.2) → {@link #SHELL}</li>
- *   <li>{@code --primary-color: #1a9aba} → {@link #ACCENT}</li>
- *   <li>频谱高端色 → {@link #ACCENT_LIGHT}</li>
- *   <li>边缘触发条宽度 41px、收起可见 40px → {@link #EDGE_TRIGGER} / {@link #DOCK_VISIBLE}</li>
- * </ul>
+ * <p>坐标是 800x600 面板内的绝对像素，与原版 {@code position: absolute} 布局一一对应。
  */
 public final class Theme {
 
     private Theme() {
     }
 
-    /** 壳层半透明深色，等价 CSS rgba(6, 8, 12, 0.2) */
-    public static final Color SHELL = Color.rgb(6, 8, 12, 0.2);
+    /** 按 0-255 整数值构造颜色（对应 CSS 的 rgb(38,38,38) 写法）。 */
+    private static Color rgb(int r, int g, int b, double a) {
+        return Color.color(r / 255.0, g / 255.0, b / 255.0, a);
+    }
 
-    /** 主色 #1a9aba */
-    public static final Color ACCENT = Color.web("#1a9aba");
+    public static final double PANEL_W = 800;
+    public static final double PANEL_H = 600;
 
-    /** 频谱高端偏青 #44d9e6 */
-    public static final Color ACCENT_LIGHT = Color.web("#44d9e6");
+    // ---- 面板底色（与原 CSS 完全一致）----
+    /** 左栏 black 95% */
+    public static final Color LEFT_PANEL = Color.color(0, 0, 0, 0.95);
+    /** 右栏 #262626 80% */
+    public static final Color RIGHT_PANEL = rgb(38, 38, 38, 0.80);
+    /** 底部封面条遮罩 rgba(1,1,1,0.43) */
+    public static final Color STRIP_OVERLAY = Color.color(1, 1, 1, 0.43);
+    public static final double STRIP_OVERLAY_H = 89;
 
-    public static final Color TEXT_PRIMARY = Color.web("#e1e1e1");
-    public static final Color TEXT_SECONDARY = Color.web("#9fd8e6");
-    public static final Color TEXT_MUTED = Color.web("#777777");
+    // ---- 文字色：原版统一 #fefefe ----
+    public static final Color TEXT = Color.web("#fefefe");
+    /** 歌单普通项 rgba(254,254,254,0.55) */
+    public static final Color TEXT_DIM = rgb(254, 254, 254, 0.55);
 
-    /** 右侧边缘触发条宽度（CSS 41px） */
+    // ---- 几何（1:1 照搬原 CSS 的 left/top/width/height）----
+    public static final double LEFT_PANEL_W = 250;
+    public static final double RIGHT_PANEL_W = 550;
+    public static final double UPPER_H = 506;
+
+    public static final double ARTWORK_X = 68, ARTWORK_Y = 430, ARTWORK_S = 114;
+    public static final Color ARTWORK_BG = Color.web("#14161a");
+
+    public static final double TITLE_X = 30, TITLE_Y = 550, TITLE_W = 190;
+    public static final double SUBTITLE_Y = 570;
+    public static final double TIME_L_X = 264, TIME_R_X = 736, TIME_R_W = 50, TIME_Y = 568;
+
+    public static final double LOGO_X = 55, LOGO_Y = 14, LOGO_SIZE = 40;
+    public static final double LOGO_SUB_X = 135, LOGO_SUB_Y = 42, LOGO_SUB_SIZE = 20;
+
+    public static final double PREV_X = 392, PREV_Y = 529, PREV_S = 46;
+    public static final double PLAY_X = 506, PLAY_Y = 533, PLAY_S = 38;
+    public static final double NEXT_X = 620, NEXT_Y = 529, NEXT_S = 46;
+    public static final double REPEAT_X = 264, REPEAT_Y = 540;
+    public static final double VOLUME_X = 781, VOLUME_Y = 520, VOLUME_W = 4, VOLUME_H = 40;
+    public static final Color VOLUME_TRACK = Color.color(1, 1, 1, 0.20);
+    public static final Color VOLUME_FILL = rgb(254, 254, 254, 0.20);
+
+    public static final double PROGRESS_X = 250, PROGRESS_Y = 595, PROGRESS_W = 550, PROGRESS_H = 5;
+    public static final Color PROGRESS_TRACK = rgb(153, 153, 153, 0.075);
+    public static final Color PROGRESS_REMAIN = Color.color(1, 1, 1, 0.43);
+
+    public static final double SPECTRUM_X = 15, SPECTRUM_Y = 460, SPECTRUM_S = 40;
+    public static final Color SPECTRUM_BAR = Color.web("#fefefe");
+    public static final double SPECTRUM_BAR_OFF = 0.09;
+    public static final double SPECTRUM_BAR_ON = 0.29;
+
+    public static final double PLAYLIST_X = 0, PLAYLIST_Y = 78, PLAYLIST_W = 250, PLAYLIST_H = 442;
+
+    public static final double STRIP_X = 0, STRIP_Y = 506, STRIP_W = 800, STRIP_H = 94;
+
+    // ---- 边缘收起（原 appServices.js：SIGMA_DOCK_VISIBLE=40 / RESTORE_MARGIN=20）----
     public static final double EDGE_TRIGGER = 41;
-
-    /** 收起时露出屏幕外的宽度，原版 var8 = parentWidth - 40 */
     public static final double DOCK_VISIBLE = 40;
-
-    /** 展开时的右侧间隙，原版 var11 = parentWidth - 20 - width */
     public static final double RESTORE_MARGIN = 20;
-
-    /** 面板尺寸，与原 Sigma 面板一致 */
-    public static final double PANEL_WIDTH = 800;
-    public static final double PANEL_HEIGHT = 600;
 }

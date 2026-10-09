@@ -98,6 +98,53 @@ public final class KuGouApiClient {
         return "1".equals(status.asText());
     }
 
+    /** 用户歌单列表（默认收藏、我喜欢等）。 */
+    public java.util.List<Playlist> userPlaylists(int page, int pageSize)
+            throws IOException, InterruptedException {
+        JsonNode r = get("/user/playlist?pagesize=" + pageSize + "&page=" + page);
+        if (!isSuccess(r)) {
+            throw new IOException("/user/playlist 失败: " + errorMessage(r));
+        }
+        java.util.List<Playlist> out = new java.util.ArrayList<>();
+        JsonNode info = r.path("data").get("info");
+        if (info != null && info.isArray()) {
+            for (JsonNode n : info) {
+                String id = n.path("global_collection_id").asText("");
+                String name = n.path("name").asText(n.path("listname").asText(""));
+                int count = n.path("count").asInt(0);
+                if (!id.isEmpty()) {
+                    out.add(new Playlist(id, name, count));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 歌单里的一页歌曲。api 的歌曲数组在 {@code data.songs}，
+     * 每项含 hash / name(歌手-歌名) / remark(歌名) / singerinfo / albuminfo /
+     * cover / timelen(毫秒) / extname。
+     */
+    public java.util.List<com.jello.music.model.Song> playlistTracks(
+            String playlistId, int page, int pageSize) throws IOException, InterruptedException {
+        JsonNode r = get("/playlist/track/all?id=" + playlistId
+                + "&pagesize=" + pageSize + "&page=" + page);
+        if (!isSuccess(r)) {
+            throw new IOException("/playlist/track/all 失败: " + errorMessage(r));
+        }
+        java.util.List<com.jello.music.model.Song> out = new java.util.ArrayList<>();
+        JsonNode songs = r.path("data").get("songs");
+        if (songs != null && songs.isArray()) {
+            for (JsonNode n : songs) {
+                var s = com.jello.music.model.Song.fromApi(n);
+                if (s != null) {
+                    out.add(s);
+                }
+            }
+        }
+        return out;
+    }
+
     public static String errorMessage(JsonNode node) {
         for (String k : new String[]{"error", "error_msg", "message"}) {
             JsonNode v = node.get(k);

@@ -1,112 +1,124 @@
 package com.jello.music;
 
 import com.jello.music.api.KuGouApiClient;
+import com.jello.music.api.Playlist;
 import com.jello.music.model.KuGouCredentials;
+import com.jello.music.model.Song;
+import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
+import com.jello.music.ui.Assets;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.ElasticReveal;
 import com.jello.music.ui.PlayerPanel;
+import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SpectrumView;
 import com.jello.music.ui.Theme;
 import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Label;
-import javafx.scene.input.KeyCode;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBox;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Jello Music Java 版入口。
- *
- * <p>对应原 Vue 版 Sigma 面板：800x600 透明无边框窗口、贴右收起/滑出、
- * 展开时的弹性缩放动画、可拖拽，壳层半透明深色。
+ * Jello Music Java 版入口 —— 严格按原 Vue 版 {@code SigmaUI.vue} + {@code SigmaMusicPlayer.vue}
+ * 的 800x600 绝对定位布局 1:1 复刻。
  *
  * <p><b>核心设计</b>：播放与频谱是两条互不阻塞的路径——
- * {@link MediaPlayer} 负责出声，{@link SpectrumFeed}（后台线程 + JLayer + FFT）负责画频谱。
+ * {@link MediaPlayer} 出声，{@link SpectrumFeed}（后台线程 + JLayer + FFT）画频谱。
  * JavaFX 的 MediaPlayer 不吐 PCM，拿不到频谱数据，这是 Java 侧必须自己解决的部分。
  *
- * <p><b>快捷键</b>：RSHIFT 呼出/收起（全局热键尚未接入，这里先用窗口内 Shift+R 代替）。
- *
- * <p><b>已知限制</b>：JavaFX MediaPlayer 基于 GStreamer，<b>不支持 FLAC</b>。
+ * <p><b>快捷键</b>：Shift+R 收起/展开（全局热键待接入）。
  */
 public class MainApp extends Application {
 
     private static final int FFT_SIZE = 2048;
     private static final int BAND_COUNT = 48;
+    private static final ExecutorService IO = Executors.newFixedThreadPool(3);
 
     private MediaPlayer player;
     private SpectrumFeed feed;
     private SpectrumView spectrumView;
     private PlayerPanel playerPanel;
+    private PlaylistPanel playlistPanel;
     private Label statusLabel;
     private EdgeDock dock;
     private ElasticReveal reveal;
-    private String directUrl;
+
+    private final PlayQueue queue = new PlayQueue();
+    private final AtomicInteger requestSeq = new AtomicInteger();
+    private KuGouApiClient api;
+    private List<Playlist> playlists = List.of();
+    private String currentDirectUrl;
 
     @Override
     public void start(Stage stage) {
-        directUrl = resolveDirectUrl();
+        // 预热字体，避免首帧字体回退导致排版跳动
+        Assets.light(14);
+
+        api = new KuGouApiClient(credentials());
 
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setTitle("Jello Music");
-        stage.setWidth(Theme.PANEL_WIDTH);
-        stage.setHeight(Theme.PANEL_HEIGHT);
+        stage.setWidth(Theme.PANEL_W);
+        stage.setHeight(Theme.PANEL_H);
 
-        // ---- 频谱 ----
-        feed = new SpectrumFeed(directUrl, FFT_SIZE, BAND_COUNT, 60);
-        spectrumView = new SpectrumView(feed, BAND_COUNT, 640, 120);
-        Canvas spectrumCanvas = spectrumView.canvas();
+        // ---- 主面板：绝对定位，与原版一致 ----
+        Pane root = new Pane();
+
+        playerPanel = new PlayerPanel();
+        playerPanel.onPrev(() -> playCurrent(queue.previous()));
+        playerPanel.onNext(() -> playCurrent(queue.next()));
+        playerPanel.onPlayToggle(this::togglePlay);
+        root.getChildren().add(playerPanel);
+
+        // ---- 左栏歌单：显示歌单条目 ----
+        playlistPanel = new PlaylistPanel(Theme.PLAYLIST_W, Theme.PLAYLIST_H, this::onPlaylistSelect);
+        playlistPanel.setLayoutX(Theme.PLAYLIST_X);
+        playlistPanel.setLayoutY(Theme.PLAYLIST_Y);
+        root.getChildren().add(playlistPanel);
+
+        // ---- 频谱：原版没有独立频谱窗，这里画在左栏底部（原版频谱按钮位置）----
+        feed = new SpectrumFeed(null, FFT_SIZE, BAND_COUNT, 60);
+        spectrumView = new SpectrumView(feed, BAND_COUNT, 220, 60);
+        spectrumCanvasHolder = spectrumView.canvas();
+        // Canvas 是固定尺寸节点，但放进 Pane 时必须显式给 prefSize 与 layoutX/Y，
+        // 否则宽高会是 -1（未布局），整块频谱画不出来。
+        spectrumCanvasHolder.setLayoutX(15);
+        spectrumCanvasHolder.setLayoutY(452);
+        root.getChildren().add(spectrumCanvasHolder);
         spectrumView.start();
 
-        // ---- 播放器 ----
-        playerPanel = new PlayerPanel(
-                ignore -> togglePlay(),
-                () -> status("上一首（待接播放队列）"),
-                () -> status("下一首（待接播放队列）"));
+        // ---- 状态：放在左下角，不与原版元素冲突 ----
+        statusLabel = new Label("加载中…");
+        statusLabel.setFont(Assets.light(11));
+        statusLabel.setTextFill(Theme.TEXT_DIM);
+        statusLabel.setLayoutX(8);
+        statusLabel.setLayoutY(576);
+        statusLabel.setPrefWidth(240);
+        root.getChildren().add(statusLabel);
 
-        statusLabel = new Label("初始化中…");
-        statusLabel.setTextFill(Theme.TEXT_MUTED);
-        statusLabel.setFont(Font.font("Consolas", 11));
-
-        Label hint = new Label("拖动面板可移动 · 拖到最右侧自动收起 · Shift+R 呼出/收起");
-        hint.setTextFill(Theme.TEXT_SECONDARY);
-        hint.setFont(Font.font("Segoe UI", 11));
-
-        VBox content = new VBox(12, spectrumCanvas, playerPanel, hint, statusLabel);
-        content.setAlignment(Pos.CENTER);
-        content.setPadding(new Insets(16));
-
-        // 整个面板作为可拖拽区域（与原版一致：空白处拖动不误触控件）
-        StackPane overlay = new StackPane(content);
-        overlay.setPadding(new Insets(8));
-
-        BorderPane root = new BorderPane(overlay);
-        root.setStyle("-fx-background-color: transparent;");
-        StackPane shell = new StackPane(root);
-        shell.setStyle("-fx-background-color: rgba(6, 8, 12, 0.2);");
-
-        // 弹性缩放作用在 overlay 上，shell 保持不变形
+        StackPane overlay = new StackPane(root);
         reveal = new ElasticReveal(overlay);
 
-        Scene scene = new Scene(shell, Theme.PANEL_WIDTH, Theme.PANEL_HEIGHT);
+        Scene scene = new Scene(overlay, Theme.PANEL_W, Theme.PANEL_H);
         scene.setFill(Color.TRANSPARENT);
         scene.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.R && e.isShiftDown()) {
+            if (e.getCode() == javafx.scene.input.KeyCode.R && e.isShiftDown()) {
                 toggleDock();
             }
         });
@@ -114,46 +126,160 @@ public class MainApp extends Application {
         stage.setAlwaysOnTop(true);
 
         dock = new EdgeDock(stage);
-        installDragHandlers(overlay);
-
-        // 冷启动直接展开，便于第一次打开就能看到界面；
-        // 按 Shift+R 或拖到最右侧可收起，与原版一致的路径。
+        installDragHandlers(root);
         dock.expand();
         reveal.expand(null);
         stage.show();
 
-        if (directUrl == null) {
-            status("未提供直链。运行 run.bat <直链>，或设置 JELLO_HASH 等环境变量。");
-        } else {
-            startPlayback(directUrl);
-        }
+        queue.addListener(song -> Platform.runLater(() -> onQueueCurrentChanged(song)));
+        loadPlaylists();
     }
 
-    /**
-     * 拖拽：原版把整个面板当拖拽区，控件区域通过选择器排除。
-     * JavaFX 里控件自己会消费事件，所以直接在 overlay 上监听即可，
-     * 不必像 Web 版那样维护一份「不拖拽的 class 选择器」列表。
-     */
-    private void installDragHandlers(javafx.scene.Node overlay) {
-        overlay.setOnMousePressed(e -> {
-            if (dock.isDocked()) {
-                return; // 收起态不接受拖拽
+    // ---- 歌单 / 队列 ----
+
+    private void loadPlaylists() {
+        status("加载歌单…");
+        int seq = requestSeq.incrementAndGet();
+        IO.execute(() -> {
+            try {
+                List<Playlist> pls = api.userPlaylists(1, 20);
+                pls.sort((a, b) -> b.count() - a.count());
+                // 左栏显示非空歌单
+                List<Playlist> nonEmpty = pls.stream().filter(p -> p.count() > 0).toList();
+                Platform.runLater(() -> {
+                    if (seq != requestSeq.get()) {
+                        return;
+                    }
+                    playlists = pls;
+                    playlistPanel.setItems(nonEmpty.stream()
+                            .map(com.jello.music.api.Playlist::name).toList());
+                    // 自动载入第一个非空歌单的歌曲到队列
+                    if (!nonEmpty.isEmpty()) {
+                        loadTracks(nonEmpty.get(0), seq);
+                    } else {
+                        status("没有非空歌单");
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> status("加载歌单失败: " + e.getMessage()));
             }
-            dock.beginDrag(e);
         });
-        overlay.setOnMouseDragged(e -> dock.drag(e));
-        overlay.setOnMouseReleased(e -> dock.endDrag());
     }
 
-    /** 与原版一致：所有收起/展开入口共用这一条路径。 */
-    private void toggleDock() {
-        if (dock.isDocked()) {
-            dock.expand();
-            reveal.expand(null);
-        } else {
-            reveal.collapse(() -> dock.collapse());
+    private void loadTracks(Playlist pl, int seq) {
+        IO.execute(() -> {
+            try {
+                List<Song> songs = api.playlistTracks(pl.id(), 1, 50);
+                Platform.runLater(() -> {
+                    if (seq != requestSeq.get()) {
+                        return;
+                    }
+                    queue.replaceAll(songs);
+                    status(pl.name() + " · " + songs.size() + " 首");
+                    if (!songs.isEmpty()) {
+                        playCurrent(songs.get(0));
+                    }
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> status("加载歌曲失败: " + e.getMessage()));
+            }
+        });
+    }
+
+    private void onPlaylistSelect(int index) {
+        List<Playlist> nonEmpty = playlists.stream().filter(p -> p.count() > 0).toList();
+        if (index >= 0 && index < nonEmpty.size()) {
+            loadTracks(nonEmpty.get(index), requestSeq.incrementAndGet());
         }
     }
+
+    private void playCurrent(Song song) {
+        if (song == null) {
+            return;
+        }
+        playerPanel.setSong(song.getTitle(), song.getArtist(), song.getCoverUrl());
+        playerPanel.setCover(song.getCoverUrl());
+        status("加载直链: " + song.titleWithArtist());
+        int seq = requestSeq.incrementAndGet();
+
+        IO.execute(() -> {
+            try {
+                String url = api.songUrl(song.getHash(), 320);
+                Platform.runLater(() -> {
+                    if (seq != requestSeq.get()) {
+                        return;
+                    }
+                    currentDirectUrl = url;
+                    startPlayback(url);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> status("取直链失败: " + e.getMessage()));
+            }
+        });
+    }
+
+    private void onQueueCurrentChanged(Song song) {
+        if (song != null) {
+            playerPanel.setSong(song.getTitle(), song.getArtist(), song.getCoverUrl());
+            playerPanel.setCover(song.getCoverUrl());
+        }
+    }
+
+    // ---- 播放 / 频谱 ----
+
+    private void startPlayback(String url) {
+        disposePlayer();
+        try {
+            Media media = new Media(url);
+            player = new MediaPlayer(media);
+            player.setOnReady(() -> status("就绪"));
+            player.setOnError(() -> status("播放失败（MediaPlayer 不支持 FLAC）"));
+            player.setVolume(0.8);
+            player.play();
+            playerPanel.bindPlayer(player);
+            rewireSpectrum(url);
+        } catch (Exception e) {
+            status("初始化播放失败：" + e.getMessage());
+        }
+    }
+
+    private void rewireSpectrum(String url) {
+        if (feed != null) {
+            feed.close();
+        }
+        feed = new SpectrumFeed(url, FFT_SIZE, BAND_COUNT, 60);
+        spectrumView.stop();
+        spectrumView = new SpectrumView(feed, BAND_COUNT, 220, 60);
+        // 替换旧 canvas
+        Pane parent = (Pane) spectrumCanvasHolder.getParent();
+        int idx = parent.getChildren().indexOf(spectrumCanvasHolder);
+        if (idx >= 0) {
+            parent.getChildren().set(idx, spectrumView.canvas());
+            spectrumCanvasHolder = spectrumView.canvas();
+            spectrumCanvasHolder.setLayoutX(15);
+            spectrumCanvasHolder.setLayoutY(452);
+        }
+        spectrumView.start();
+
+        new AnimationTimer() {
+            @Override
+            public void handle(long now) {
+                if (feed == null || player == null) {
+                    return;
+                }
+                if (feed.error() != null) {
+                    status("频谱不可用");
+                } else if (player.getStatus() == MediaPlayer.Status.PLAYING
+                        && feed.sampleRate() > 0) {
+                    status(String.format("播放中 · %d Hz", feed.sampleRate()));
+                }
+            }
+        }.start();
+    }
+
+    private Canvas spectrumCanvasHolder;
+
+
 
     private void togglePlay() {
         if (player == null) {
@@ -166,62 +292,38 @@ public class MainApp extends Application {
         }
     }
 
-    private void startPlayback(String url) {
-        try {
-            Media media = new Media(url);
-            player = new MediaPlayer(media);
-            player.setOnReady(() -> status("就绪"));
-            player.setOnError(() -> {
-                MediaPlayer p = player;
-                status("播放失败：" + (p == null ? "未知" : String.valueOf(p.getError()))
-                        + "（MediaPlayer 不支持 FLAC，确认是 MP3）");
-            });
-            player.setVolume(0.8);
-            player.play();
-            playerPanel.bindPlayer(player);
-            playerPanel.setSong("未命名曲目", "", null);
-
-            new AnimationTimer() {
-                @Override
-                public void handle(long now) {
-                    if (feed == null) {
-                        return;
-                    }
-                    if (feed.error() != null) {
-                        status("频谱不可用：" + feed.error());
-                    } else if (player != null
-                            && player.getStatus() == MediaPlayer.Status.PLAYING
-                            && feed.sampleRate() > 0) {
-                        status(String.format("播放中 · %d Hz · %d ch",
-                                feed.sampleRate(), feed.channels()));
-                    }
-                }
-            }.start();
-        } catch (Exception e) {
-            status("初始化播放失败：" + e.getMessage());
+    private void disposePlayer() {
+        if (player != null) {
+            player.dispose();
+            player = null;
         }
     }
 
-    /** 命令行直链优先；否则用环境变量凭据走 api 取一条。 */
-    private String resolveDirectUrl() {
-        List<String> args = getParameters().getRaw();
-        if (!args.isEmpty() && args.get(0).startsWith("http")) {
-            return args.get(0);
+    private void installDragHandlers(javafx.scene.Node overlay) {
+        overlay.setOnMousePressed(e -> {
+            if (!dock.isDocked()) {
+                dock.beginDrag(e);
+            }
+        });
+        overlay.setOnMouseDragged(e -> dock.drag(e));
+        overlay.setOnMouseReleased(e -> dock.endDrag());
+    }
+
+    private void toggleDock() {
+        if (dock.isDocked()) {
+            dock.expand();
+            reveal.expand(null);
+        } else {
+            reveal.collapse(() -> dock.collapse());
         }
-        String hash = env("JELLO_HASH");
-        if (hash == null) {
-            return null;
-        }
+    }
+
+    private KuGouCredentials credentials() {
         KuGouCredentials cred = new KuGouCredentials();
         cred.setToken(env("JELLO_TOKEN"));
         cred.setUserid(env("JELLO_USERID"));
         cred.setDfid(env("JELLO_DFID"));
-        try {
-            return new KuGouApiClient(cred).songUrl(hash, 320);
-        } catch (Exception e) {
-            System.err.println("取直链失败: " + e.getMessage());
-            return null;
-        }
+        return cred;
     }
 
     private static String env(String k) {
@@ -243,9 +345,7 @@ public class MainApp extends Application {
         if (feed != null) {
             feed.close();
         }
-        if (player != null) {
-            player.dispose();
-        }
+        disposePlayer();
     }
 
     public static void main(String[] args) {

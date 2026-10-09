@@ -1,155 +1,243 @@
 package com.jello.music.ui;
 
 import javafx.animation.AnimationTimer;
-import javafx.beans.binding.Bindings;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.ProgressBar;
-import javafx.scene.control.Slider;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.HBox;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBox;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.paint.Color;
-import javafx.scene.text.Font;
-
-import java.util.function.Consumer;
 
 /**
- * 播放主界面：封面、曲名/歌手、进度条、上一首/播放暂停/下一首、音量。
+ * 播放界面 —— 严格按原 Vue 版 {@code SigmaMusicPlayer.vue} 的绝对定位坐标 1:1 复刻。
  *
- * <p>布局对齐原 Vue 版 {@code SigmaMusicPlayer} 的骨架，控件样式换成 JavaFX 等价物。
+ * <p>原版用 {@code position: absolute} + 写死的 left/top/width/height，
+ * 这里改用 {@link Pane} + {@code setLayoutX/Y} + {@code setPrefSize}，语义完全对应。
  *
- * <p>进度与时长用 {@link AnimationTimer} 轮询而不用属性绑定：
- * {@code Media.duration} 在媒体未就绪时是 {@code Duration.UNKNOWN}，
- * 绑定期内容易抛异常，而轮询写法更省事也更稳。
+ * <p>坐标全部来自 {@link Theme}，与原 CSS 逐项对应，不做近似。
  */
-public final class PlayerPanel extends StackPane {
+public final class PlayerPanel extends Pane {
 
-    private static final double COVER = 260;
+    private final ImageView artwork = new ImageView();
+    private final Label title = new Label();
+    private final Label subtitle = new Label();
+    private final Label timeLeft = new Label();
+    private final Label timeRight = new Label();
+    private final Label logo = new Label("Jello");
+    private final Label logoSub = new Label("music");
 
-    private final ImageView coverView = new ImageView();
-    private final Label titleLabel = new Label("未在播放");
-    private final Label artistLabel = new Label("");
-    private final Label elapsedLabel = new Label("0:00");
-    private final Label durationLabel = new Label("0:00");
-    private final ProgressBar progress = new ProgressBar(0);
-    private final Button playPause = new Button("▶");
-    private final Button prev = new Button("⏮");
-    private final Button next = new Button("⏭");
-    private final Slider volume = new Slider(0, 1, 0.8);
-    private final Label volumeLabel = new Label("80%");
+    private final ImageView prevBtn;
+    private final ImageView playBtn;
+    private final ImageView nextBtn;
+    private final SpectrumToggleButton spectrumBtn;
+    private final VerticalSlider volume;
+    private final ThinProgressBar progress;
 
     private MediaPlayer player;
+    private final CanvasStrip strip = new CanvasStrip(Theme.STRIP_W, Theme.STRIP_H);
 
-    public PlayerPanel(Consumer<Boolean> onPlayPause,
-                       Runnable onPrev,
-                       Runnable onNext) {
-        playPause.setOnAction(e -> onPlayPause.accept(true));
-        prev.setOnAction(e -> onPrev.run());
-        next.setOnAction(e -> onNext.run());
-
-        styleButton(playPause, 15);
-        styleButton(prev, 13);
-        styleButton(next, 13);
-
-        // ---- 封面 ----
-        coverView.setFitWidth(COVER);
-        coverView.setFitHeight(COVER);
-        coverView.setPreserveRatio(true);
-        coverView.setStyle("-fx-background-color: rgba(255,255,255,0.05);"
-                + "-fx-background-radius: 10;");
-        StackPane coverBox = new StackPane(coverView);
-        coverBox.setPadding(new Insets(6));
-        coverBox.setMaxWidth(COVER + 12);
-        coverBox.setAlignment(Pos.CENTER);
-
-        // ---- 曲名 / 歌手 ----
-        titleLabel.setTextFill(Theme.TEXT_PRIMARY);
-        titleLabel.setFont(Font.font("Segoe UI", 17));
-        titleLabel.setWrapText(true);
-        titleLabel.setMaxWidth(360);
-        artistLabel.setTextFill(Theme.TEXT_SECONDARY);
-        artistLabel.setFont(Font.font("Segoe UI", 13));
-        VBox info = new VBox(4, titleLabel, artistLabel);
-        info.setAlignment(Pos.CENTER_LEFT);
-
-        // ---- 进度条 ----
-        progress.setMaxWidth(640);
-        progress.setStyle("-fx-accent: #1a9aba;");
-        elapsedLabel.setTextFill(Theme.TEXT_MUTED);
-        durationLabel.setTextFill(Theme.TEXT_MUTED);
-        elapsedLabel.setFont(Font.font("Consolas", 11));
-        durationLabel.setFont(Font.font("Consolas", 11));
-        HBox timeRow = new HBox(8, elapsedLabel, progress, durationLabel);
-        timeRow.setAlignment(Pos.CENTER);
-
-        // ---- 音量 ----
-        volume.setMaxWidth(120);
-        volume.setPrefWidth(120);
-        volume.valueProperty().addListener((o, a, b) ->
-                volumeLabel.setText(Math.round(b.doubleValue() * 100) + "%"));
-        volumeLabel.setTextFill(Theme.TEXT_MUTED);
-        volumeLabel.setFont(Font.font("Consolas", 11));
-        Label volumeCaption = new Label("音量");
-        volumeCaption.setTextFill(Theme.TEXT_SECONDARY);
-        HBox volumeRow = new HBox(8, volumeCaption, volume, volumeLabel);
-        volumeRow.setAlignment(Pos.CENTER);
-
-        HBox transport = new HBox(18, prev, playPause, next);
-        transport.setAlignment(Pos.CENTER);
-
-        VBox content = new VBox(16, coverBox, info, timeRow, transport, volumeRow);
-        content.setAlignment(Pos.CENTER);
-        content.setPadding(new Insets(20));
-
-        getChildren().add(content);
-        setAlignment(Pos.CENTER);
+    /** 换封面时同时更新专辑封面框与底部封面条。 */
+    public void setCover(String coverUrl) {
+        strip.setCover(coverUrl);
     }
 
-    private void styleButton(Button b, double size) {
-        b.setFont(Font.font("Segoe UI Symbol", size));
-        b.setPrefSize(size + 26, size + 26);
-        b.setStyle("-fx-background-color: rgba(255,255,255,0.10);"
-                + "-fx-background-radius: 999;"
-                + "-fx-text-fill: " + toCss(Theme.TEXT_PRIMARY) + ";");
+    public PlayerPanel() {
+        // ---- 左右两块底板 ----
+        // 用 Region + Background 对象上色，不用 CSS 字符串。
+        // JavaFX CSS 的 rgba() 分量是 0..1，写 0..255 会被判为非法值直接忽略，
+        // 节点就退回默认白色——这个坑踩过一次，底板整块变白。
+        getChildren().add(rect(0, 0, Theme.LEFT_PANEL_W, Theme.UPPER_H, Theme.LEFT_PANEL));
+        getChildren().add(rect(Theme.LEFT_PANEL_W, 0, Theme.RIGHT_PANEL_W,
+                Theme.UPPER_H, Theme.RIGHT_PANEL));
+
+// ---- 底部封面条 ----
+        place(strip, Theme.STRIP_X, Theme.STRIP_Y, Theme.STRIP_W, Theme.STRIP_H);
+        getChildren().add(strip);
+        Region stripOverlay = rect(0, Theme.STRIP_Y, Theme.PANEL_W,
+                Theme.STRIP_OVERLAY_H, Theme.STRIP_OVERLAY);
+        getChildren().add(stripOverlay);
+        Region stripOverlayBottom = rect(0, 595, Theme.LEFT_PANEL_W, 5, Theme.STRIP_OVERLAY);
+        getChildren().add(stripOverlayBottom);
+
+        // ---- 专辑封面 114x114 @ (68,430) ----
+        // 用 Region 承载并居中 ImageView：StackPane 会把子节点拉伸铺满，
+        // 导致这个方块把整个左栏都染白。
+        artwork.setFitWidth(Theme.ARTWORK_S);
+        artwork.setFitHeight(Theme.ARTWORK_S);
+        artwork.setPreserveRatio(true);
+        Region artBox = new Region();
+        artBox.setBackground(javafx.scene.layout.Background.fill(Theme.ARTWORK_BG));
+        artBox.setLayoutX(Theme.ARTWORK_X);
+        artBox.setLayoutY(Theme.ARTWORK_Y);
+        artBox.setPrefSize(Theme.ARTWORK_S, Theme.ARTWORK_S);
+        artBox.setMinSize(Theme.ARTWORK_S, Theme.ARTWORK_S);
+        artBox.setMaxSize(Theme.ARTWORK_S, Theme.ARTWORK_S);
+        artBox.setMouseTransparent(true);
+        getChildren().add(artBox);
+        // 封面图叠在底色之上
+        artwork.setLayoutX(Theme.ARTWORK_X);
+        artwork.setLayoutY(Theme.ARTWORK_Y);
+        artwork.setMouseTransparent(true);
+        getChildren().add(artwork);
+
+        // ---- 歌名 / 歌手 ----
+        styleText(title, Theme.TITLE_X, Theme.TITLE_Y, Theme.TITLE_W, 14);
+        title.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        getChildren().add(title);
+        styleText(subtitle, Theme.TITLE_X, Theme.SUBTITLE_Y, Theme.TITLE_W, 14);
+        subtitle.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        getChildren().add(subtitle);
+
+        // ---- 时长 ----
+        styleText(timeLeft, Theme.TIME_L_X, Theme.TIME_Y, 60, 14);
+        getChildren().add(timeLeft);
+        styleText(timeRight, Theme.TIME_R_X, Theme.TIME_Y, Theme.TIME_R_W, 14);
+        timeRight.setTextAlignment(javafx.scene.text.TextAlignment.RIGHT);
+        getChildren().add(timeRight);
+
+        // ---- Logo ----
+        styleText(logo, Theme.LOGO_X, Theme.LOGO_Y, 200, Theme.LOGO_SIZE);
+        getChildren().add(logo);
+        styleText(logoSub, Theme.LOGO_SUB_X, Theme.LOGO_SUB_Y, 200, Theme.LOGO_SUB_SIZE);
+        getChildren().add(logoSub);
+
+        // ---- 控制按钮（原版用图标图，非文字符号）----
+        prevBtn = iconButton("backwards.png", Theme.PREV_X, Theme.PREV_Y, Theme.PREV_S);
+        nextBtn = iconButton("forwards.png", Theme.NEXT_X, Theme.NEXT_Y, Theme.NEXT_S);
+        playBtn = iconButton("play.png", Theme.PLAY_X, Theme.PLAY_Y, Theme.PLAY_S);
+        getChildren().addAll(prevBtn, playBtn, nextBtn);
+
+        // ---- 频谱按钮 40x40 @ (15,460) ----
+        spectrumBtn = new SpectrumToggleButton(Theme.SPECTRUM_S);
+        place(spectrumBtn, Theme.SPECTRUM_X, Theme.SPECTRUM_Y, Theme.SPECTRUM_S, Theme.SPECTRUM_S);
+        getChildren().add(spectrumBtn);
+
+        // ---- 音量 4x40 @ (781,520) ----
+        volume = new VerticalSlider(Theme.VOLUME_W, Theme.VOLUME_H);
+        place(volume, Theme.VOLUME_X, Theme.VOLUME_Y, Theme.VOLUME_W, Theme.VOLUME_H);
+        getChildren().add(volume);
+
+        // ---- 进度条 550x5 @ (250,595) ----
+        progress = new ThinProgressBar(Theme.PROGRESS_W, Theme.PROGRESS_H);
+        place(progress, Theme.PROGRESS_X, Theme.PROGRESS_Y, Theme.PROGRESS_W, Theme.PROGRESS_H);
+        getChildren().add(progress);
     }
 
-    private static String toCss(Color c) {
-        return String.format("#%02x%02x%02x",
-                (int) Math.round(c.getRed() * 255),
-                (int) Math.round(c.getGreen() * 255),
-                (int) Math.round(c.getBlue() * 255));
+    // ---------- 构造辅助 ----------
+
+    /**
+     * 生成一个纯色底板。
+     * <p>注意：不要用 {@code setStyle("-fx-background-color: rgba(...)")} 来做半透明底板——
+     * JavaFX CSS 的 rgba 分量是 0..1，写 0..255 会被当成非法值直接忽略，
+     * 节点就退回默认白色。这里直接用 {@code setBackground} 传 Color 对象，
+     * 不会有这个歧义。
+     */
+    private static Region rect(double x, double y, double w, double h, Color c) {
+        Region r = new Region();
+        r.setLayoutX(x);
+        r.setLayoutY(y);
+        r.setPrefSize(w, h);
+        r.setMinSize(w, h);
+        r.setMaxSize(w, h);
+        r.setBackground(javafx.scene.layout.Background.fill(c));
+        r.setMouseTransparent(true); // 底板不该吃掉拖拽事件
+        return r;
     }
 
-    // ---- 对外接口 ----
+    private static void place(javafx.scene.layout.Region n, double x, double y, double w, double h) {
+        n.setLayoutX(x);
+        n.setLayoutY(y);
+        n.setPrefSize(w, h);
+    }
 
-    public void setSong(String title, String artist, String coverUrl) {
-        titleLabel.setText(title == null || title.isBlank() ? "未在播放" : title);
-        artistLabel.setText(artist == null ? "" : artist);
+    private static void styleText(Label l, double x, double y, double w, double size) {
+        l.setLayoutX(x);
+        l.setLayoutY(y);
+        l.setPrefWidth(w);
+        l.setFont(Assets.light(size));
+        l.setTextFill(Theme.TEXT);
+        l.setPickOnBounds(false);
+    }
+
+    private static ImageView iconButton(String icon, double x, double y, double size) {
+        ImageView v = new ImageView(Assets.image(icon));
+        v.setFitWidth(size);
+        v.setFitHeight(size);
+        v.setPreserveRatio(true);
+        v.setLayoutX(x);
+        v.setLayoutY(y);
+        v.setPickOnBounds(true);
+        // 原版 hover 时 brightness(0.94)
+        v.setOnMouseEntered(e -> v.setOpacity(0.94));
+        v.setOnMouseExited(e -> v.setOpacity(1.0));
+        return v;
+    }
+
+    /**
+     * 生成 JavaFX CSS 的颜色串。
+     * <p><b>坑</b>：JavaFX CSS 的 {@code rgba()} 分量取 0..1 浮点，不是 CSS 那样的 0..255。
+     * 写成 {@code rgba(0,0,0,0.95)} 会被当成 rgb 全 0、alpha 0.95（接近全黑且半透明）；
+     * 写 {@code rgba(38,38,38,0.8)} 会溢出成非法值被忽略，底板就变成默认白色。
+     * 这里统一除以 255 输出 0..1。
+     */
+    static String css(Color c) {
+        return String.format("rgba(%.4f,%.4f,%.4f,%.4f)",
+                c.getRed(), c.getGreen(), c.getBlue(), c.getOpacity());
+    }
+
+    // ---------- 对外接口 ----------
+
+    public void setSong(String titleText, String artist, String coverUrl) {
+        title.setText(titleText == null ? "" : titleText);
+        subtitle.setText(artist == null ? "" : artist);
+        // 原版：无歌手时标题单行居中（single 类），有歌手时两行
         if (coverUrl != null && !coverUrl.isBlank()) {
             try {
-                coverView.setImage(new Image(coverUrl, COVER, COVER, true, true));
-            } catch (Exception e) {
-                coverView.setImage(null);
+                artwork.setImage(new Image(coverUrl, Theme.ARTWORK_S, Theme.ARTWORK_S, true, true));
+            } catch (Exception ex) {
+                artwork.setImage(Assets.image("artwork.png"));
             }
         } else {
-            coverView.setImage(null);
+            artwork.setImage(Assets.image("artwork.png"));
         }
+        timeLeft.setText("00:00");
+        timeRight.setText("00:00");
     }
 
-    /** 绑定播放器：播放/暂停图标、进度、时长、音量双向同步。 */
+    public void onPrev(Runnable r) {
+        prevBtn.setOnMouseClicked((MouseEvent e) -> r.run());
+    }
+
+    public void onNext(Runnable r) {
+        nextBtn.setOnMouseClicked((MouseEvent e) -> r.run());
+    }
+
+    public void onPlayToggle(Runnable r) {
+        playBtn.setOnMouseClicked((MouseEvent e) -> r.run());
+    }
+
+    public void onSpectrumToggle(Runnable r) {
+        spectrumBtn.setOnToggle(active -> r.run());
+    }
+
+    public void setSpectrumActive(boolean active) {
+        spectrumBtn.setActiveStyle(active);
+    }
+
     public void bindPlayer(MediaPlayer p) {
         this.player = p;
-        playPause.textProperty().bind(Bindings.when(
-                        Bindings.equal(p.statusProperty(), MediaPlayer.Status.PLAYING))
-                .then("⏸").otherwise("▶"));
         volume.valueProperty().bindBidirectional(p.volumeProperty());
-
+        p.statusProperty().addListener((o, a, b) -> {
+            if (b == MediaPlayer.Status.PLAYING) {
+                playBtn.setImage(Assets.image("pause.png"));
+            } else {
+                playBtn.setImage(Assets.image("play.png"));
+            }
+        });
         new AnimationTimer() {
             @Override
             public void handle(long now) {
@@ -158,20 +246,24 @@ public final class PlayerPanel extends StackPane {
                 }
                 double dur = p.getMedia().getDuration().toSeconds();
                 double cur = p.getCurrentTime().toSeconds();
-                durationLabel.setText(format(dur));
-                elapsedLabel.setText(format(cur));
-                if (dur > 0 && !Double.isNaN(dur)) {
-                    progress.setProgress(Math.max(0, Math.min(1, cur / dur)));
-                }
+                timeLeft.setText(fmt(cur));
+                timeRight.setText(fmt(dur));
+                progress.setPercent(dur > 0 && !Double.isNaN(dur)
+                        ? Math.max(0, Math.min(1, cur / dur)) : 0);
             }
         }.start();
     }
 
-    static String format(double seconds) {
-        if (seconds <= 0 || Double.isNaN(seconds) || Double.isInfinite(seconds)) {
-            return "0:00";
+    static String fmt(double sec) {
+        if (sec <= 0 || Double.isNaN(sec) || Double.isInfinite(sec)) {
+            return "00:00";
         }
-        long s = (long) seconds;
-        return String.format("%d:%02d", s / 60, s % 60);
+        long s = (long) sec;
+        return String.format("%02d:%02d", s / 60, s % 60);
+    }
+
+
+    MediaPlayer player() {
+        return player;
     }
 }
