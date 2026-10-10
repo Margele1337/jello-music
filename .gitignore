@@ -41,3 +41,6 @@ pnpm-workspace.yaml
 java-rewrite/target/
 java-rewrite/tools/
 java-rewrite/cp.txt
+
+# 云端 AI 无 git，改文件前的本地备份
+.cloud-backup/
