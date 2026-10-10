@@ -8,6 +8,7 @@ REM  Usage:
 REM    run.bat                  build then launch (GUI)
 REM    run.bat <direct-url>     build then launch with a given audio URL
 REM    run.bat probe            build then run the headless pipeline probe
+REM    run.bat probe-ui         build then run the silent UI probe (no window)
 REM
 REM  Credentials for the probe / auto-fetch path come from env vars:
 REM    JELLO_TOKEN  JELLO_USERID  JELLO_DFID  JELLO_HASH
@@ -58,6 +59,14 @@ if errorlevel 1 (
 
 set "CP=target\classes;%CP%"
 for /f "usebackq delims=" %%i in ("cp.txt") do set "CP=%CP%;%%i"
+
+REM Silent UI check: never shows a window, never plays audio.
+REM Safe to run while gaming -- it renders offscreen and writes a PNG.
+if /i "%~1"=="probe-ui" (
+  echo [3/3] Running silent UI probe...
+  java --module-path "%CP%" -m com.jello.music/com.jello.music.tools.UiProbe "%TEMP%\jello-ui-probe.png"
+  exit /b %errorlevel%
+)
 
 echo [3/3] Launching GUI...
 REM JavaFX must run on the module path, not the classpath.

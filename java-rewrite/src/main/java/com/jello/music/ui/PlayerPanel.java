@@ -38,6 +38,9 @@ public final class PlayerPanel extends Pane {
     private final ThinProgressBar progress;
 
     private MediaPlayer player;
+    private AnimationTimer ticker;
+    private javafx.beans.property.DoubleProperty volumeBoundTo;
+    private Runnable onMediaEnd;
     private final CanvasStrip strip = new CanvasStrip(Theme.STRIP_W, Theme.STRIP_H);
 
     /** 换封面时同时更新专辑封面框与底部封面条。 */
@@ -234,9 +237,31 @@ public final class PlayerPanel extends Pane {
         spectrumBtn.setActiveStyle(active);
     }
 
+    /**
+     * 绑定播放器。
+     *
+     * <p>这里踩过两个坑，都跟「同一套控件被反复复用」有关：
+     * <ul>
+     *   <li>每首歌都 {@code new AnimationTimer()} 会越攒越多。旧 timer 还活着，
+     *       继续拿<em>已 dispose 的</em> player 读时间，于是时间/进度显示会莫名其妙
+     *       跳到整首歌长度（getCurrentTime 在 dispose 后返回 duration）。改成复用同一个 ticker。</li>
+     *   <li>{@code bindBidirectional} 对已经绑定过的属性再绑一次会直接抛
+     *       IllegalArgumentException，表现为「第一首能播，第二首起就报初始化失败」。
+     *       所以换歌时先把上一个 player 的双向绑定解开。</li>
+     * </ul>
+     */
     public void bindPlayer(MediaPlayer p) {
+        if (ticker != null) {
+            ticker.stop();
+            ticker = null;
+        }
         this.player = p;
+        if (volumeBoundTo != null) {
+            volume.valueProperty().unbindBidirectional(volumeBoundTo);
+        }
         volume.valueProperty().bindBidirectional(p.volumeProperty());
+        volumeBoundTo = p.volumeProperty();
+
         p.statusProperty().addListener((o, a, b) -> {
             if (b == MediaPlayer.Status.PLAYING) {
                 playBtn.setImage(Assets.image("pause.png"));
@@ -244,7 +269,13 @@ public final class PlayerPanel extends Pane {
                 playBtn.setImage(Assets.image("play.png"));
             }
         });
-        new AnimationTimer() {
+        p.setOnEndOfMedia(() -> {
+            if (onMediaEnd != null) {
+                onMediaEnd.run();
+            }
+        });
+
+        ticker = new AnimationTimer() {
             @Override
             public void handle(long now) {
                 if (p.getMedia() == null) {
@@ -252,12 +283,25 @@ public final class PlayerPanel extends Pane {
                 }
                 double dur = p.getMedia().getDuration().toSeconds();
                 double cur = p.getCurrentTime().toSeconds();
+                if (Double.isNaN(dur) || dur <= 0) {
+                    return;
+                }
                 timeLeft.setText(fmt(cur));
                 timeRight.setText(fmt(dur));
-                progress.setPercent(dur > 0 && !Double.isNaN(dur)
-                        ? Math.max(0, Math.min(1, cur / dur)) : 0);
+                progress.setPercent(Math.max(0, Math.min(1, cur / dur)));
             }
-        }.start();
+        };
+        ticker.start();
+    }
+
+    /** 播放结束回调（用于自动切下一首）。 */
+    public void onMediaEnd(Runnable r) {
+        this.onMediaEnd = r;
+    }
+
+    /** 进度条点击/拖拽定位，回调带 0..1 的比例。 */
+    public void onSeek(java.util.function.Consumer<Double> handler) {
+        progress.setOnSeek(handler);
     }
 
     static String fmt(double sec) {

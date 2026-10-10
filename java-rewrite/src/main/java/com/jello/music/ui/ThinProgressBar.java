@@ -13,6 +13,7 @@ public final class ThinProgressBar extends Pane {
 
     private final Region played = new Region();
     private double percent;
+    private java.util.function.Consumer<Double> seekHandler;
 
     public ThinProgressBar(double w, double h) {
         setBackground(javafx.scene.layout.Background.fill(Theme.PROGRESS_TRACK));
@@ -34,19 +35,25 @@ public final class ThinProgressBar extends Pane {
         return percent;
     }
 
-    public void setOnSeek(Runnable r) {
-        setOnMousePressed(e -> {
-            seekFromX(e);
-            r.run();
-        });
+    public void setOnSeek(java.util.function.Consumer<Double> handler) {
+        this.seekHandler = handler;
     }
 
+    /**
+     * 点击/拖拽定位。
+     * <p>按下与拖动都走这里，回调带的是 0..1 的比例；
+     * 原先 {@code setOnSeek(Runnable)} 只挪了视觉、既不回传比例又会顶掉拖动监听，
+     * 所以进度条一直是只读显示。
+     */
     private void seekFromX(MouseEvent e) {
         double w = getWidth();
         if (w <= 0) {
             return;
         }
-        double v = e.getX() / w;
-        setPercent(Math.max(0, Math.min(1, v)));
+        double v = Math.max(0, Math.min(1, e.getX() / w));
+        setPercent(v);
+        if (seekHandler != null) {
+            seekHandler.accept(v);
+        }
     }
 }

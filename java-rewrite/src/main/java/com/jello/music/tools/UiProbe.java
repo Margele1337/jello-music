@@ -1,0 +1,333 @@
+package com.jello.music.tools;
+
+import com.jello.music.ui.CanvasStrip;
+import com.jello.music.ui.PlayerPanel;
+import com.jello.music.ui.PlaylistPanel;
+import com.jello.music.ui.Theme;
+import javafx.application.Platform;
+import javafx.geometry.Bounds;
+import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.control.Label;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.image.WritableImage;
+import javafx.scene.layout.Pane;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 静默 UI 校验 —— <b>不显示任何窗口、不发声</b>。
+ *
+ * <p>做法：只启动 JavaFX 工具箱（{@link Platform#startup}），构造与
+ * {@code MainApp} 相同的面板，手工 {@code applyCss() + layout()}，
+ * 再对节点树做 {@link Node#snapshot} 离屏截图。
+ * 全程不创建 Stage，因此不抢焦点、不会在屏幕上闪现，打游戏时可以跑。
+ *
+ * <p>断言覆盖这几个踩过的坑：
+ * <ul>
+ *   <li>Label 必须有非零宽高（{@code styleText} 漏设高度会算成 0 而完全不渲染）</li>
+ *   <li>歌名/歌手/两个时间标签都要存在，且落在原版坐标上</li>
+ *   <li>频谱 Canvas 不许再压住 (68,430) 的 114x114 专辑封面</li>
+ *   <li>截图必须不是纯色（确认离屏渲染真出了像素，而不是空白图）</li>
+ * </ul>
+ *
+ * <p>退出码：0 全过，1 有失败。
+ */
+public final class UiProbe {
+
+    private static final String SONG = "红色高跟鞋（静默校验）";
+    private static final String ARTIST = "测试歌手";
+    private static final String TIME_RE = "\\d\\d:\\d\\d";
+
+    private static int failures;
+
+    private UiProbe() {
+    }
+
+    public static void main(String[] args) throws Exception {
+        String png = args.length > 0 ? args[0]
+                : System.getProperty("java.io.tmpdir") + "/jello-ui-probe.png";
+
+        CountDownLatch latch = new CountDownLatch(1);
+        Platform.startup(() -> {
+            try {
+                run(png);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                failures++;
+            } finally {
+                latch.countDown();
+            }
+        });
+
+        if (!latch.await(60, TimeUnit.SECONDS)) {
+            System.out.println("UI PROBE: TIMEOUT");
+            System.exit(1);
+        }
+        Platform.exit();
+        System.out.println(failures == 0 ? "UI PROBE: ALL PASS" : "UI PROBE: " + failures + " FAILURE(S)");
+        System.exit(failures == 0 ? 0 : 1);
+    }
+
+    private static void run(String pngPath) throws Exception {
+        Pane root = new Pane();
+        root.setPrefSize(Theme.PANEL_W, Theme.PANEL_H);
+
+        PlayerPanel player = new PlayerPanel();
+        root.getChildren().add(player);
+
+        PlaylistPanel playlists = new PlaylistPanel(Theme.PLAYLIST_W, Theme.PLAYLIST_H, i -> {
+        });
+        playlists.setLayoutX(Theme.PLAYLIST_X);
+        playlists.setLayoutY(Theme.PLAYLIST_Y);
+        playlists.setItems(List.of("我喜欢", "今日有酒今朝醉"));
+        root.getChildren().add(playlists);
+
+        player.setSong(SONG, ARTIST, null);
+        player.setCover(null);
+
+        // 不 show()，手工推一遍 CSS + 布局，否则节点宽高全是 0
+        new Scene(root, Theme.PANEL_W, Theme.PANEL_H);
+        root.applyCss();
+        root.layout();
+
+        List<Label> labels = collect(root, Label.class);
+
+        Label title = firstWithText(labels, SONG);
+        check("歌名 Label 存在", title != null, null);
+        if (title != null) {
+            checkNonZero("歌名 Label 有非零宽高", title);
+            check("歌名 Label 坐标 == 原版",
+                    title.getLayoutX() == Theme.TITLE_X && title.getLayoutY() == Theme.TITLE_Y, at(title));
+        }
+
+        Label artist = firstWithText(labels, ARTIST);
+        check("歌手 Label 存在", artist != null, null);
+        if (artist != null) {
+            checkNonZero("歌手 Label 有非零宽高", artist);
+            check("歌手 Label 坐标 == 原版",
+                    artist.getLayoutX() == Theme.TITLE_X && artist.getLayoutY() == Theme.SUBTITLE_Y,
+                    at(artist));
+        }
+
+        long times = labels.stream().filter(l -> l.getText().matches(TIME_RE)).count();
+        check("左右两个时间 Label 都在", times == 2, "found=" + times);
+
+        Label timeLeft = labels.stream()
+                .filter(l -> l.getText().matches(TIME_RE) && l.getLayoutX() == Theme.TIME_L_X)
+                .findFirst().orElse(null);
+        check("左时间 Label 落在 x=" + Theme.TIME_L_X, timeLeft != null,
+                timeLeft == null ? "missing" : at(timeLeft));
+
+        // 回归护栏：频谱 Canvas 曾被塞在左栏 (15,452)，正好压住 114x114 封面
+        ImageView artwork = collect(root, ImageView.class).stream()
+                .filter(v -> v.getLayoutX() == Theme.ARTWORK_X && v.getLayoutY() == Theme.ARTWORK_Y)
+                .findFirst().orElse(null);
+        check("专辑封面 ImageView 在 (" + (int) Theme.ARTWORK_X + "," + (int) Theme.ARTWORK_Y + ")",
+                artwork != null, null);
+
+        if (artwork != null) {
+            Bounds box = artwork.getBoundsInParent();
+            check("专辑封面尺寸 == " + (int) Theme.ARTWORK_S + "x" + (int) Theme.ARTWORK_S,
+                    box.getWidth() == Theme.ARTWORK_S && box.getHeight() == Theme.ARTWORK_S,
+                    String.format("%.0fx%.0f", box.getWidth(), box.getHeight()));
+
+            StringBuilder hits = new StringBuilder();
+            for (Node n : collect(root, Canvas.class)) {
+                Bounds c = n.getBoundsInParent();
+                if (c.intersects(box)) {
+                    hits.append(String.format("canvas@%.0f,%.0f ", c.getMinX(), c.getMinY()));
+                }
+            }
+            check("没有 Canvas 压住专辑封面", hits.isEmpty(), hits.toString());
+        }
+
+        writeSnapshot(root, pngPath);
+        checkStripBlur();
+    }
+
+    /**
+     * 校验底部封面条真的被模糊了。
+     *
+     * <p>做法是自对照：拿一张高对比度棋盘图，同一张图分别走
+     * ① {@link CanvasStrip}（带 GaussianBlur）与 ② 裸 Canvas（不带特效），
+     * 然后比较两者在封面条区域内的平均水平梯度。模糊必然大幅拉低梯度，
+     * 所以「模糊版梯度 &lt; 锐利版的一半」这条断言不会因为素材选得不好而误判。
+     */
+    private static void checkStripBlur() throws Exception {
+        int w = (int) Theme.STRIP_W;
+        int h = (int) Theme.STRIP_H;
+        Image checker = loadCheckerboard(480, 480, 40);
+
+        CanvasStrip strip = new CanvasStrip(w, h);
+        strip.setCoverImage(checker);
+        Pane blurredRoot = new Pane();
+        blurredRoot.getChildren().add(strip);
+        blurredRoot.applyCss();
+        blurredRoot.layout();
+        double blurred = rmsGradient(blurredRoot.snapshot(null, null), 0, 0, w, h);
+
+        Canvas plain = new Canvas(w, h);
+        GraphicsContext g = plain.getGraphicsContext2D();
+        drawCover(g, plain, checker);
+        Pane sharpRoot = new Pane();
+        sharpRoot.getChildren().add(plain);
+        sharpRoot.applyCss();
+        sharpRoot.layout();
+        double sharp = rmsGradient(sharpRoot.snapshot(null, null), 0, 0, w, h);
+
+        check("封面条已模糊（梯度降到锐利版一半以下）", blurred < sharp * 0.5,
+                String.format("blurred=%.2f sharp=%.2f", blurred, sharp));
+    }
+
+    /** 与 {@code CanvasStrip.draw()} 同样的 cover 裁切，用作无模糊对照组。 */
+    private static void drawCover(GraphicsContext g, Canvas target, Image img) {
+        double w = target.getWidth();
+        double h = target.getHeight();
+        double r = w / h;
+        double ir = img.getWidth() / img.getHeight();
+        double dw = ir > r ? h * ir : w;
+        double dh = ir > r ? h : w / ir;
+        g.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    }
+
+    private static Image loadCheckerboard(int w, int h, int cell) throws Exception {
+        BufferedImage src = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int v = (((x / cell) + (y / cell)) % 2 == 0) ? 255 : 0;
+                src.setRGB(x, y, (v << 16) | (v << 8) | v);
+            }
+        }
+        File tmp = File.createTempFile("jello-checker", ".png");
+        tmp.deleteOnExit();
+        ImageIO.write(src, "png", tmp);
+        return new Image(tmp.toURI().toString());
+    }
+
+    /**
+     * 区域内的水平梯度 RMS（高频能量），越大越锐利。
+     *
+     * <p>不能用「平均 |梯度|」：模糊不改变总变化量，只把它摊到更多像素上，
+     * 平均值几乎不变（实测 3.19 vs 3.79，看着像没生效，其实是指标选错了）。
+     * RMS 才反映峰值——锐利边缘一步跳 255，模糊后被摊成每步几格。
+     *
+     * <p>采样区向内缩，避开 clip 边界与模糊溢出造成的边缘伪影。
+     */
+    private static double rmsGradient(WritableImage img, int x0, int y0, int rw, int rh) {
+        int w = (int) img.getWidth();
+        int h = (int) img.getHeight();
+        javafx.scene.image.PixelReader reader = img.getPixelReader();
+        int insetX = Math.max(x0 + 20, x0);
+        int insetY = Math.max(y0 + 15, y0);
+        int endX = Math.min(x0 + rw - 20, w);
+        int endY = Math.min(y0 + rh - 15, h);
+        double sumSq = 0;
+        int n = 0;
+        for (int y = insetY; y < endY; y += 2) {
+            for (int x = insetX; x < endX; x += 2) {
+                double d = luma(reader.getArgb(x, y)) - luma(reader.getArgb(x + 1, y));
+                sumSq += d * d;
+                n++;
+            }
+        }
+        return n == 0 ? 0 : Math.sqrt(sumSq / n);
+    }
+
+    private static int luma(int argb) {
+        int r = (argb >> 16) & 0xFF;
+        int g = (argb >> 8) & 0xFF;
+        int b = argb & 0xFF;
+        return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+
+    /**
+     * 离屏截图 + 「是不是纯色」校验。
+     * <p>不用 {@code SwingFXUtils}：它属于 javafx.swing，本项目没引这个模块，
+     * 直接用 PixelReader 搬到 BufferedImage，只多依赖 java.desktop。
+     */
+    private static void writeSnapshot(Node root, String pngPath) throws Exception {
+        WritableImage snap = root.snapshot(null, null);
+        int w = (int) snap.getWidth();
+        int h = (int) snap.getHeight();
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        javafx.scene.image.PixelReader reader = snap.getPixelReader();
+        int[] row = new int[w];
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                row[x] = reader.getArgb(x, y);
+            }
+            img.setRGB(0, y, w, 1, row, 0, w);
+        }
+
+        File f = new File(pngPath);
+        f.getParentFile().mkdirs();
+        ImageIO.write(img, "png", f);
+
+        Set<Integer> colors = new HashSet<>();
+        for (int y = 0; y < h; y += 7) {
+            for (int x = 0; x < w; x += 7) {
+                colors.add(img.getRGB(x, y));
+            }
+        }
+        check("离屏截图有实际像素（非纯色）", colors.size() > 8, "distinct=" + colors.size());
+        System.out.println("snapshot -> " + f.getAbsolutePath() + " (" + w + "x" + h + ")");
+    }
+
+    /**
+     * 自己递归收集，不用 {@code lookupAll}。
+     * <p>原因：{@code Parent.lookupAll(String)} 与 {@code Node.lookupAll(Predicate)}
+     * 同名，javac 在这里会把 lambda 判给 String 那个重载，直接编译失败。
+     */
+    private static <T extends Node> List<T> collect(Node root, Class<T> type) {
+        List<T> out = new ArrayList<>();
+        walk(root, type, out);
+        return out;
+    }
+
+    private static <T extends Node> void walk(Node node, Class<T> type, List<T> out) {
+        if (type.isInstance(node)) {
+            out.add(type.cast(node));
+        }
+        if (node instanceof Parent parent) {
+            for (Node child : parent.getChildrenUnmodifiable()) {
+                walk(child, type, out);
+            }
+        }
+    }
+
+    private static Label firstWithText(List<Label> labels, String text) {
+        return labels.stream().filter(l -> text.equals(l.getText())).findFirst().orElse(null);
+    }
+
+    private static void checkNonZero(String name, Node n) {
+        Bounds b = n.getBoundsInParent();
+        check(name, b.getWidth() > 0 && b.getHeight() > 0, at(n));
+    }
+
+    private static String at(Node n) {
+        Bounds b = n.getBoundsInParent();
+        return String.format("x=%.0f y=%.0f w=%.0f h=%.0f",
+                n.getLayoutX(), n.getLayoutY(), b.getWidth(), b.getHeight());
+    }
+
+    private static void check(String name, boolean ok, String detail) {
+        System.out.printf("%-40s %s%s%n", name, ok ? "PASS" : "FAIL",
+                detail == null || detail.isEmpty() ? "" : "  (" + detail + ")");
+        if (!ok) {
+            failures++;
+        }
+    }
+}

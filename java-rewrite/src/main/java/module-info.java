@@ -23,6 +23,7 @@ module com.jello.music {
     requires javafx.fxml;
     requires com.fasterxml.jackson.databind;
     requires java.net.http;
+    requires java.desktop;
     requires jlayer;
     requires org.slf4j;
 

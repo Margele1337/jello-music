@@ -83,6 +83,8 @@ public class MainApp extends Application {
         playerPanel.onPrev(() -> playCurrent(queue.previous()));
         playerPanel.onNext(() -> playCurrent(queue.next()));
         playerPanel.onPlayToggle(this::togglePlay);
+        playerPanel.onMediaEnd(() -> playCurrent(queue.next()));
+        playerPanel.onSeek(this::seekTo);
         root.getChildren().add(playerPanel);
 
         // ---- 左栏歌单：显示歌单条目 ----
@@ -228,6 +230,20 @@ public class MainApp extends Application {
                 Platform.runLater(() -> status("取直链失败: " + e.getMessage()));
             }
         });
+    }
+
+    /** 进度条定位：fraction 是 0..1。 */
+    private void seekTo(double fraction) {
+        if (player == null || player.getMedia() == null) {
+            return;
+        }
+        double dur = player.getMedia().getDuration().toSeconds();
+        if (Double.isNaN(dur) || dur <= 0) {
+            return;
+        }
+        // MediaPlayer.seek 收的是 javafx.util.Duration（不是 java.time.Duration），
+        // 它的 seconds(double) 可以直接带小数，不用自己换算毫秒
+        player.seek(javafx.util.Duration.seconds(dur * fraction));
     }
 
     private void onQueueCurrentChanged(Song song) {
