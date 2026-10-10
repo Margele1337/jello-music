@@ -9,6 +9,7 @@ REM    run.bat                  build then launch (GUI)
 REM    run.bat <direct-url>     build then launch with a given audio URL
 REM    run.bat probe            build then run the headless pipeline probe
 REM    run.bat probe-ui         build then run the silent UI probe (no window)
+REM    run.bat probe-play       build then run the muted playback probe (no sound)
 REM
 REM  Credentials for the probe / auto-fetch path come from env vars:
 REM    JELLO_TOKEN  JELLO_USERID  JELLO_DFID  JELLO_HASH
@@ -65,6 +66,13 @@ REM Safe to run while gaming -- it renders offscreen and writes a PNG.
 if /i "%~1"=="probe-ui" (
   echo [3/3] Running silent UI probe...
   java --module-path "%CP%" -m com.jello.music/com.jello.music.tools.UiProbe "%TEMP%\jello-ui-probe.png"
+  exit /b %errorlevel%
+)
+
+REM Muted playback check: volume 0, no window, but the real audio pipeline runs.
+if /i "%~1"=="probe-play" (
+  echo [3/3] Running muted playback probe...
+  java --module-path "%CP%" -m com.jello.music/com.jello.music.tools.PlaybackProbe
   exit /b %errorlevel%
 )
 
