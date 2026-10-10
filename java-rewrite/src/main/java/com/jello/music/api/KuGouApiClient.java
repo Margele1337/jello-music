@@ -145,6 +145,39 @@ public final class KuGouApiClient {
         return out;
     }
 
+    /**
+     * 搜索。对应原版 {@code SigmaSearchBox.vue} 的 {@code /search/complex?keywords=}。
+     * <p>该接口把结果按类型分组（歌曲/歌单/专辑…），这里只取歌曲部分，
+     * 路径为 {@code data.song_list}；个别情况下会退化到 {@code data.songs}。
+     */
+    public java.util.List<com.jello.music.model.Song> search(String keyword)
+            throws IOException, InterruptedException {
+        String kw = keyword == null ? "" : keyword.trim();
+        if (kw.isEmpty()) {
+            return java.util.List.of();
+        }
+        JsonNode r = get("/search/complex?keywords=" + encode(kw));
+        if (!isSuccess(r)) {
+            throw new IOException("/search/complex 失败: " + errorMessage(r));
+        }
+        java.util.List<com.jello.music.model.Song> out = new java.util.ArrayList<>();
+        for (String key : new String[]{"song_list", "songs"}) {
+            JsonNode arr = r.path("data").get(key);
+            if (arr != null && arr.isArray()) {
+                for (JsonNode n : arr) {
+                    var s = com.jello.music.model.Song.fromApi(n);
+                    if (s != null) {
+                        out.add(s);
+                    }
+                }
+                if (!out.isEmpty()) {
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
     public static String errorMessage(JsonNode node) {
         for (String k : new String[]{"error", "error_msg", "message"}) {
             JsonNode v = node.get(k);

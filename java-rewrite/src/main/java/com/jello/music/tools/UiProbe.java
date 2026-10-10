@@ -3,6 +3,9 @@ package com.jello.music.tools;
 import com.jello.music.ui.CanvasStrip;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
+import com.jello.music.ui.SearchBox;
+import com.jello.music.ui.ThumbnailCard;
+import com.jello.music.model.Song;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.Theme;
 import javafx.application.Platform;
@@ -207,6 +210,40 @@ public final class UiProbe {
                 labels.stream().allMatch(l -> l.getClip() != null),
                 "clipped=" + labels.stream().filter(l -> l.getClip() != null).count()
                         + "/" + labels.size());
+
+        // 搜索框 550x506 @ (250,0)
+        SearchBox box = collect(root, SearchBox.class).stream().findFirst().orElse(null);
+        check("搜索框存在 @ (250,0)",
+                box != null && box.getLayoutX() == 250 && box.getLayoutY() == 0
+                        && box.getPrefWidth() == 550 && box.getPrefHeight() == 506,
+                box == null ? "missing" : String.format("x=%.0f y=%.0f %.0fx%.0f",
+                        box.getLayoutX(), box.getLayoutY(), box.getPrefWidth(), box.getPrefHeight()));
+        if (box != null) {
+            box.showResults(List.of(
+                    new Song("H1", "歌名一", "歌手一", "专辑一", null, 1000),
+                    new Song("H2", "歌名二", "歌手二", "专辑二", null, 2000),
+                    new Song("H3", "歌名三", "歌手三", "专辑三", null, 3000),
+                    new Song("H4", "歌名四", "歌手四", "专辑四", null, 4000)));
+            root.layout();
+            List<ThumbnailCard> cards = collect(root, ThumbnailCard.class);
+            check("结果卡片铺了 3 列（超出面板高度的不显示）", cards.size() == 3,
+                    "cards=" + cards.size());
+            // 列 x=10/183/356，行 y=90
+            double[] wantX = {10, 183, 356};
+            boolean colsOk = cards.size() == 3;
+            for (int i = 0; i < cards.size() && i < 3; i++) {
+                ThumbnailCard c = cards.get(i);
+                colsOk &= c.getLayoutX() == wantX[i] && c.getLayoutY() == 90
+                        && c.getPrefWidth() == 183 && c.getPrefHeight() == 220;
+            }
+            check("卡片坐标/尺寸 == 原版网格", colsOk, cards.isEmpty() ? "no cards"
+                    : String.format("first x=%.0f y=%.0f %.0fx%.0f",
+                            cards.get(0).getLayoutX(), cards.get(0).getLayoutY(),
+                            cards.get(0).getPrefWidth(), cards.get(0).getPrefHeight()));
+            box.clear();
+            check("clear() 后卡片清空", collect(root, ThumbnailCard.class).isEmpty(),
+                    "left=" + collect(root, ThumbnailCard.class).size());
+        }
 
         writeSnapshot(root, pngPath);
         checkStripBlur();

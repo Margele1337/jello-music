@@ -106,6 +106,11 @@ public class MainApp extends Application {
                 state == 0 ? PlayQueue.Repeat.NONE
                         : state == 1 ? PlayQueue.Repeat.ALL : PlayQueue.Repeat.ONE));
         playerPanel.onDockTrigger(this::expandDock);
+        playerPanel.searchBox().onSubmit(this::runSearch);
+        playerPanel.searchBox().onPick(song -> {
+            queue.replaceAll(List.of(song));
+            playCurrent(song);
+        });
 
         // ---- 状态：放在右栏空白处 ----
         // 原版这里没有状态文字；早先放在左下角 (8,576) 会和歌手名重叠成一团糊。
@@ -201,6 +206,31 @@ public class MainApp extends Application {
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status("加载歌曲失败: " + e.getMessage()));
+            }
+        });
+    }
+
+    /** 搜索：走 api 的 /search/complex，结果铺成缩略卡网格。 */
+    private void runSearch(String keyword) {
+        String kw = keyword == null ? "" : keyword.trim();
+        if (kw.isEmpty()) {
+            playerPanel.searchBox().clear();
+            return;
+        }
+        status("搜索中…");
+        int seq = requestSeq.incrementAndGet();
+        IO.execute(() -> {
+            try {
+                List<Song> hits = api.search(kw);
+                Platform.runLater(() -> {
+                    if (seq != requestSeq.get()) {
+                        return;
+                    }
+                    playerPanel.searchBox().showResults(hits);
+                    status(hits.isEmpty() ? "没有找到结果" : "找到 " + hits.size() + " 首");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> status("搜索失败: " + e.getMessage()));
             }
         });
     }

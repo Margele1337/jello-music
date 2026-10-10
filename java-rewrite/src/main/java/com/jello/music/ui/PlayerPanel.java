@@ -36,6 +36,7 @@ public final class PlayerPanel extends Pane {
     private final SpectrumToggleButton spectrumBtn;
     private final RepeatButton repeatBtn;
     private final Region dockTrigger = new Region();
+    private final SearchBox search;
     private final VerticalSlider volume;
     private final ThinProgressBar progress;
 
@@ -146,6 +147,12 @@ public final class PlayerPanel extends Pane {
         place(progress, Theme.PROGRESS_X, Theme.PROGRESS_Y, Theme.PROGRESS_W, Theme.PROGRESS_H);
         getChildren().add(progress);
 
+        // ---- 搜索框 550x506 @ (250,0)，z-index 2：压在左右底板之上 ----
+        search = new SearchBox();
+        search.setLayoutX(250);
+        search.setLayoutY(0);
+        getChildren().add(search);
+
         // ---- 贴边收起时的 41px 触发条 ----
         // 原版 .smp-dock-trigger 在面板 x=0..41 全高、z-index 50 且无背景色。
         // 收起态窗口只把这一条留在屏幕右缘，所以它既是触发区也是唯一的可见部分。
@@ -163,6 +170,10 @@ public final class PlayerPanel extends Pane {
     /** 收起态下点击 41px 触发条滑出。 */
     public void onDockTrigger(Runnable r) {
         dockTrigger.setOnMouseClicked(e -> r.run());
+    }
+
+    public SearchBox searchBox() {
+        return search;
     }
 
     public void setDockTriggerActive(boolean active) {
