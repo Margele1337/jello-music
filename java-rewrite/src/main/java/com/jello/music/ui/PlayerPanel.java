@@ -158,9 +158,15 @@ public final class PlayerPanel extends Pane {
         l.setLayoutX(x);
         l.setLayoutY(y);
         l.setPrefWidth(w);
+        // 必须给高度：Label 在 Pane 里不设 prefHeight 时尺寸算出来是 0，
+        // 再叠加 setPickOnBounds(false) 就彻底不渲染——歌名/时长整片看不见，
+        // 排查这个花了不少时间。
+        l.setPrefHeight(size + 6);
+        l.setMinHeight(size + 6);
         l.setFont(Assets.light(size));
         l.setTextFill(Theme.TEXT);
-        l.setPickOnBounds(false);
+        // 不要设 pickOnBounds(false)：那会让零尺寸的 Label 完全不参与命中测试，
+        // 视觉与交互都更难排查。
     }
 
     private static ImageView iconButton(String icon, double x, double y, double size) {

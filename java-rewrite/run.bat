@@ -61,7 +61,10 @@ for /f "usebackq delims=" %%i in ("cp.txt") do set "CP=%CP%;%%i"
 
 echo [3/3] Launching GUI...
 REM JavaFX must run on the module path, not the classpath.
-java --module-path "%CP%" -m com.jello.music/com.jello.music.MainApp %2 %3 %4 %5 %6
+REM %* forwards all args (empty when none, the URL when one is given).
+REM Using %2..%6 here would silently drop the first arg -- the URL never
+REM reached MainApp and playback silently fell back to the playlist path.
+java --module-path "%CP%" -m com.jello.music/com.jello.music.MainApp %*
 if errorlevel 1 (
   echo.
   echo [ERROR] GUI exited abnormally.

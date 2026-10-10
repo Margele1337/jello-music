@@ -26,8 +26,15 @@ public final class Theme {
     public static final Color LEFT_PANEL = Color.color(0, 0, 0, 0.95);
     /** 右栏 #262626 80% */
     public static final Color RIGHT_PANEL = rgb(38, 38, 38, 0.80);
-    /** 底部封面条遮罩 rgba(1,1,1,0.43) */
-    public static final Color STRIP_OVERLAY = Color.color(1, 1, 1, 0.43);
+    /**
+     * 底部封面条遮罩 rgba(1,1,1,0.43)。
+     *
+     * <p><b>坑</b>：这里的 1 是 CSS 的 0..255 量级，即 rgb(1,1,1) ≈ 纯黑，不是白色。
+     * 早先误写成 {@code Color.color(1,1,1,0.43)}（JavaFX 里 1.0 就是纯白），
+     * 结果遮罩变成 43% 白，底部条被提亮成浅灰，#fefefe 的歌名/时长直接看不见。
+     * 同类写法在音量轨道与进度条填充上各犯过一次，一律走 {@link #rgb}。
+     */
+    public static final Color STRIP_OVERLAY = rgb(1, 1, 1, 0.43);
     public static final double STRIP_OVERLAY_H = 89;
 
     // ---- 文字色：原版统一 #fefefe ----
@@ -55,12 +62,14 @@ public final class Theme {
     public static final double NEXT_X = 620, NEXT_Y = 529, NEXT_S = 46;
     public static final double REPEAT_X = 264, REPEAT_Y = 540;
     public static final double VOLUME_X = 781, VOLUME_Y = 520, VOLUME_W = 4, VOLUME_H = 40;
-    public static final Color VOLUME_TRACK = Color.color(1, 1, 1, 0.20);
+    /** 音量轨道 rgba(1,1,1,0.2)：1 是 0..255 量级，≈纯黑 */
+    public static final Color VOLUME_TRACK = rgb(1, 1, 1, 0.20);
     public static final Color VOLUME_FILL = rgb(254, 254, 254, 0.20);
 
     public static final double PROGRESS_X = 250, PROGRESS_Y = 595, PROGRESS_W = 550, PROGRESS_H = 5;
     public static final Color PROGRESS_TRACK = rgb(153, 153, 153, 0.075);
-    public static final Color PROGRESS_REMAIN = Color.color(1, 1, 1, 0.43);
+    /** 已播放 rgba(1,1,1,0.43)：同样是 ≈纯黑 */
+    public static final Color PROGRESS_REMAIN = rgb(1, 1, 1, 0.43);
 
     public static final double SPECTRUM_X = 15, SPECTRUM_Y = 460, SPECTRUM_S = 40;
     public static final Color SPECTRUM_BAR = Color.web("#fefefe");

@@ -18,7 +18,6 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
-import javafx.scene.canvas.Canvas;
 import javafx.scene.control.Label;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.Pane;
@@ -92,24 +91,23 @@ public class MainApp extends Application {
         playlistPanel.setLayoutY(Theme.PLAYLIST_Y);
         root.getChildren().add(playlistPanel);
 
-        // ---- 频谱：原版没有独立频谱窗，这里画在左栏底部（原版频谱按钮位置）----
+        // ---- 频谱：原版是独立的桌面悬浮窗（SigmaSpectrumHUD），不占左栏 ----
+        // 之前把 Canvas 直接塞在左栏 (15,452)，结果盖住了 (68,430) 的 114x114 专辑封面，
+        // 和 1:1 布局冲突。这里改成独立透明窗，由左下角 40x40 频谱按钮开关。
         feed = new SpectrumFeed(null, FFT_SIZE, BAND_COUNT, 60);
         spectrumView = new SpectrumView(feed, BAND_COUNT, 220, 60);
-        spectrumCanvasHolder = spectrumView.canvas();
-        // Canvas 是固定尺寸节点，但放进 Pane 时必须显式给 prefSize 与 layoutX/Y，
-        // 否则宽高会是 -1（未布局），整块频谱画不出来。
-        spectrumCanvasHolder.setLayoutX(15);
-        spectrumCanvasHolder.setLayoutY(452);
-        root.getChildren().add(spectrumCanvasHolder);
+        buildSpectrumStage(stage);
         spectrumView.start();
+        playerPanel.onSpectrumToggle(this::toggleSpectrumWindow);
 
-        // ---- 状态：放在左下角，不与原版元素冲突 ----
+        // ---- 状态：放在右栏空白处 ----
+        // 原版这里没有状态文字；早先放在左下角 (8,576) 会和歌手名重叠成一团糊。
         statusLabel = new Label("加载中…");
         statusLabel.setFont(Assets.light(11));
         statusLabel.setTextFill(Theme.TEXT_DIM);
-        statusLabel.setLayoutX(8);
-        statusLabel.setLayoutY(576);
-        statusLabel.setPrefWidth(240);
+        statusLabel.setLayoutX(264);
+        statusLabel.setLayoutY(14);
+        statusLabel.setPrefWidth(300);
         root.getChildren().add(statusLabel);
 
         StackPane overlay = new StackPane(root);
@@ -130,8 +128,19 @@ public class MainApp extends Application {
         dock.expand();
         reveal.expand(null);
         stage.show();
+        clampToPrimaryScreen(stage);
 
-        queue.addListener(song -> Platform.runLater(() -> onQueueCurrentChanged(song)));
+        // listener 由 PlayQueue.fire() 同步触发，而 fire() 可能发生在任意线程。
+        // 因此这里做一次线程判断：已在 FX 线程就直接更新，否则切过去。
+        // 注意不能无脑 runLater —— replaceAll 是在 FX 线程里被调用的，
+        // 再嵌套提交会让时序变得难以追踪（排查这个 bug 时被坑过）。
+        queue.addListener(song -> {
+            if (Platform.isFxApplicationThread()) {
+                onQueueCurrentChanged(song);
+            } else {
+                Platform.runLater(() -> onQueueCurrentChanged(song));
+            }
+        });
         loadPlaylists();
     }
 
@@ -177,6 +186,9 @@ public class MainApp extends Application {
                     queue.replaceAll(songs);
                     status(pl.name() + " · " + songs.size() + " 首");
                     if (!songs.isEmpty()) {
+                        playerPanel.setSong(songs.get(0).getTitle(), songs.get(0).getArtist(),
+                                songs.get(0).getCoverUrl());
+                        playerPanel.setCover(songs.get(0).getCoverUrl());
                         playCurrent(songs.get(0));
                     }
                 });
@@ -250,14 +262,10 @@ public class MainApp extends Application {
         feed = new SpectrumFeed(url, FFT_SIZE, BAND_COUNT, 60);
         spectrumView.stop();
         spectrumView = new SpectrumView(feed, BAND_COUNT, 220, 60);
-        // 替换旧 canvas
-        Pane parent = (Pane) spectrumCanvasHolder.getParent();
-        int idx = parent.getChildren().indexOf(spectrumCanvasHolder);
-        if (idx >= 0) {
-            parent.getChildren().set(idx, spectrumView.canvas());
-            spectrumCanvasHolder = spectrumView.canvas();
-            spectrumCanvasHolder.setLayoutX(15);
-            spectrumCanvasHolder.setLayoutY(452);
+        // 换到悬浮窗里：替换掉旧 canvas，保持同一个 Scene/Stage
+        if (spectrumStage != null) {
+            Pane parent = (Pane) spectrumStage.getScene().getRoot();
+            parent.getChildren().set(0, spectrumView.canvas());
         }
         spectrumView.start();
 
@@ -277,9 +285,46 @@ public class MainApp extends Application {
         }.start();
     }
 
-    private Canvas spectrumCanvasHolder;
+    private Stage spectrumStage;
 
+    /** 建一个透明、无边框、置顶的频谱悬浮窗，贴在主面板左下外侧。 */
+    private void buildSpectrumStage(Stage main) {
+        spectrumStage = new Stage();
+        spectrumStage.initStyle(StageStyle.TRANSPARENT);
+        spectrumStage.setTitle("Jello Spectrum");
+        spectrumStage.setAlwaysOnTop(true);
+        Pane holder = new Pane();
+        holder.getChildren().add(spectrumView.canvas());
+        Scene sc = new Scene(holder, 220, 60);
+        sc.setFill(Color.TRANSPARENT);
+        spectrumStage.setScene(sc);
+        repositionSpectrum(main);
+        spectrumStage.hide();
+    }
 
+    private void repositionSpectrum(Stage main) {
+        if (spectrumStage == null) {
+            return;
+        }
+        javafx.geometry.Rectangle2D area = javafx.stage.Screen.getPrimary().getVisualBounds();
+        double x = main.getX() + 12;
+        double y = main.getY() + Theme.PANEL_H - 72;
+        spectrumStage.setX(Math.max(area.getMinX(), Math.min(x, area.getMaxX() - 220)));
+        spectrumStage.setY(Math.max(area.getMinY(), Math.min(y, area.getMaxY() - 60)));
+    }
+
+    private void toggleSpectrumWindow() {
+        if (spectrumStage == null) {
+            return;
+        }
+        if (spectrumStage.isShowing()) {
+            spectrumStage.hide();
+            playerPanel.setSpectrumActive(false);
+        } else {
+            spectrumStage.show();
+            playerPanel.setSpectrumActive(true);
+        }
+    }
 
     private void togglePlay() {
         if (player == null) {
@@ -339,6 +384,9 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (spectrumStage != null) {
+            spectrumStage.hide();
+        }
         if (spectrumView != null) {
             spectrumView.stop();
         }
@@ -350,5 +398,22 @@ public class MainApp extends Application {
 
     public static void main(String[] args) {
         launch(args);
+    }
+
+    /**
+     * 把窗口钳制到主屏工作区内。
+     * EdgeDock 摆位依赖主屏，接了多显示器、或刚拔掉副屏时可能算到一块已不存在的屏，
+     * 窗口就被摆到屏幕外去了（进程还在、窗口却找不到，这个坑踩过）。摆位后再钳一次兜底。
+     */
+    private void clampToPrimaryScreen(Stage stage) {
+        javafx.geometry.Rectangle2D area = javafx.stage.Screen.getScreens().stream()
+                .filter(s -> s.getVisualBounds().intersects(1, 1, 1, 1))
+                .findFirst()
+                .orElse(javafx.stage.Screen.getPrimary())
+                .getVisualBounds();
+        stage.setX(Math.max(area.getMinX(),
+                Math.min(stage.getX(), area.getMaxX() - stage.getWidth())));
+        stage.setY(Math.max(area.getMinY(),
+                Math.min(stage.getY(), area.getMaxY() - stage.getHeight())));
     }
 }
