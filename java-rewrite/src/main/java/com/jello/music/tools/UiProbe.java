@@ -6,6 +6,7 @@ import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.ThumbnailCard;
 import com.jello.music.model.Song;
+import com.jello.music.ui.MarqueeText;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.Theme;
 import javafx.application.Platform;
@@ -110,21 +111,28 @@ public final class UiProbe {
 
         List<Label> labels = collect(root, Label.class);
 
-        Label title = firstWithText(labels, SONG);
-        check("歌名 Label 存在", title != null, null);
-        if (title != null) {
-            checkNonZero("歌名 Label 有非零宽高", title);
-            check("歌名 Label 坐标 == 原版",
-                    title.getLayoutX() == Theme.TITLE_X && title.getLayoutY() == Theme.TITLE_Y, at(title));
+        // 歌名/歌手现在是 MarqueeText 视口（clip 在容器上，内层 Label 平移）
+        List<MarqueeText> marquees = collect(root, MarqueeText.class);
+        MarqueeText titleBox = marquees.stream().filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
+        MarqueeText artistBox = marquees.stream().filter(m -> m.phaseMs() == -1000).findFirst().orElse(null);
+        check("歌名跑马灯存在（phase=0）", titleBox != null, null);
+        check("歌手跑马灯存在（phase=-1000）", artistBox != null, null);
+        if (titleBox != null) {
+            check("歌名坐标 == 原版",
+                    titleBox.getLayoutX() == Theme.TITLE_X && titleBox.getLayoutY() == Theme.TITLE_Y,
+                    String.format("x=%.0f y=%.0f w=%.0f h=%.0f",
+                            titleBox.getLayoutX(), titleBox.getLayoutY(),
+                            titleBox.getBoundsInParent().getWidth(),
+                            titleBox.getBoundsInParent().getHeight()));
+            check("歌名视口有 clip（对齐 overflow:hidden）", titleBox.getClip() != null, null);
+            check("歌名文字已写入", firstWithText(labels, SONG) != null, null);
         }
-
-        Label artist = firstWithText(labels, ARTIST);
-        check("歌手 Label 存在", artist != null, null);
-        if (artist != null) {
-            checkNonZero("歌手 Label 有非零宽高", artist);
-            check("歌手 Label 坐标 == 原版",
-                    artist.getLayoutX() == Theme.TITLE_X && artist.getLayoutY() == Theme.SUBTITLE_Y,
-                    at(artist));
+        if (artistBox != null) {
+            check("歌手坐标 == 原版",
+                    artistBox.getLayoutX() == Theme.TITLE_X
+                            && artistBox.getLayoutY() == Theme.SUBTITLE_Y,
+                    String.format("x=%.0f y=%.0f", artistBox.getLayoutX(), artistBox.getLayoutY()));
+            check("歌手文字已写入", firstWithText(labels, ARTIST) != null, null);
         }
 
         long times = labels.stream().filter(l -> l.getText().matches(TIME_RE)).count();
@@ -182,10 +190,11 @@ public final class UiProbe {
         // 无歌手时标题应下移到 .single 的 y=562
         player.setSong("只有标题", null, null);
         root.layout();
-        Label single = firstWithText(labels, "只有标题");
+        MarqueeText singleBox = collect(root, MarqueeText.class).stream()
+                .filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
         check("无歌手时标题下移到 y=562",
-                single != null && single.getLayoutY() == Theme.TITLE_SINGLE_Y,
-                single == null ? "missing" : String.format("y=%.0f", single.getLayoutY()));
+                singleBox != null && singleBox.getLayoutY() == Theme.TITLE_SINGLE_Y,
+                singleBox == null ? "missing" : String.format("y=%.0f", singleBox.getLayoutY()));
         check("无歌手时歌手行隐藏", !subtitleVisible(labels, "只有标题"),
                 "subtitle should be hidden");
         // 复位，别影响后面截图
@@ -206,10 +215,10 @@ public final class UiProbe {
         // 原版文字是 nowrap + overflow:hidden，JavaFX 默认会换行
         check("文字 Label 不换行（对齐 nowrap）", labels.stream().noneMatch(Label::isWrapText),
                 "wrapText offenders=" + labels.stream().filter(Label::isWrapText).count());
-        check("文字 Label 均已 clip（对齐 overflow:hidden）",
-                labels.stream().allMatch(l -> l.getClip() != null),
-                "clipped=" + labels.stream().filter(l -> l.getClip() != null).count()
-                        + "/" + labels.size());
+        long uncut = labels.stream()
+                .filter(l -> l.getClip() == null && !insideMarquee(l))
+                .count();
+        check("文字均已裁切（Label 自带 clip 或在跑马灯视口内）", uncut == 0, "uncut=" + uncut);
 
         // 搜索框 550x506 @ (250,0)
         SearchBox box = collect(root, SearchBox.class).stream().findFirst().orElse(null);
@@ -245,8 +254,21 @@ public final class UiProbe {
                     "left=" + collect(root, ThumbnailCard.class).size());
         }
 
+        checkMarqueeTiming();
+
         writeSnapshot(root, pngPath);
         checkStripBlur();
+    }
+
+    private static boolean insideMarquee(Label l) {
+        javafx.scene.Parent p = l.getParent();
+        while (p != null) {
+            if (p instanceof com.jello.music.ui.MarqueeText) {
+                return true;
+            }
+            p = p.getParent();
+        }
+        return false;
     }
 
     private static boolean subtitleVisible(List<Label> labels, String titleText) {
@@ -348,6 +370,37 @@ public final class UiProbe {
         int g = (argb >> 8) & 0xFF;
         int b = argb & 0xFF;
         return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+
+    /**
+     * 跑马灯时序断言。直接验 {@link MarqueeText#progress(long, long)} 这段纯函数，
+     * 不用真等 8.5 秒，也不受跑测时那一刻墙上时间的影响。
+     */
+    private static void checkMarqueeTiming() {
+        // 8500ms 一轮：0..3400(40%) 静止，3400..8500 走完
+        // 注意 t=3400 时 p 恰好等于 0.4，走的是「不小于则推进」分支，结果为 0，
+        // 所以推进区要从 3401 算起。
+        boolean pause = MarqueeText.progress(0, 0) == 0
+                && MarqueeText.progress(2000, 0) == 0
+                && MarqueeText.progress(3400, 0) == 0;
+        boolean ramp = MarqueeText.progress(3401, 0) > 0
+                && MarqueeText.progress(6000, 0) > 0
+                && MarqueeText.progress(6000, 0) < 1.0
+                && MarqueeText.progress(8499, 0) < 1.0;
+        boolean wrap = MarqueeText.progress(8500, 0) == 0;
+        // phase=-1000 表示在周期里往前挪 1s，所以 t=300 时歌名还在静止段、
+        // 歌手行却已经开跑——这正是原版给两行错开的效果。
+        boolean phased = MarqueeText.progress(300, -1000) > 0
+                && MarqueeText.progress(300, 0) == 0;
+        check("跑马灯前 40% 静止（8500ms 周期）", pause, null);
+        check("跑马灯 40%~100% 推进并在整轮处归零", ramp && wrap, null);
+        check("phase 错开生效（歌手行早 1s 起跑）", phased, null);
+
+        boolean ease = MarqueeText.easeInOutQuad(0) == 0
+                && MarqueeText.easeInOutQuad(1) == 1
+                && MarqueeText.easeInOutQuad(0.5) < 1
+                && MarqueeText.easeInOutQuad(0.25) < MarqueeText.easeInOutQuad(0.75);
+        check("easeInOutQuad 端点与单调性正确", ease, null);
     }
 
     /**

@@ -23,8 +23,8 @@ import javafx.scene.paint.Color;
 public final class PlayerPanel extends Pane {
 
     private final ImageView artwork = new ImageView();
-    private final Label title = new Label();
-    private final Label subtitle = new Label();
+    private final MarqueeText title = new MarqueeText(Theme.TITLE_W, 14, 0);
+    private final MarqueeText subtitle = new MarqueeText(Theme.TITLE_W, 14, -1000);
     private final Label timeLeft = new Label();
     private final Label timeRight = new Label();
     private final Label logo = new Label("Jello");
@@ -100,12 +100,14 @@ public final class PlayerPanel extends Pane {
         artwork.setMouseTransparent(true);
         getChildren().add(artwork);
 
-        // ---- 歌名 / 歌手 ----
-        styleText(title, Theme.TITLE_X, Theme.TITLE_Y, Theme.TITLE_W, 14);
-        title.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+        // ---- 歌名 / 歌手（超框时走跑马灯，原版 scroll 属性）----
+        // phase 分别是 0 / -1000，和原版一致：两行错开动，不会一起飘
+        title.setLayoutX(Theme.TITLE_X);
+        title.setLayoutY(Theme.TITLE_Y);
         getChildren().add(title);
-        styleText(subtitle, Theme.TITLE_X, Theme.SUBTITLE_Y, Theme.TITLE_W, 14);
-        subtitle.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+
+        subtitle.setLayoutX(Theme.TITLE_X);
+        subtitle.setLayoutY(Theme.SUBTITLE_Y);
         getChildren().add(subtitle);
 
         // ---- 时长 ----
@@ -259,8 +261,6 @@ public final class PlayerPanel extends Pane {
         // 原版 .smp-title.single：无歌手时标题独占一行并下移到 y=562，歌手行不渲染
         subtitle.setVisible(hasArtist);
         title.setLayoutY(hasArtist ? Theme.TITLE_Y : Theme.TITLE_SINGLE_Y);
-        title.setClip(new javafx.scene.shape.Rectangle(Theme.TITLE_W,
-                hasArtist ? 20 : 16));
         // 原版：无歌手时标题单行居中（single 类），有歌手时两行
         if (coverUrl != null && !coverUrl.isBlank()) {
             try {
