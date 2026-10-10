@@ -3,6 +3,7 @@ package com.jello.music.tools;
 import com.jello.music.ui.CanvasStrip;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
+import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.Theme;
 import javafx.application.Platform;
 import javafx.geometry.Bounds;
@@ -16,6 +17,7 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Region;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -154,8 +156,66 @@ public final class UiProbe {
             check("没有 Canvas 压住专辑封面", hits.isEmpty(), hits.toString());
         }
 
+        // 循环按钮 27x20 @ (264,540)
+        RepeatButton repeat = collect(root, RepeatButton.class).stream()
+                .findFirst().orElse(null);
+        check("循环模式按钮存在 @ (264,540)",
+                repeat != null
+                        && repeat.getLayoutX() == Theme.REPEAT_X
+                        && repeat.getLayoutY() == Theme.REPEAT_Y,
+                repeat == null ? "missing"
+                        : String.format("x=%.0f y=%.0f", repeat.getLayoutX(), repeat.getLayoutY()));
+        if (repeat != null) {
+            // 三态雪碧图：0/1/2 各切一次，确认 viewport 跟着走且不抛异常
+            repeat.setState(0);
+            int a = repeat.state();
+            repeat.setState(2);
+            int b = repeat.state();
+            repeat.setState(1);
+            check("循环按钮三态可切换", a == 0 && b == 2 && repeat.state() == 1,
+                    String.format("0->%d 2->%d now=%d", a, b, repeat.state()));
+        }
+
+        // 无歌手时标题应下移到 .single 的 y=562
+        player.setSong("只有标题", null, null);
+        root.layout();
+        Label single = firstWithText(labels, "只有标题");
+        check("无歌手时标题下移到 y=562",
+                single != null && single.getLayoutY() == Theme.TITLE_SINGLE_Y,
+                single == null ? "missing" : String.format("y=%.0f", single.getLayoutY()));
+        check("无歌手时歌手行隐藏", !subtitleVisible(labels, "只有标题"),
+                "subtitle should be hidden");
+        // 复位，别影响后面截图
+        player.setSong(SONG, ARTIST, null);
+        root.layout();
+
+        // 原版 .smp-dock-trigger：面板 x=0..41 全高
+        Region trigger = collect(root, Region.class).stream()
+                .filter(r -> r.getLayoutX() == 0 && r.getLayoutY() == 0
+                        && r.getPrefWidth() == Theme.EDGE_TRIGGER)
+                .findFirst().orElse(null);
+        check("41px 贴边触发条存在", trigger != null, null);
+        if (trigger != null) {
+            check("展开态触发条鼠标穿透（不挡左栏）", trigger.isMouseTransparent(),
+                    "mouseTransparent=" + trigger.isMouseTransparent());
+        }
+
+        // 原版文字是 nowrap + overflow:hidden，JavaFX 默认会换行
+        check("文字 Label 不换行（对齐 nowrap）", labels.stream().noneMatch(Label::isWrapText),
+                "wrapText offenders=" + labels.stream().filter(Label::isWrapText).count());
+        check("文字 Label 均已 clip（对齐 overflow:hidden）",
+                labels.stream().allMatch(l -> l.getClip() != null),
+                "clipped=" + labels.stream().filter(l -> l.getClip() != null).count()
+                        + "/" + labels.size());
+
         writeSnapshot(root, pngPath);
         checkStripBlur();
+    }
+
+    private static boolean subtitleVisible(List<Label> labels, String titleText) {
+        return labels.stream()
+                .filter(l -> l.getLayoutX() == Theme.TITLE_X && l.getLayoutY() == Theme.SUBTITLE_Y)
+                .anyMatch(Label::isVisible);
     }
 
     /**

@@ -34,6 +34,8 @@ public final class PlayerPanel extends Pane {
     private final ImageView playBtn;
     private final ImageView nextBtn;
     private final SpectrumToggleButton spectrumBtn;
+    private final RepeatButton repeatBtn;
+    private final Region dockTrigger = new Region();
     private final VerticalSlider volume;
     private final ThinProgressBar progress;
 
@@ -74,6 +76,16 @@ public final class PlayerPanel extends Pane {
         artwork.setPreserveRatio(true);
         Region artBox = new Region();
         artBox.setBackground(javafx.scene.layout.Background.fill(Theme.ARTWORK_BG));
+        // 原版 box-shadow: inset 0 0 0 1px rgba(1,1,1,0.35)，
+        // 是往里描的一像素边。JavaFX 没有 inset box-shadow，用带 1px padding 的
+        // BackgroundFill 描一层内框模拟；顺序上后画的在上，所以底色在前、描边在后。
+        // BackgroundFill 参数顺序是 (Paint, CornerRadii, Insets)，Insets 排最后；
+        // Background 的静态工厂只有 fill(Paint)，要多层只能自己 new。
+        // 按数组顺序绘制：底色先画，1px 内描边后画，正好压在上面。
+        artBox.setBackground(new javafx.scene.layout.Background(
+                new javafx.scene.layout.BackgroundFill(Theme.ARTWORK_BG, null, null),
+                new javafx.scene.layout.BackgroundFill(Theme.ARTWORK_INNER_BORDER,
+                        null, new javafx.geometry.Insets(1))));
         artBox.setLayoutX(Theme.ARTWORK_X);
         artBox.setLayoutY(Theme.ARTWORK_Y);
         artBox.setPrefSize(Theme.ARTWORK_S, Theme.ARTWORK_S);
@@ -119,6 +131,11 @@ public final class PlayerPanel extends Pane {
         place(spectrumBtn, Theme.SPECTRUM_X, Theme.SPECTRUM_Y, Theme.SPECTRUM_S, Theme.SPECTRUM_S);
         getChildren().add(spectrumBtn);
 
+        // ---- 循环模式 27x20 @ (264,540) ----
+        repeatBtn = new RepeatButton();
+        place(repeatBtn, Theme.REPEAT_X, Theme.REPEAT_Y, 27, 20);
+        getChildren().add(repeatBtn);
+
         // ---- 音量 4x40 @ (781,520) ----
         volume = new VerticalSlider(Theme.VOLUME_W, Theme.VOLUME_H);
         place(volume, Theme.VOLUME_X, Theme.VOLUME_Y, Theme.VOLUME_W, Theme.VOLUME_H);
@@ -128,6 +145,28 @@ public final class PlayerPanel extends Pane {
         progress = new ThinProgressBar(Theme.PROGRESS_W, Theme.PROGRESS_H);
         place(progress, Theme.PROGRESS_X, Theme.PROGRESS_Y, Theme.PROGRESS_W, Theme.PROGRESS_H);
         getChildren().add(progress);
+
+        // ---- 贴边收起时的 41px 触发条 ----
+        // 原版 .smp-dock-trigger 在面板 x=0..41 全高、z-index 50 且无背景色。
+        // 收起态窗口只把这一条留在屏幕右缘，所以它既是触发区也是唯一的可见部分。
+        // 必须最后 add：Pane 按加入顺序叠放，最后一个在最上层。
+        dockTrigger.setLayoutX(0);
+        dockTrigger.setLayoutY(0);
+        dockTrigger.setPrefSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
+        dockTrigger.setMinSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
+        dockTrigger.setMaxSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
+        // 展开时必须让鼠标穿透，否则这 41px 会挡住左栏歌单和频谱按钮
+        dockTrigger.setMouseTransparent(true);
+        getChildren().add(dockTrigger);
+    }
+
+    /** 收起态下点击 41px 触发条滑出。 */
+    public void onDockTrigger(Runnable r) {
+        dockTrigger.setOnMouseClicked(e -> r.run());
+    }
+
+    public void setDockTriggerActive(boolean active) {
+        dockTrigger.setMouseTransparent(!active);
     }
 
     // ---------- 构造辅助 ----------
@@ -162,14 +201,16 @@ public final class PlayerPanel extends Pane {
         l.setLayoutY(y);
         l.setPrefWidth(w);
         // 必须给高度：Label 在 Pane 里不设 prefHeight 时尺寸算出来是 0，
-        // 再叠加 setPickOnBounds(false) 就彻底不渲染——歌名/时长整片看不见，
-        // 排查这个花了不少时间。
+        // 再叠加不渲染就直接看不见，歌名/时长整片消失，排查这个花了不少时间。
         l.setPrefHeight(size + 6);
         l.setMinHeight(size + 6);
+        // 原版这四个文字都是 white-space: nowrap + overflow: hidden。
+        // JavaFX 的 Label 默认会换行，长歌名会折成两行把布局顶歪；
+        // 不换行的话文字又会溢出到右边的时间/按钮上，所以还要 clip 到框宽。
+        l.setWrapText(false);
+        l.setClip(new javafx.scene.shape.Rectangle(w, size + 6));
         l.setFont(Assets.light(size));
         l.setTextFill(Theme.TEXT);
-        // 不要设 pickOnBounds(false)：那会让零尺寸的 Label 完全不参与命中测试，
-        // 视觉与交互都更难排查。
     }
 
     private static ImageView iconButton(String icon, double x, double y, double size) {
@@ -202,7 +243,13 @@ public final class PlayerPanel extends Pane {
 
     public void setSong(String titleText, String artist, String coverUrl) {
         title.setText(titleText == null ? "" : titleText);
-        subtitle.setText(artist == null ? "" : artist);
+        boolean hasArtist = artist != null && !artist.isBlank();
+        subtitle.setText(hasArtist ? artist : "");
+        // 原版 .smp-title.single：无歌手时标题独占一行并下移到 y=562，歌手行不渲染
+        subtitle.setVisible(hasArtist);
+        title.setLayoutY(hasArtist ? Theme.TITLE_Y : Theme.TITLE_SINGLE_Y);
+        title.setClip(new javafx.scene.shape.Rectangle(Theme.TITLE_W,
+                hasArtist ? 20 : 16));
         // 原版：无歌手时标题单行居中（single 类），有歌手时两行
         if (coverUrl != null && !coverUrl.isBlank()) {
             try {
@@ -231,6 +278,15 @@ public final class PlayerPanel extends Pane {
 
     public void onSpectrumToggle(Runnable r) {
         spectrumBtn.setOnToggle(active -> r.run());
+    }
+
+    /** 循环模式按钮：点击切换，并回传新的 0/1/2 状态。 */
+    public void onRepeatToggle(java.util.function.IntConsumer r) {
+        repeatBtn.onClick(() -> r.accept(repeatBtn.state()));
+    }
+
+    public void setRepeatState(int s) {
+        repeatBtn.setState(s);
     }
 
     public void setSpectrumActive(boolean active) {

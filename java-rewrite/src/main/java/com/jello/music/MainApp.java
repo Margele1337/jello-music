@@ -101,6 +101,11 @@ public class MainApp extends Application {
         buildSpectrumStage(stage);
         spectrumView.start();
         playerPanel.onSpectrumToggle(this::toggleSpectrumWindow);
+        // 雪碧图三态：0=不循环 1=列表循环 2=单曲循环
+        playerPanel.onRepeatToggle(state -> queue.setRepeat(
+                state == 0 ? PlayQueue.Repeat.NONE
+                        : state == 1 ? PlayQueue.Repeat.ALL : PlayQueue.Repeat.ONE));
+        playerPanel.onDockTrigger(this::expandDock);
 
         // ---- 状态：放在右栏空白处 ----
         // 原版这里没有状态文字；早先放在左下角 (8,576) 会和歌手名重叠成一团糊。
@@ -372,11 +377,21 @@ public class MainApp extends Application {
 
     private void toggleDock() {
         if (dock.isDocked()) {
-            dock.expand();
-            reveal.expand(null);
+            expandDock();
         } else {
-            reveal.collapse(() -> dock.collapse());
+            reveal.collapse(() -> {
+                dock.collapse();
+                // 收起后窗口只剩右侧 40px 露在屏幕里，正好对应原版那条
+                // 41px 的 .smp-dock-trigger（它取的是面板 x=0..41）。
+                playerPanel.setDockTriggerActive(true);
+            });
         }
+    }
+
+    private void expandDock() {
+        dock.expand();
+        reveal.expand(null);
+        playerPanel.setDockTriggerActive(false);
     }
 
     private KuGouCredentials credentials() {

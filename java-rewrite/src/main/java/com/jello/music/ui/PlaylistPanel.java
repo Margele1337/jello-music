@@ -95,6 +95,13 @@ public final class PlaylistPanel extends Pane {
             l.setLayoutY(y);
             l.setPrefWidth(getPrefWidth() - 16);
             l.setPrefHeight(30);   // 7px padding + 13px 文字 + 余量
+            // 原版 .sigma-playlist-item 是 white-space:nowrap + overflow:hidden
+            // + text-overflow:ellipsis。JavaFX 的 Label 不换行时文字会直接溢出
+            // 面板，所以关掉 wrapText 再 clip。
+            // 省略号做不了：TextTruncation / setTextTruncation 是 JavaFX 22 才有的，
+            // 21.0.5 的 Labeled 上没有，只能硬截断（会丢尾字），不如直接裁切干净。
+            l.setWrapText(false);
+            l.setClip(new javafx.scene.shape.Rectangle(getPrefWidth() - 16, 30));
             l.setPickOnBounds(true);
 
             final int idx = backing.size();

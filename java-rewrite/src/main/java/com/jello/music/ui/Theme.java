@@ -49,8 +49,12 @@ public final class Theme {
 
     public static final double ARTWORK_X = 68, ARTWORK_Y = 430, ARTWORK_S = 114;
     public static final Color ARTWORK_BG = Color.web("#14161a");
+    /** 原版 box-shadow: inset 0 0 0 1px rgba(1,1,1,0.35) 的那一圈内描边 */
+    public static final Color ARTWORK_INNER_BORDER = rgb(1, 1, 1, 0.35);
 
     public static final double TITLE_X = 30, TITLE_Y = 550, TITLE_W = 190;
+    /** 原版 .smp-title.single：无歌手时标题下移到 562 */
+    public static final double TITLE_SINGLE_Y = 562;
     public static final double SUBTITLE_Y = 570;
     public static final double TIME_L_X = 264, TIME_R_X = 736, TIME_R_W = 50, TIME_Y = 568;
 
