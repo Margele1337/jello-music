@@ -176,6 +176,8 @@ public final class PlayerPanel extends Pane {
         // 必须最后 add：Pane 按加入顺序叠放，最后一个在最上层。
         dockTrigger.setLayoutX(0);
         dockTrigger.setLayoutY(0);
+        // 原版 .smp-dock-trigger 在拖窗排除表里
+        dockTrigger.getStyleClass().add("smp-dock-trigger");
         dockTrigger.setPrefSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
         dockTrigger.setMinSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
         dockTrigger.setMaxSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
@@ -230,6 +232,8 @@ public final class PlayerPanel extends Pane {
 
     private static ImageView iconButton(String icon, double x, double y, double size) {
         ImageView v = new ImageView(Assets.image(icon));
+        // 原版 .sigma-small-image：拖窗排除表里的一项（点它不该起拖）
+        v.getStyleClass().add("sigma-small-image");
         v.setFitWidth(size);
         v.setFitHeight(size);
         v.setPreserveRatio(true);

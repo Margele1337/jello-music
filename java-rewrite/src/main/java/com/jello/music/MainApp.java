@@ -10,12 +10,14 @@ import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
+import com.jello.music.ui.DragGate;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.ElasticReveal;
 import com.jello.music.ui.LoginView;
 import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
+import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.SpectrumView;
 import com.jello.music.ui.Theme;
 import javafx.animation.AnimationTimer;
@@ -146,10 +148,10 @@ private EdgeDock dock;
         buildSpectrumStage(stage);
         spectrumView.start();
         playerPanel.onSpectrumToggle(this::toggleSpectrumWindow);
-        // 雪碧图三态：0=不循环 1=列表循环 2=单曲循环
-        playerPanel.onRepeatToggle(state -> queue.setRepeat(
-                state == 0 ? PlayQueue.Repeat.NONE
-                        : state == 1 ? PlayQueue.Repeat.ALL : PlayQueue.Repeat.ONE));
+// 四态：0 随机 / 1 列表循环 / 2 单曲循环 / 3 顺序（顺序 PlayMode.js:4-9，默认 1）
+        playerPanel.onRepeatToggle(this::applyPlaybackMode);
+        // 原版存在 localStorage['player_playback_mode']，重启后还是上次的模式
+        applyPlaybackMode(AppPrefs.playbackMode());
         playerPanel.onDockTrigger(this::expandDock);
         // 记住用户拖出来的音量：换歌会重建 MediaPlayer，音量得自己带着走
         playerPanel.onVolumeChanged(v -> volume = v);
@@ -722,14 +724,40 @@ private void startPlayback(String url) {
         }
     }
 
-    private void installDragHandlers(javafx.scene.Node overlay) {
+private void installDragHandlers(javafx.scene.Node overlay) {
         overlay.setOnMousePressed(e -> {
+            // 原版 SigmaMusicPlayer.vue:403 —— 只有左键起拖
+            if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY) {
+                return;
+            }
+            // 原版 :405 target.closest(NO_DRAG_SELECTOR)：
+            // 落在搜索框 / 按钮 / 滚动面板这些控件上时不要起拖，
+            // 否则点一下按钮就变成拖窗了
+            if (DragGate.blocked(e.getTarget())) {
+                return;
+            }
             if (!dock.isDocked()) {
                 dock.beginDrag(e);
             }
         });
         overlay.setOnMouseDragged(e -> dock.drag(e));
         overlay.setOnMouseReleased(e -> dock.endDrag());
+    }
+
+    /** 播放模式索引（0..3）→ 队列语义，同时刷新按钮并落盘。 */
+    private void applyPlaybackMode(int mode) {
+        queue.setRepeat(modeToRepeat(mode));
+        playerPanel.setRepeatState(mode);
+        AppPrefs.setPlaybackMode(mode);
+    }
+
+    private static PlayQueue.Repeat modeToRepeat(int mode) {
+        return switch (mode) {
+            case RepeatButton.MODE_SHUFFLE -> PlayQueue.Repeat.SHUFFLE;
+            case RepeatButton.MODE_ONE -> PlayQueue.Repeat.ONE;
+            case RepeatButton.MODE_SEQUENTIAL -> PlayQueue.Repeat.NONE;
+            default -> PlayQueue.Repeat.ALL;
+        };
     }
 
     private void toggleDock() {

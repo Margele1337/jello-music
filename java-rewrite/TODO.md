@@ -40,14 +40,21 @@
 
 ## B. 播放器内的缺口
 
-- [ ] **第 4 种循环状态（随机播放）** —— `RepeatButton` 硬夹在 `0..2`，
-      原版 4 态、第 4 态是内联 SVG 随机图标；`PlayQueue.Repeat` 也要加 SHUFFLE
+- [x] **第 4 种循环状态（随机播放）** —— `RepeatButton` 原硬夹在 `0..2`，
+      原版 4 态、第 4 态是内联 SVG 随机图标；`PlayQueue.Repeat` 已加 SHUFFLE。
+      坑：模式索引 ≠ 雪碧图帧号（随机↔顺序对调）；随机图标走 SVG 不走 `repeat.png`；
+      JavaFX 缩放绕 layoutBounds 中心，定位要用「目标中心 - 字形中心」，
+      用 StackPane 居中会把 1.5 吸附成 2、偏 0.5px
+- [x] **拖拽排除列表** —— 原版 `SigmaMusicPlayer.vue:340` 的 `NO_DRAG_SELECTOR`
+      （12 项）照抄成 `DragGate`，控件挂原版同名的 CSS class，
+      按事件目标的父链判定（对应原版 `target.closest(...)`）
 - [ ] **贴边收起的半透明态 + 越界橡皮筋** —— 原版拖拽越过右缘时面板**先半透明**、
       松手才吸附；`EdgeDock` 目前没有任何 opacity / overhang 逻辑
 - [ ] **dock 滑动曲线不一致** —— 原版是每帧 `0.25 × dt/18.10361` 插值 + 120ms 节流 +
       3s 卡死看门狗；现在是固定 450/125ms cubic ease-out
 - [ ] **频谱参数** —— `spectrumScale`（0.2~3）、`spectrumSigmaSmoothing`（默认 0.335）、
       `spectrumAvDelay`（默认 590ms）三个设置没有；HUD 尺寸 220×60、48 频段、FFT 2048 写死
+- [x] 播放模式持久化 —— 原版 `localStorage['player_playback_mode']`（`AppPrefs`，默认 1）
 - [ ] **频谱窗状态不持久化** —— 原版存 `spectrumWindowPosition/Size`，
       且只按主屏摆一次，不跟随多显示器变化、不做游戏全屏时的贴底
 - [ ] **拖拽排除列表** —— 原版排除 `button, input, .sigma-search-box, …` 才允许起拖，

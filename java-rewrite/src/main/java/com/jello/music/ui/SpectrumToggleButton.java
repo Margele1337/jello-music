@@ -25,6 +25,7 @@ public final class SpectrumToggleButton extends Pane {
     private Consumer<Boolean> onToggle;
 
     public SpectrumToggleButton(double size) {
+        getStyleClass().add("sigma-spectrum-button"); // 原版 CSS class，拖窗排除表要用（DragGate）
         getChildren().addAll(b1, b2, b3);
         applyOpacity(Theme.SPECTRUM_BAR_OFF);
         setOnMouseClicked(e -> {

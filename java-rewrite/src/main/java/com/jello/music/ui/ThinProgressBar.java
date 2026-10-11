@@ -29,6 +29,7 @@ public final class ThinProgressBar extends Pane {
     private java.util.function.Consumer<Double> seekHandler;
 
     public ThinProgressBar(double w, double h) {
+        getStyleClass().add("sigma-progress-bar"); // 原版 CSS class，拖窗排除表要用（DragGate）
         // 自己管尺寸：Pane 的 prefSize 是从子节点算出来的，构造时不显式设，
         // 独立使用时宽高会算成 0（布局与 setPercent 全部失效）。
         setPrefSize(w, h);

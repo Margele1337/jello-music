@@ -79,6 +79,7 @@ public final class SearchBox extends Pane {
     private Consumer<String> onOpenPlaylist;
 
     public SearchBox() {
+        getStyleClass().add("sigma-search-box"); // 原版 CSS class，拖窗排除表要用（DragGate）
         setPrefSize(W, H);
         setMinSize(W, H);
         setMaxSize(W, H);

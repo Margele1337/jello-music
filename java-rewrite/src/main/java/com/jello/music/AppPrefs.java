@@ -14,6 +14,7 @@ import java.util.prefs.Preferences;
 public final class AppPrefs {
 
     private static final String ONBOARDING_DONE = "jello-onboarding-done";
+    private static final String PLAYBACK_MODE = "player-playback-mode";
     private static final String TOKEN = "userinfo-token";
     private static final String USERID = "userinfo-userid";
     private static final String T1 = "userinfo-t1";
@@ -89,5 +90,22 @@ public final class AppPrefs {
     /** 首次启动才弹教程：跑过一次就不再来。原版也是这个判断。 */
     public static boolean shouldShowOnboarding() {
         return !onboardingDone();
+    }
+
+    /**
+     * 播放模式（0 随机 / 1 列表循环 / 2 单曲循环 / 3 顺序），对应原版
+     * {@code localStorage['player_playback_mode']}（{@code PlaybackMode.js:18}），默认 1。
+     */
+    public static int playbackMode() {
+        try {
+            return Integer.parseInt(NODE.get(PLAYBACK_MODE, "1"));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    public static void setPlaybackMode(int mode) {
+        NODE.put(PLAYBACK_MODE, String.valueOf(mode));
+        flush();
     }
 }

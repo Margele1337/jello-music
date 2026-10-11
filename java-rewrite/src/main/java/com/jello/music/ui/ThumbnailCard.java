@@ -35,6 +35,7 @@ public final class ThumbnailCard extends Pane {
             new SigmaTextView("sans", 12, W, 13, SigmaTextView.Align.CENTER);
 
 public ThumbnailCard(com.jello.music.model.ResultCard card) {
+        getStyleClass().add("sigma-thumbnail-button"); // 原版 CSS class，拖窗排除表要用（DragGate）
         setPrefSize(W, H);
         setMinSize(W, H);
         setMaxSize(W, H);

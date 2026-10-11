@@ -4,7 +4,16 @@ import com.jello.music.ui.CanvasStrip;
 import com.jello.music.ui.KeybindKeyboard;
 import com.jello.music.ui.LoginView;
 import com.jello.music.ui.OnboardingView;
+import com.jello.music.player.PlayQueue;
+import com.jello.music.ui.DragGate;
 import com.jello.music.ui.PlayerPanel;
+import com.jello.music.ui.RepeatButton;
+import com.jello.music.ui.SearchBox;
+import com.jello.music.ui.SigmaScrollablePanel;
+import com.jello.music.ui.SpectrumToggleButton;
+import com.jello.music.ui.ThinProgressBar;
+import com.jello.music.ui.ThumbnailCard;
+import com.jello.music.ui.VerticalSlider;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.SigmaScrollablePanel;
@@ -13,6 +22,7 @@ import com.jello.music.ui.ThinProgressBar;
 import com.jello.music.ui.ThumbnailCard;
 import com.jello.music.ui.VerticalSlider;
 import com.jello.music.model.ResultCard;
+import com.jello.music.model.Song;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
 import com.jello.music.ui.RepeatButton;
@@ -34,6 +44,7 @@ import javafx.scene.layout.BackgroundFill;
 import javafx.scene.layout.Region;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
+import javafx.scene.shape.SVGPath;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -333,6 +344,9 @@ if (repeat != null) {
 
 writeSnapshot(root, pngPath);
         checkOnboardingFullScreen(pngPath.replace(".png", "-onboarding.png"));
+        checkPlaybackModes(pngPath.replace(".png", "-repeat.png"));
+        checkDragGate(root, player);
+        checkShuffleQueue();
         checkStripBlur();
     }
 
@@ -686,9 +700,338 @@ private static void checkLoginView() {
     }
 
 /**
- * 新手教程视图（对应 SigmaUI.vue 的 view === 'onboarding'）。
- *
- * <p>要点：底 rgba(1,1,1,0.25)、键盘底板 1100x402 圆角 14、键位层内缩 20、
+     * 播放模式四态。
+     *
+     * <p>四态的坑是「模式索引 ≠ 雪碧图帧号」（随机↔顺序对调，见
+     * {@code SigmaMusicPlayer.vue:219-226}），照抄索引当帧号的话随机和顺序会显示成
+     * 同一个图标。所以这里断言的是映射本身，并把四个状态排成一条截成 PNG
+     * （{@code jello-ui-probe-repeat.png}）——随机那个是内联 SVG，断言归断言，
+     * 还是得肉眼看看 JavaFX 的 SVGPath 到底画出什么来。
+     */
+    private static void checkPlaybackModes(String pngPath) {
+        // 原版 repeatType：0 随机 -> SVG；1 列表 -> 帧1；2 单曲 -> 帧2；3 顺序 -> 帧0
+        check("随机播放走内联 SVG（不是雪碧图）",
+                RepeatButton.spriteFrame(RepeatButton.MODE_SHUFFLE) == -1, null);
+        check("列表循环 -> 雪碧图第 1 格",
+                RepeatButton.spriteFrame(RepeatButton.MODE_ALL) == 1, null);
+        check("单曲循环 -> 雪碧图第 2 格",
+                RepeatButton.spriteFrame(RepeatButton.MODE_ONE) == 2, null);
+        check("顺序播放 -> 雪碧图第 0 格（与随机对调，别照抄索引）",
+                RepeatButton.spriteFrame(RepeatButton.MODE_SEQUENTIAL) == 0, null);
+
+        // 四个状态并排，铺在右栏底色上，看的就是用户实际看到的样子
+        Pane strip = new Pane();
+        strip.setBackground(new Background(new BackgroundFill(
+                Color.color(38 / 255.0, 38 / 255.0, 38 / 255.0, 0.80), null, null)));
+        strip.setPrefSize(4 * 27 + 8, 28);
+        RepeatButton[] buttons = new RepeatButton[RepeatButton.MODE_COUNT];
+        for (int i = 0; i < RepeatButton.MODE_COUNT; i++) {
+            RepeatButton b = new RepeatButton();
+            b.onClick(() -> {
+            });
+            b.setState(i);
+            b.setLayoutX(i * 27 + 4);
+            b.setLayoutY(4);
+            strip.getChildren().add(b);
+            buttons[i] = b;
+        }
+        new Scene(strip, strip.getPrefWidth(), strip.getPrefHeight());
+        strip.applyCss();
+        strip.layout();
+
+        // 顺序要紧：下面 3 段断言都依赖「按钮仍停在各自的模式上」，
+        // 点击循环会改状态，所以放到最后
+        check("只有随机态显示 SVG，其余显示雪碧图", showOnlyShuffleUsesSvg(buttons), null);
+
+        SVGPath svg = collect(strip, SVGPath.class).stream().findFirst().orElse(null);
+        check("随机图标 SVGPath 解析出字形",
+                svg != null && svg.getLayoutBounds().getWidth() > 10
+                        && svg.getLayoutBounds().getHeight() > 10,
+                svg == null ? "missing"
+                        : String.format("%.2fx%.2f", svg.getLayoutBounds().getWidth(),
+                        svg.getLayoutBounds().getHeight()));
+        if (svg != null) {
+            // background-size:contain 进 27x20 -> 高度先到边，缩放 20/24，成品 20x20 居中
+            Bounds lb = svg.getLayoutBounds();
+            // 字形在 24x24 viewBox 里必须正好居中（占 4..20），RepeatButton 靠这个前提定位
+            check("随机图标字形在 viewBox 里居中（占 16x16，中心 12,12）",
+                    Math.abs(lb.getMinX() + lb.getWidth() / 2 - 12) < 0.01
+                            && Math.abs(lb.getMinY() + lb.getHeight() / 2 - 12) < 0.01,
+                    String.format("%.2f,%.2f %.2fx%.2f", lb.getMinX(), lb.getMinY(),
+                            lb.getWidth(), lb.getHeight()));
+            // JavaFX 缩放绕 layoutBounds 中心：字形中心 = layoutX + 字形中心
+            double cx = svg.getLayoutX() + lb.getMinX() + lb.getWidth() / 2;
+            double cy = svg.getLayoutY() + lb.getMinY() + lb.getHeight() / 2;
+            check("随机图标水平居中（contain 进 27x20 -> 13.5）", Math.abs(cx - 13.5) < 0.01,
+                    String.format("centerX=%.2f", cx));
+            check("随机图标垂直居中（-> 10）", Math.abs(cy - 10) < 0.01,
+                    String.format("centerY=%.2f", cy));
+            check("随机图标按 contain 等比缩放（20/24）",
+                    Math.abs(svg.getScaleX() - 20.0 / 24.0) < 0.001,
+                    String.format("scale=%.4f", svg.getScaleX()));
+            System.out.println(String.format(
+                    "shuffle svg: layoutX=%.2f layoutY=%.2f scale=%.4f 字形中心=(%.2f,%.2f)",
+                    svg.getLayoutX(), svg.getLayoutY(), svg.getScaleX(), cx, cy));
+        }
+        System.out.println("repeat 4 states: 随机 / 列表循环 / 单曲循环 / 顺序");
+
+        try {
+            // 只 116x28 的小图，取样步长 7px 命中的颜色很少，阈值单独放宽
+            writeSnapshot(strip, pngPath, 4);
+            // 再来一张 8 倍放大的：116x28 原图肉眼看不出图标有没有对准中心
+            writeZoomed(pngPath, pngPath.replace(".png", "-zoom.png"), 8);
+            checkGlyphCentering(pngPath);
+        } catch (Exception e) {
+            check("四态图标截图", false, String.valueOf(e));
+        }
+
+        check("点击循环 列表 -> 单曲 -> 顺序 -> 随机 -> 列表",
+                clickCycle(buttons[RepeatButton.MODE_ALL],
+                        RepeatButton.MODE_ONE, RepeatButton.MODE_SEQUENTIAL,
+                        RepeatButton.MODE_SHUFFLE, RepeatButton.MODE_ALL),
+                "state=" + buttons[RepeatButton.MODE_ALL].state());
+        check("点击循环 随机 -> 列表", clickCycle(buttons[RepeatButton.MODE_SHUFFLE],
+                RepeatButton.MODE_ALL), "state=" + buttons[RepeatButton.MODE_SHUFFLE].state());
+    }
+
+    /** 把截图按整数倍最近邻放大，生成能肉眼看的大图。 */
+    private static void writeZoomed(String srcPng, String dstPng, int factor) throws Exception {
+        java.awt.image.BufferedImage img =
+                javax.imageio.ImageIO.read(new File(srcPng));
+        java.awt.image.BufferedImage big = new java.awt.image.BufferedImage(
+                img.getWidth() * factor, img.getHeight() * factor,
+                java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = big.createGraphics();
+        // 不设插值提示就是最近邻，正好和原版 image-rendering: pixelated 一致
+        g.drawImage(img, 0, 0, big.getWidth(), big.getHeight(), null);
+        g.dispose();
+        javax.imageio.ImageIO.write(big, "png", new File(dstPng));
+        System.out.println("zoomed -> " + dstPng + " (x" + factor + ")");
+    }
+
+    /**
+     * 量一量四个图标在各自27x20 格子里实际占的像素范围。
+     *
+     * <p>断言「图标居中」光靠 {@code layoutBounds} 会被缩放/裁剪骗过去，
+     * 这里直接数像素：底色是 rgb(38,38,38)，比它亮的像素就是图标本身。
+     */
+    private static void checkGlyphCentering(String pngPath) throws Exception {
+        java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(new File(pngPath));
+        int cell = 27;
+        // 背景取左上角那一点（按钮从 x=4 开始，(0,0) 一定是底色）
+        // 不能写死阈值：快照读回来是预乘 alpha，底色会偏亮
+        int bg = img.getRGB(0, 0);
+        int bgR = bg >> 16 & 0xFF;
+        int bgG = bg >> 8 & 0xFF;
+        int bgB = bg & 0xFF;
+        StringBuilder report = new StringBuilder();
+        boolean allCentered = true;
+        for (int i = 0; i < RepeatButton.MODE_COUNT; i++) {
+            int x0 = i * cell + 4;
+            int minX = Integer.MAX_VALUE;
+            int maxX = -1;
+            int minY = Integer.MAX_VALUE;
+            int maxY = -1;
+            for (int y = 0; y < 20; y++) {
+                for (int x = 0; x < cell; x++) {
+                    int rgb = img.getRGB(x0 + x, 4 + y);
+                    int dr = (rgb >> 16 & 0xFF) - bgR;
+                    int dg = (rgb >> 8 & 0xFF) - bgG;
+                    int db = (rgb & 0xFF) - bgB;
+                    if (Math.abs(dr) + Math.abs(dg) + Math.abs(db) > 24) {
+                        minX = Math.min(minX, x);
+                        maxX = Math.max(maxX, x);
+                        minY = Math.min(minY, y);
+                        maxY = Math.max(maxY, y);
+                    }
+                }
+            }
+            if (maxX < 0) {
+                report.append(String.format("[%d]无像素 ", i));
+                allCentered = false;
+                continue;
+            }
+            double cx = (minX + maxX) / 2.0;
+            double cy = (minY + maxY) / 2.0;
+            report.append(String.format("[%d] %dx%d 中心(%.1f,%.1f) ",
+                    i, maxX - minX + 1, maxY - minY + 1, cx, cy));
+            // 1px 量化，容差 1
+            if (Math.abs(cx - (cell - 1) / 2.0) > 1.0 || Math.abs(cy - 9.5) > 1.0) {
+                allCentered = false;
+            }
+        }
+        check("四个图标都在各自 27x20 格子里居中（数像素，不是 layoutBounds）",
+                allCentered, report + String.format("bg=%d,%d,%d", bgR, bgG, bgB));
+    }
+
+    /** 真点按钮若干次，看状态是不是按 expected 一路走下去。 */
+    private static boolean clickCycle(RepeatButton b, int... expected) {
+        @SuppressWarnings("unchecked")
+        javafx.event.EventHandler<javafx.scene.input.MouseEvent> h =
+                (javafx.event.EventHandler<javafx.scene.input.MouseEvent>) (Object) b.getOnMouseClicked();
+        if (h == null) {
+            return false;
+        }
+        for (int want : expected) {
+            h.handle(new javafx.scene.input.MouseEvent(
+                    javafx.scene.input.MouseEvent.MOUSE_CLICKED,
+                    0, 0, 0, 0, javafx.scene.input.MouseButton.PRIMARY, 1,
+                    false, false, false, false, true, false, false, true,
+                    false, false, null));
+            if (b.state() != want) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean showOnlyShuffleUsesSvg(RepeatButton[] buttons) {
+        for (int i = 0; i < buttons.length; i++) {
+            List<SVGPath> svgs = collect(buttons[i], SVGPath.class);
+            List<javafx.scene.image.ImageView> imgs =
+                    collect(buttons[i], javafx.scene.image.ImageView.class);
+            boolean svgVisible = !svgs.isEmpty() && svgs.get(0).isVisible();
+            boolean imgVisible = !imgs.isEmpty() && imgs.get(0).isVisible();
+            if (i == RepeatButton.MODE_SHUFFLE) {
+                if (!svgVisible || imgVisible) {
+                    return false;
+                }
+            } else if (svgVisible || !imgVisible) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 拖窗排除表：对应原版 {@code SigmaMusicPlayer.vue:340} 的 NO_DRAG_SELECTOR。
+     *
+     * <p>这条对应一个真实的坑——之前拖拽直接挂在整个根 Pane 上，
+     * 在按钮/搜索框上按下鼠标就变成拖窗，点歌点不动。
+     */
+    private static void checkDragGate(Node root, PlayerPanel player) {
+        SearchBox box = collect(root, SearchBox.class).stream().findFirst().orElse(null);
+        List<SigmaScrollablePanel> scrollables = collect(root, SigmaScrollablePanel.class);
+        List<javafx.scene.image.ImageView> smallImages =
+                collect(root, javafx.scene.image.ImageView.class).stream()
+                        .filter(v -> v.getStyleClass().contains("sigma-small-image")).toList();
+        RepeatButton repeat = collect(root, RepeatButton.class).stream().findFirst().orElse(null);
+        SpectrumToggleButton spectrum =
+                collect(root, SpectrumToggleButton.class).stream().findFirst().orElse(null);
+        ThinProgressBar progress =
+                collect(root, ThinProgressBar.class).stream().findFirst().orElse(null);
+        VerticalSlider volume =
+                collect(root, VerticalSlider.class).stream().findFirst().orElse(null);
+
+        check("拖拽排除：搜索框", box != null && DragGate.blocked(box), null);
+        check("拖拽排除：滚动面板（歌单项/结果项都在里面）",
+                !scrollables.isEmpty() && scrollables.stream().allMatch(DragGate::blocked),
+                "n=" + scrollables.size());
+        check("拖拽排除：三个播放钮（.sigma-small-image）",
+                smallImages.size() == 3 && smallImages.stream().allMatch(DragGate::blocked),
+                "n=" + smallImages.size());
+        check("拖拽排除：循环按钮", repeat != null && DragGate.blocked(repeat), null);
+        check("拖拽排除：频谱按钮",
+                spectrum != null && DragGate.blocked(spectrum), null);
+        check("拖拽排除：进度条", progress != null && DragGate.blocked(progress), null);
+        check("拖拽排除：音量条", volume != null && DragGate.blocked(volume), null);
+        // 搜索结果这时已经被清空了，自己造一张卡来测
+        ThumbnailCard card = new ThumbnailCard(
+                ResultCard.song("h1", "歌名", "歌手", "http://x/y.jpg"));
+        check("拖拽排除：缩略卡", DragGate.blocked(card), null);
+        // 卡片内部（封面 ImageView）也要被父链带命中
+        List<javafx.scene.Node> inside = collect(card, javafx.scene.Node.class);
+        check("拖拽排除：卡内子节点经父链命中",
+                !inside.isEmpty() && inside.stream().allMatch(DragGate::blocked),
+                "n=" + inside.size());
+        // 反向：面板空白处必须还能起拖，不然窗口直接拖不动了
+        check("面板空白处仍可拖窗（别把排除表写太宽）",
+                !DragGate.blocked(player) && !DragGate.blocked(root), null);
+    }
+
+    /**
+     * 随机播放的队列行为，1:1 对照原版 {@code PlayerEngine.js:962-1022}。
+     */
+    private static void checkShuffleQueue() {
+        List<Song> songs = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            songs.add(new Song("h" + i, "t" + i, "a" + i, "al" + i, null, 100 * 1000));
+        }
+        PlayQueue q = new PlayQueue();
+        q.replaceAll(songs);
+        check("默认模式是列表循环（原版 PlaybackMode.js:11 默认 1）",
+                q.repeat() == PlayQueue.Repeat.ALL, String.valueOf(q.repeat()));
+
+        q.setRepeat(PlayQueue.Repeat.SHUFFLE);
+        check("切到随机播放", q.repeat() == PlayQueue.Repeat.SHUFFLE, null);
+
+        boolean inRange = true;
+        boolean noImmediateRepeat = true;
+        int prev = q.currentIndex();
+        for (int i = 0; i < 50; i++) {
+            Song s = q.next();
+            if (s == null || q.currentIndex() < 0 || q.currentIndex() >= songs.size()) {
+                inRange = false;
+                break;
+            }
+            if (q.currentIndex() == prev) {
+                noImmediateRepeat = false;
+            }
+            prev = q.currentIndex();
+        }
+        check("随机播放 50 次都落在表内", inRange, null);
+        check("随机播放不会连着播同一首", noImmediateRepeat, null);
+
+        int a = q.currentIndex();
+        q.previous();
+        int b = q.currentIndex();
+        q.previous();
+        int c = q.currentIndex();
+        check("随机播放的上一首沿历史栈回退（连续两次不原地踏步）",
+                b != a && c != b,
+                String.format("a=%d b=%d c=%d", a, b, c));
+        check("上一首回退后仍在表内", c >= 0 && c < songs.size(), "c=" + c);
+
+        // 切模式清空历史（原版 setPlaybackMode 清 playedSongsStack）
+        q.setRepeat(PlayQueue.Repeat.ALL);
+        q.setRepeat(PlayQueue.Repeat.SHUFFLE);
+        boolean alive = true;
+        for (int i = 0; i < 20; i++) {
+            if (q.next() == null) {
+                alive = false;
+                break;
+            }
+        }
+        check("切换模式后随机历史被清空、队列照常工作", alive, null);
+
+        // 随机模式下整表替换不应固定从第 0 首开始
+        boolean sawNonZeroStart = false;
+        for (int round = 0; round < 12; round++) {
+            PlayQueue r = new PlayQueue();
+            r.setRepeat(PlayQueue.Repeat.SHUFFLE);
+            r.replaceAll(songs);
+            if (r.currentIndex() != 0) {
+                sawNonZeroStart = true;
+                break;
+            }
+        }
+        check("随机模式下开局随机起歌（不固定第一首）", sawNonZeroStart, null);
+
+        // 顺序播放仍然到尾停下，不能被随机改动带偏
+        PlayQueue seq = new PlayQueue();
+        seq.replaceAll(songs.subList(0, 3));
+        seq.setRepeat(PlayQueue.Repeat.NONE);
+        seq.next();
+        seq.next();
+        seq.next();
+        check("顺序播放到最后一首停下（不回到开头）",
+                seq.currentIndex() == 2, "i=" + seq.currentIndex());
+    }
+
+    /**
+     * 新手教程视图（对应 SigmaUI.vue 的 view === 'onboarding'）。
+     *
+     * <p>要点：底 rgba(1,1,1,0.25)、键盘底板 1100x402 圆角 14、键位层内缩 20、
  * 键帽 63 高行距 74、标题 JelloMedium 40、步数 1 / 1、完成按钮 #f0f0f0 圆角 8、
  * RSHIFT（GLFW 344）带红框强调。
  */
@@ -1047,7 +1390,18 @@ private static void checkProgressBarLayers() {
      * 直接用 PixelReader 搬到 BufferedImage，只多依赖 java.desktop。
      */
     private static void writeSnapshot(Node root, String pngPath) throws Exception {
-        WritableImage snap = root.snapshot(null, null);
+        writeSnapshot(root, pngPath, 8);
+    }
+
+private static void writeSnapshot(Node root, String pngPath, int minColors) throws Exception {
+        // 必须给 snapshot 传一个不透明 fill：默认是透明，而 Panel 底板本身也是半透明
+        // （rgba(0,0,0,0.95) / rgba(38,38,38,0.8)），截出来全带 alpha。
+        // WritableImage 的像素是预乘的，直接 getArgb 读回来再 setRGB 写进
+        // BufferedImage（非预乘）会整体偏亮——之前主面板快照的背景就被算成了
+        // 103,94,98这种粉色，拿它核对图标颜色全是错的。
+        javafx.scene.SnapshotParameters params = new javafx.scene.SnapshotParameters();
+        params.setFill(javafx.scene.paint.Color.web("#202124"));
+        WritableImage snap = root.snapshot(params, null);
         int w = (int) snap.getWidth();
         int h = (int) snap.getHeight();
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
@@ -1070,7 +1424,7 @@ private static void checkProgressBarLayers() {
                 colors.add(img.getRGB(x, y));
             }
         }
-        check("离屏截图有实际像素（非纯色）", colors.size() > 8, "distinct=" + colors.size());
+        check("离屏截图有实际像素（非纯色）", colors.size() > minColors, "distinct=" + colors.size());
         System.out.println("snapshot -> " + f.getAbsolutePath() + " (" + w + "x" + h + ")");
     }
 

@@ -33,6 +33,7 @@ public final class SigmaScrollablePanel extends Pane {
     private double contentHeight;
 
     public SigmaScrollablePanel(double w, double h) {
+        getStyleClass().add("sigma-scrollable-panel"); // 原版 CSS class，拖窗排除表要用（DragGate）
         this.viewW = w;
         this.viewH = h;
         setPrefSize(w, h);
