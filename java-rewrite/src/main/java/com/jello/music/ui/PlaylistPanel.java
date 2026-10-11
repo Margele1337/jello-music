@@ -1,8 +1,8 @@
 package com.jello.music.ui;
 
-import javafx.scene.control.Label;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,8 +10,17 @@ import java.util.function.IntConsumer;
 
 /**
  * 左栏歌单面板 —— 1:1 复刻原版 {@code SigmaPlaylistPanel.vue}：
- * 每项居中、JelloLight 13px、rgba(254,254,254,0.55)，
- * hover / 选中变 #fefefe，滚动条 3px、rgba(254,254,254,0.18)。
+ * 每项居中、JelloLight 13px、{@code rgba(254,254,254,0.55)}，
+ * hover / 选中变 {@code #fefefe}，滚动条 3px、{@code rgba(254,254,254,0.18)}。
+ *
+ * <p><b>行高是照原版算出来的</b>，不是拍脑袋：项的 CSS 是
+ * {@code padding: 7px 10px; margin-bottom: 2px}，里面的 SigmaText 画布高度
+ * 取图集 lineHeight —— {@code light-13} 是 17。所以每项高 {@code 7 + 17 + 7 = 31}，
+ * 步进 {@code 31 + 2 = 33}。之前按 30/32 排，每一行都比原版低 1px，
+ * 到第五行就差出 4px 了。
+ *
+ * <p>文字超宽时按原版 {@code truncate} 截断并补 '…'
+ * （CSS 的 {@code text-overflow: ellipsis}）。
  *
  * <p><b>为什么不用 ScrollPane</b>：JavaFX 模期样式给 {@code .scroll-pane > .viewport}
  * 设了白色背景，只写 {@code -fx-background-color: transparent} 管不到它，
@@ -22,9 +31,27 @@ import java.util.function.IntConsumer;
  */
 public final class PlaylistPanel extends Pane {
 
+    /** 原版图集 light-13 的 lineHeight。 */
+    private static final double LINE_HEIGHT = 17;
+    /** .sigma-playlist-item 的上下 padding。 */
+    private static final double ITEM_PAD_Y = 7;
+    /** 面板自身 padding-top（4px）与左右（8px）。 */
+    private static final double PANEL_PAD_TOP = 4;
+    private static final double PANEL_PAD_X = 8;
+    /** margin-bottom: 2px。 */
+    private static final double ITEM_GAP = 2;
+
+    private static final double ITEM_H = ITEM_PAD_Y * 2 + LINE_HEIGHT;
+    private static final double ITEM_STEP = ITEM_H + ITEM_GAP;
+
+    /** 原版 alpha：非选中且非 hover 时 0.55，其余 1。 */
+    private static final Color DIM = Color.color(254 / 255.0, 254 / 255.0, 254 / 255.0, 0.55);
+    private static final Color BRIGHT = Color.web("#fefefe");
+
     private final Pane viewport = new Pane();
     private final List<String> backing = new ArrayList<>();
-    private final List<Label> rows = new ArrayList<>();
+    private final List<Pane> rows = new ArrayList<>();
+    private final List<SigmaTextView> labels = new ArrayList<>();
     private final Pane scrollTrack = new Pane();
     private final Region scrollThumb = new Region();
     private final Region topMask = new Region();
@@ -32,7 +59,7 @@ public final class PlaylistPanel extends Pane {
 
     private IntConsumer onSelect;
     private int selected = -1;
-    private double scroll = 0;
+    private double scroll;
 
     public PlaylistPanel(double w, double h, IntConsumer onSelect) {
         this.onSelect = onSelect;
@@ -83,48 +110,48 @@ public final class PlaylistPanel extends Pane {
     public void setItems(List<String> titles) {
         backing.clear();
         rows.clear();
+        labels.clear();
         viewport.getChildren().clear();
-        // 原版 .sigma-playlist-panel 有 padding:4px 8px 150px，
-        // 条目盒宽 = 250 - 8*2 = 234（SigmaText fluid 取的就是这个宽度）
-        double textW = getPrefWidth() - 16;
-        javafx.scene.text.Font font = Assets.light(13);
-        double y = 4;
+        double textW = getPrefWidth() - PANEL_PAD_X * 2;
+        double y = PANEL_PAD_TOP;
         for (String t : titles) {
-            // 原版 SigmaText 的 truncate 属性：超宽时按 truncateSigmaText 截断并补 '…'
-            String shown = SigmaText.truncate(t, font, textW);
-            Label l = new Label(shown);
-            l.setFont(font);
-            l.setTextFill(Theme.TEXT_DIM);
-            l.setMaxWidth(Double.MAX_VALUE);
-            l.setAlignment(javafx.geometry.Pos.CENTER);
-            l.setLayoutX(8);
-            l.setLayoutY(y);
-            l.setPrefWidth(textW);
-            l.setPrefHeight(30);   // 7px padding + 13px 文字 + 余量
-            // 原版 .sigma-playlist-item 是 white-space:nowrap + overflow:hidden
-            // + text-overflow:ellipsis。JavaFX 的 Label 不换行时文字会直接溢出
-            // 面板，所以关掉 wrapText；超宽部分由上面的 truncate 变成省略号，
-            // 剩下的 clip 只是兜底（Label 仍可能因字距差溢出不到 1px）。
-            l.setWrapText(false);
-            l.setClip(new javafx.scene.shape.Rectangle(textW, 30));
-            l.setPickOnBounds(true);
+            // 一项 = 一个 234x31 的点击区（对应原版 <button> 的 padding 盒），
+            // 文字画在它内侧 7px 处
+            Pane item = new Pane();
+            item.setLayoutX(PANEL_PAD_X);
+            item.setLayoutY(y);
+            item.setPrefSize(textW, ITEM_H);
+            item.setMinSize(textW, ITEM_H);
+            item.setMaxSize(textW, ITEM_H);
+            item.setBackground(javafx.scene.layout.Background.fill(
+                    javafx.scene.paint.Color.TRANSPARENT));
+
+            SigmaTextView label = new SigmaTextView("light", 13, textW, LINE_HEIGHT,
+                    SigmaTextView.Align.CENTER);
+            // 原版 truncate：超宽按图集 advance 截到放得下为止再补 '…'
+            label.setText(label.truncate(t, textW));
+            label.setLayoutX(0);
+            label.setLayoutY(ITEM_PAD_Y);
+            label.setColor(DIM);
+            item.getChildren().add(label);
 
             final int idx = backing.size();
             backing.add(t);
-            rows.add(l);
-            l.setOnMouseClicked(e -> {
+            rows.add(item);
+            labels.add(label);
+            item.setOnMouseClicked(e -> {
                 select(idx);
                 if (onSelect != null) {
                     onSelect.accept(idx);
                 }
             });
-            l.setOnMouseEntered(e -> l.setTextFill(Theme.TEXT));
-            l.setOnMouseExited(e -> l.setTextFill(
-                    idx == selected ? Theme.TEXT : Theme.TEXT_DIM));
-            viewport.getChildren().add(l);
-            y += 32;              // 30 + margin-bottom 2，与原版一致
+            item.setOnMouseEntered(e -> label.setColor(BRIGHT));
+            item.setOnMouseExited(e ->
+                    label.setColor(idx == selected ? BRIGHT : DIM));
+            viewport.getChildren().add(item);
+            y += ITEM_STEP;
         }
-        viewport.setPrefHeight(Math.max(getPrefHeight(), y + 4));
+        viewport.setPrefHeight(Math.max(getPrefHeight(), y - ITEM_GAP));
         scroll = 0;
         viewport.setLayoutY(-scroll);
         layoutBottomMask();
@@ -133,8 +160,15 @@ public final class PlaylistPanel extends Pane {
 
     private void select(int idx) {
         selected = idx;
-        for (int i = 0; i < rows.size(); i++) {
-            rows.get(i).setTextFill(i == idx ? Theme.TEXT : Theme.TEXT_DIM);
+        for (int i = 0; i < labels.size(); i++) {
+            labels.get(i).setColor(i == idx ? BRIGHT : DIM);
+        }
+    }
+
+    /** 选中项的高亮色要跟着 hover 走，原版是「选中 || hover」。 */
+    void setHover(int idx, boolean hover) {
+        if (idx >= 0 && idx < labels.size()) {
+            labels.get(idx).setColor(hover || idx == selected ? BRIGHT : DIM);
         }
     }
 

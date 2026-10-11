@@ -5,12 +5,11 @@ import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.SigmaScrollablePanel;
-import com.jello.music.ui.SigmaText;
+import com.jello.music.ui.SigmaTextView;
 import com.jello.music.ui.ThumbnailCard;
-import com.jello.music.model.Song;
+import com.jello.music.model.ResultCard;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
-import com.jello.music.ui.MarqueeText;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.Theme;
 import javafx.application.Platform;
@@ -115,12 +114,10 @@ public final class UiProbe {
         root.applyCss();
         root.layout();
 
-        List<Label> labels = collect(root, Label.class);
-
-        // 歌名/歌手现在是 MarqueeText 视口（clip 在容器上，内层 Label 平移）
-        List<MarqueeText> marquees = collect(root, MarqueeText.class);
-        MarqueeText titleBox = marquees.stream().filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
-        MarqueeText artistBox = marquees.stream().filter(m -> m.phaseMs() == -1000).findFirst().orElse(null);
+// 歌名/歌手是 SigmaTextView（图集画布视口）
+        List<SigmaTextView> texts = collect(root, SigmaTextView.class);
+        SigmaTextView titleBox = texts.stream().filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
+        SigmaTextView artistBox = texts.stream().filter(m -> m.phaseMs() == -1000).findFirst().orElse(null);
         check("歌名跑马灯存在（phase=0）", titleBox != null, null);
         check("歌手跑马灯存在（phase=-1000）", artistBox != null, null);
         if (titleBox != null) {
@@ -131,24 +128,52 @@ public final class UiProbe {
                             titleBox.getBoundsInParent().getWidth(),
                             titleBox.getBoundsInParent().getHeight()));
             check("歌名视口有 clip（对齐 overflow:hidden）", titleBox.getClip() != null, null);
-            check("歌名文字已写入", firstWithText(labels, SONG) != null, null);
+            check("歌名文字已写入", SONG.equals(titleBox.text()), titleBox.text());
+            // 盒高 16 而 light-14 的 lineHeight 是 18 -> 文字上沿 y=-1，被 clip 切掉 1px
+            check("歌名盒高 == 原版 box-height:16", titleBox.getPrefHeight() == 16,
+                    "h=" + titleBox.getPrefHeight());
+            check("歌名用 light-14 图集", titleBox.atlas().size() == 14
+                    && titleBox.atlas().lineHeight() == 18, null);
         }
         if (artistBox != null) {
             check("歌手坐标 == 原版",
                     artistBox.getLayoutX() == Theme.TITLE_X
                             && artistBox.getLayoutY() == Theme.SUBTITLE_Y,
                     String.format("x=%.0f y=%.0f", artistBox.getLayoutX(), artistBox.getLayoutY()));
-            check("歌手文字已写入", firstWithText(labels, ARTIST) != null, null);
+            check("歌手文字已写入", ARTIST.equals(artistBox.text()), artistBox.text());
         }
 
-        long times = labels.stream().filter(l -> l.getText().matches(TIME_RE)).count();
-        check("左右两个时间 Label 都在", times == 2, "found=" + times);
+        // Logo：light-40 盒高 44 / light-20 盒高 22
+        SigmaTextView logo = texts.stream().filter(t -> "Jello".equals(t.text())).findFirst().orElse(null);
+        SigmaTextView logoSub = texts.stream().filter(t -> "music".equals(t.text())).findFirst().orElse(null);
+        check("Logo Jello 用 light-40 / 盒高 44 / @ (55,14)",
+                logo != null && logo.atlas().size() == 40 && logo.getPrefHeight() == 44
+                        && logo.getLayoutX() == Theme.LOGO_X && logo.getLayoutY() == Theme.LOGO_Y,
+                logo == null ? "missing" : String.format("size=%d h=%.0f x=%.0f y=%.0f",
+                        logo.atlas().size(), logo.getPrefHeight(),
+                        logo.getLayoutX(), logo.getLayoutY()));
+        check("Logo music 用 light-20 / 盒高 22 / @ (135,42)",
+                logoSub != null && logoSub.atlas().size() == 20 && logoSub.getPrefHeight() == 22
+                        && logoSub.getLayoutX() == Theme.LOGO_SUB_X
+                        && logoSub.getLayoutY() == Theme.LOGO_SUB_Y,
+                logoSub == null ? "missing" : String.format("size=%d h=%.0f",
+                        logoSub.atlas().size(), logoSub.getPrefHeight()));
 
-        Label timeLeft = labels.stream()
-                .filter(l -> l.getText().matches(TIME_RE) && l.getLayoutX() == Theme.TIME_L_X)
+        long times = texts.stream().filter(t -> t.text().matches(TIME_RE)).count();
+        check("左右两个时间文字都在", times == 2, "found=" + times);
+
+        SigmaTextView timeLeft = texts.stream()
+                .filter(t -> t.text().matches(TIME_RE) && t.getLayoutX() == Theme.TIME_L_X)
                 .findFirst().orElse(null);
-        check("左时间 Label 落在 x=" + Theme.TIME_L_X, timeLeft != null,
+        check("左时间文字落在 x=" + Theme.TIME_L_X, timeLeft != null,
                 timeLeft == null ? "missing" : at(timeLeft));
+        SigmaTextView timeRight = texts.stream()
+                .filter(t -> t.text().matches(TIME_RE) && t.getLayoutX() == Theme.TIME_R_X)
+                .findFirst().orElse(null);
+        check("右时间右对齐到 x=" + (Theme.TIME_R_X + Theme.TIME_R_W),
+                timeRight != null && timeRight.getLayoutX() == Theme.TIME_R_X
+                        && timeRight.getPrefWidth() == Theme.TIME_R_W,
+                timeRight == null ? "missing" : at(timeRight));
 
         // 回归护栏：频谱 Canvas 曾被塞在左栏 (15,452)，正好压住 114x114 封面
         ImageView artwork = collect(root, ImageView.class).stream()
@@ -193,16 +218,15 @@ public final class UiProbe {
                     String.format("0->%d 2->%d now=%d", a, b, repeat.state()));
         }
 
-        // 无歌手时标题应下移到 .single 的 y=562
+// 无歌手时标题应下移到 .single 的 y=562
         player.setSong("只有标题", null, null);
         root.layout();
-        MarqueeText singleBox = collect(root, MarqueeText.class).stream()
+        SigmaTextView singleBox = collect(root, SigmaTextView.class).stream()
                 .filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
         check("无歌手时标题下移到 y=562",
                 singleBox != null && singleBox.getLayoutY() == Theme.TITLE_SINGLE_Y,
                 singleBox == null ? "missing" : String.format("y=%.0f", singleBox.getLayoutY()));
-        check("无歌手时歌手行隐藏", !subtitleVisible(labels, "只有标题"),
-                "subtitle should be hidden");
+        check("无歌手时歌手行隐藏", !subtitleVisible(texts), "subtitle should be hidden");
         // 复位，别影响后面截图
         player.setSong(SONG, ARTIST, null);
         root.layout();
@@ -218,13 +242,9 @@ public final class UiProbe {
                     "mouseTransparent=" + trigger.isMouseTransparent());
         }
 
-        // 原版文字是 nowrap + overflow:hidden，JavaFX 默认会换行
-        check("文字 Label 不换行（对齐 nowrap）", labels.stream().noneMatch(Label::isWrapText),
-                "wrapText offenders=" + labels.stream().filter(Label::isWrapText).count());
-        long uncut = labels.stream()
-                .filter(l -> l.getClip() == null && !insideMarquee(l))
-                .count();
-        check("文字均已裁切（Label 自带 clip 或在跑马灯视口内）", uncut == 0, "uncut=" + uncut);
+        // 原版每个文字元素都是 overflow:hidden，SigmaTextView 自己在盒子上挂 clip
+        long uncut = texts.stream().filter(t -> t.getClip() == null).count();
+        check("文字节点均带 clip（对齐 overflow:hidden）", uncut == 0, "uncut=" + uncut);
 
         // 搜索框 550x506 @ (250,0)
         SearchBox box = collect(root, SearchBox.class).stream().findFirst().orElse(null);
@@ -234,32 +254,39 @@ public final class UiProbe {
                 box == null ? "missing" : String.format("x=%.0f y=%.0f %.0fx%.0f",
                         box.getLayoutX(), box.getLayoutY(), box.getPrefWidth(), box.getPrefHeight()));
         if (box != null) {
-            box.showResults(List.of(
-                    new Song("H1", "歌名一", "歌手一", "专辑一", null, 1000),
-                    new Song("H2", "歌名二", "歌手二", "专辑二", null, 2000),
-                    new Song("H3", "歌名三", "歌手三", "专辑三", null, 3000),
-                    new Song("H4", "歌名四", "歌手四", "专辑四", null, 4000),
-                    new Song("H5", "歌名五", "歌手五", "专辑五", null, 5000),
-                    new Song("H6", "歌名六", "歌手六", "专辑六", null, 6000)));
+            // 前两张是歌单卡（青色底），后面四张歌曲卡：网格对两种卡一视同仁
+            List<ResultCard> sample = new ArrayList<>(List.of(
+                    ResultCard.playlist("pl-A", "歌单 华语热歌 · 120首", null),
+                    ResultCard.playlist("pl-B", "歌单 轻音乐 · 88首", null)));
+            for (int i = 1; i <= 6; i++) {
+                sample.add(ResultCard.song("H" + i, "歌名" + i, "歌手" + i, null));
+            }
+            box.showResults(sample);
             root.layout();
             List<ThumbnailCard> cards = collect(root, ThumbnailCard.class);
             // 原版滚动容器里没有「只显示前 N 张」的逻辑，
             // 之前铺满两行就 break，第 4 首之后的结果根本点不到。
-            check("结果卡片全部铺出（6 张，第 4 张起靠滚动看到）", cards.size() == 6,
+            check("结果卡片全部铺出（8 张，第 4 张起靠滚动看到）", cards.size() == 8,
                     "cards=" + cards.size());
             // 列 x=10/183/356，行 y=90 / 90+210
             double[] wantX = {10, 183, 356};
-            boolean colsOk = cards.size() == 6;
+            boolean colsOk = cards.size() == 8;
+            String firstBad = "ok";
             for (int i = 0; i < cards.size(); i++) {
                 ThumbnailCard c = cards.get(i);
-                colsOk &= c.getLayoutX() == wantX[i % 3]
-                        && c.getLayoutY() == (i < 3 ? 90 : 300)
+                boolean ok = c.getLayoutX() == wantX[i % 3]
+                        && c.getLayoutY() == 90 + (i / 3) * 210
                         && c.getPrefWidth() == 183 && c.getPrefHeight() == 220;
+                if (!ok) {
+                    colsOk = false;
+                    firstBad = String.format("i=%d x=%.1f y=%.1f %.1fx%.1f", i,
+                            c.getLayoutX(), c.getLayoutY(),
+                            c.getPrefWidth(), c.getPrefHeight());
+                    break;
+                }
             }
-            check("卡片坐标/尺寸 == 原版网格（两行）", colsOk, cards.isEmpty() ? "no cards"
-                    : String.format("first x=%.0f y=%.0f %.0fx%.0f",
-                            cards.get(0).getLayoutX(), cards.get(0).getLayoutY(),
-                            cards.get(0).getPrefWidth(), cards.get(0).getPrefHeight()));
+            check("卡片坐标/尺寸 == 原版网格（三行）", colsOk,
+                    cards.isEmpty() ? "no cards" : firstBad);
             checkSearchScroll(box);
             box.clear();
             check("clear() 后卡片清空", collect(root, ThumbnailCard.class).isEmpty(),
@@ -271,6 +298,8 @@ public final class UiProbe {
         checkPlaylistEllipsis(playlists);
         checkRightShift();
         checkInitialState();
+        checkPlaylistTabs();
+        checkCardKinds();
 
         checkMarqueeTiming();
 
@@ -278,21 +307,10 @@ public final class UiProbe {
         checkStripBlur();
     }
 
-    private static boolean insideMarquee(Label l) {
-        javafx.scene.Parent p = l.getParent();
-        while (p != null) {
-            if (p instanceof com.jello.music.ui.MarqueeText) {
-                return true;
-            }
-            p = p.getParent();
-        }
-        return false;
-    }
-
-    private static boolean subtitleVisible(List<Label> labels, String titleText) {
-        return labels.stream()
-                .filter(l -> l.getLayoutX() == Theme.TITLE_X && l.getLayoutY() == Theme.SUBTITLE_Y)
-                .anyMatch(Label::isVisible);
+    private static boolean subtitleVisible(List<SigmaTextView> texts) {
+        return texts.stream()
+                .filter(t -> t.getLayoutX() == Theme.TITLE_X && t.getLayoutY() == Theme.SUBTITLE_Y)
+                .anyMatch(Node::isVisible);
     }
 
     /**
@@ -407,27 +425,27 @@ private static void checkStripBlur() throws Exception {
                 String.format("x=%.0f y=%.0f %.0fx%.0f",
                         panel.getLayoutX(), panel.getLayoutY(),
                         panel.getPrefWidth(), panel.getPrefHeight()));
-        // 最后一张卡片底边 = 300 + 220 = 520，比视口 506 高 14px
-        check("内容高度 == 最后一张卡片底边 520", panel.contentHeight() == 520,
+        // 8 张 = 三行，最后一张底边 = 510 + 220 = 730，比视口 506 高 224px
+        check("内容高度 == 最后一张卡片底边 730", panel.contentHeight() == 730,
                 "content=" + panel.contentHeight());
-        check("最大滚动量 == 520-506 = 14", panel.maxScroll() == 14,
+        check("最大滚动量 == 730-506 = 224", panel.maxScroll() == 224,
                 "max=" + panel.maxScroll());
 
-        panel.onWheel(120);
-        check("滚轮下滚被钳制在底部（viewport y=-14）",
-                panel.scroll() == 14 && panel.viewport().getLayoutY() == -14,
+        panel.onWheel(400);
+        check("滚轮下滚被钳制在底部（viewport y=-224）",
+                panel.scroll() == 224 && panel.viewport().getLayoutY() == -224,
                 String.format("scroll=%.0f y=%.0f",
                         panel.scroll(), panel.viewport().getLayoutY()));
-        panel.onWheel(-120);
+        panel.onWheel(-400);
         check("反向滚动回到顶部", panel.scroll() == 0 && panel.viewport().getLayoutY() == 0,
                 String.format("scroll=%.0f y=%.0f",
                         panel.scroll(), panel.viewport().getLayoutY()));
 
         // 只有一行（底边 310 < 506）时根本不该有滚动量
         box.showResults(List.of(
-                new Song("H1", "歌名一", "歌手一", "专辑一", null, 1000),
-                new Song("H2", "歌名二", "歌手二", "专辑二", null, 2000),
-                new Song("H3", "歌名三", "歌手三", "专辑三", null, 3000)));
+                ResultCard.song("H1", "歌名一", "歌手一", null),
+                ResultCard.song("H2", "歌名二", "歌手二", null),
+                ResultCard.song("H3", "歌名三", "歌手三", null)));
         box.resultsPanel().onWheel(120);
         check("内容不满一屏时滚轮无效",
                 box.resultsPanel().maxScroll() == 0 && box.resultsPanel().scroll() == 0,
@@ -442,38 +460,40 @@ private static void checkStripBlur() throws Exception {
      * 的地方：超宽时按 {@code truncateSigmaText} 截断并补一个 '…'。
      * 之前 Java 侧只 clip，长名字直接被切掉半个字，尾部一个字都不剩。
      */
-    private static void checkPlaylistEllipsis(PlaylistPanel panel) {
+private static void checkPlaylistEllipsis(PlaylistPanel panel) {
         String longName = "这是一个特别长的歌单名字用来验证省略号截断是否按原版算法工作";
         panel.setItems(List.of("我喜欢", longName));
-        List<Label> rows = collect(panel, Label.class).stream()
-                .filter(l -> l.getLayoutX() == 8)
-                .toList();
+        List<SigmaTextView> rows = collect(panel, SigmaTextView.class);
         check("歌单两行都在", rows.size() == 2, "rows=" + rows.size());
 
-        double boxW = Theme.PLAYLIST_W - 16;   // 面板 padding 4px 8px
+        double boxW = Theme.PLAYLIST_W - 16;   // 面板 padding 左右各 8px
         if (rows.size() == 2) {
-            Label shortRow = rows.get(0);
-            Label longRow = rows.get(1);
-            check("放得下的文字原样保留", "我喜欢".equals(shortRow.getText()),
-                    "text=" + shortRow.getText());
+            SigmaTextView shortRow = rows.get(0);
+            SigmaTextView longRow = rows.get(1);
+            check("放得下的文字原样保留", "我喜欢".equals(shortRow.text()),
+                    "text=" + shortRow.text());
             check("超宽文字补省略号（对齐 text-overflow:ellipsis）",
-                    longRow.getText().endsWith("…") && !longRow.getText().equals(longName),
-                    "text=" + longRow.getText());
-            double w = SigmaText.measure(longRow.getText(), longRow.getFont());
+                    longRow.text().endsWith("…") && !longRow.text().equals(longName),
+                    "text=" + longRow.text());
+            double w = longRow.atlas().measure(longRow.text());
             check("截断后宽度落在盒宽内", w <= boxW + 0.5,
                     String.format("%.1f <= %.0f", w, boxW));
+            check("歌单用 light-13 图集（lineHeight 17）",
+                    longRow.atlas().size() == 13 && longRow.atlas().lineHeight() == 17
+                            && longRow.getPrefHeight() == 17,
+                    String.format("size=%d lineHeight=%d h=%.0f",
+                            longRow.atlas().size(), longRow.atlas().lineHeight(),
+                            longRow.getPrefHeight()));
+// 项盒 234x31 @ y=4 / y=37（padding 7px 内是文字，项高 31、margin-bottom 2 -> 步进 33）
+            check("歌单项 y=4 起、步进 33（对齐原版 padding/margin）",
+                    shortRow.getLayoutY() == 7 && longRow.getLayoutY() == 7
+                            && shortRow.getParent().getLayoutY() == 4
+                            && longRow.getParent().getLayoutY() == 37,
+                    String.format("labelY=%.0f itemY=%.0f/%.0f",
+                            shortRow.getLayoutY(),
+                            shortRow.getParent().getLayoutY(),
+                            longRow.getParent().getLayoutY()));
         }
-
-        // 纯函数断言：放得下不动、放不下截断、极端窄盒只剩省略号
-        javafx.scene.text.Font font = Assets.light(13);
-        check("truncate 放得下时原样返回",
-                SigmaText.truncate("我喜欢", font, boxW).equals("我喜欢"), null);
-        check("truncate 放不下时以 '…' 结尾",
-                SigmaText.truncate(longName, font, boxW).endsWith("…"), null);
-        String tiny = SigmaText.truncate(longName, font, 20);
-        check("极窄盒只留省略号且不超宽",
-                tiny.equals("…") && SigmaText.measure(tiny, font) <= 20,
-                "text=" + tiny);
     }
 
     /**
@@ -536,15 +556,16 @@ private static void checkStripBlur() throws Exception {
  */
 private static void checkInitialState() {
         PlayerPanel fresh = new PlayerPanel();
+        List<SigmaTextView> freshTexts = collect(fresh, SigmaTextView.class);
         check("初始态标题是 Jello Music",
-                firstWithText(collect(fresh, Label.class), "Jello Music") != null, null);
-        MarqueeText box = collect(fresh, MarqueeText.class).stream()
+                freshTexts.stream().anyMatch(t -> "Jello Music".equals(t.text())), null);
+        SigmaTextView box = freshTexts.stream()
                 .filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
         check("初始态单行标题落在 y=562",
                 box != null && box.getLayoutY() == Theme.TITLE_SINGLE_Y,
                 box == null ? "missing" : String.format("y=%.0f", box.getLayoutY()));
         check("初始态歌手行不渲染",
-                collect(fresh, MarqueeText.class).stream()
+                freshTexts.stream()
                         .filter(m -> m.phaseMs() == -1000)
                         .noneMatch(Node::isVisible), null);
 
@@ -557,33 +578,95 @@ private static void checkInitialState() {
     }
 
 /**
-     * 跑马灯时序断言。直接验 {@link MarqueeText#progress(long, long)} 这段纯函数，
+ * 左栏列表组装 —— 1:1 复刻原版 {@code SigmaPlaylistPanel.load()}。
+ *
+ * <p>要点：固定项「猜你喜欢 / 每日推荐」在最前；只留「我喜欢」与自己的歌单；
+ * 按 {@code sort} <b>升序</b>（不是按歌曲数倒序）；「我喜欢」永远排在自定义歌单之前。
+ */
+private static void checkPlaylistTabs() {
+        List<com.jello.music.api.Playlist> raw = List.of(
+                new com.jello.music.api.Playlist("g-默认", "默认收藏", 300, 9, "999"),
+                new com.jello.music.api.Playlist("g-我的B", "我的歌单B", 50, 3, "me"),
+                new com.jello.music.api.Playlist("g-我的A", "我的歌单A", 80, 1, "me"),
+                new com.jello.music.api.Playlist("g-他人", "别人的歌单", 999, 0, "other"),
+                new com.jello.music.api.Playlist("g-喜欢", "我喜欢", 42, 5, "other"));
+        List<com.jello.music.api.PlaylistTab> tabs =
+                com.jello.music.api.KuGouApiClient.playlistTabs(raw, "me");
+        List<String> names = tabs.stream().map(com.jello.music.api.PlaylistTab::name).toList();
+        check("左栏头部固定是 猜你喜欢 / 每日推荐",
+                tabs.get(0).isGuess() && tabs.get(1).isDaily(),
+                String.join(" | ", names));
+        check("别人的歌单被过滤掉", !names.contains("别人的歌单") && !names.contains("默认收藏"),
+                String.join(" | ", names));
+        check("我喜欢 排在自定义歌单之前",
+                names.indexOf("我喜欢") < names.indexOf("我的歌单A"), String.join(" | ", names));
+        check("自定义歌单按 sort 升序",
+                names.indexOf("我的歌单A") < names.indexOf("我的歌单B"), String.join(" | ", names));
+        check("总数 = 2 固定 + 3 歌单", tabs.size() == 5, "size=" + tabs.size());
+}
+
+/**
+ * 结果网格同时支持歌曲卡与歌单卡：点歌单卡下钻、点歌曲卡播放。
+ */
+private static void checkCardKinds() {
+        SearchBox box = new SearchBox();
+        List<String> opened = new ArrayList<>();
+        List<com.jello.music.model.Song> picked = new ArrayList<>();
+        box.onOpenPlaylist(opened::add);
+        box.onPick(picked::add);
+
+        ResultCard plCard = ResultCard.playlist("g-x", "歌单 测试 · 3首", null);
+        ResultCard snCard = ResultCard.song("h-x", "歌名", "歌手", null);
+        check("歌单卡 kind / 底色 #037c8c",
+                plCard.isPlaylist() && plCard.gid().equals("g-x") && !snCard.isPlaylist(), null);
+
+        box.showResults(List.of(plCard, snCard));
+        List<ThumbnailCard> cards = collect(box, ThumbnailCard.class);
+        check("歌单卡不画歌手行（对应 .single）", cards.size() == 2, "cards=" + cards.size());
+        cards.get(0).fireEvent(new javafx.scene.input.MouseEvent(
+                javafx.scene.input.MouseEvent.MOUSE_CLICKED, 0, 0, 0, 0,
+                javafx.scene.input.MouseButton.PRIMARY, 1,
+                false, false, false, false, true, false, false, false, false, false, null));
+        cards.get(1).fireEvent(new javafx.scene.input.MouseEvent(
+                javafx.scene.input.MouseEvent.MOUSE_CLICKED, 0, 0, 0, 0,
+                javafx.scene.input.MouseButton.PRIMARY, 1,
+                false, false, false, false, true, false, false, false, false, false, null));
+        check("点歌单卡走下钻、点歌曲卡走播放",
+                opened.size() == 1 && opened.get(0).equals("g-x")
+                        && picked.size() == 1 && picked.get(0).getHash().equals("h-x"),
+                "opened=" + opened + " picked=" + picked.size());
+        check("currentCards 保留整列供整列替换队列",
+                box.currentCards().size() == 2, "size=" + box.currentCards().size());
+    }
+
+/**
+ * 跑马灯时序断言。直接验 {@link SigmaTextView#progress(long, long)} 这段纯函数，
      * 不用真等 8.5 秒，也不受跑测时那一刻墙上时间的影响。
      */
     private static void checkMarqueeTiming() {
         // 8500ms 一轮：0..3400(40%) 静止，3400..8500 走完
         // 注意 t=3400 时 p 恰好等于 0.4，走的是「不小于则推进」分支，结果为 0，
         // 所以推进区要从 3401 算起。
-        boolean pause = MarqueeText.progress(0, 0) == 0
-                && MarqueeText.progress(2000, 0) == 0
-                && MarqueeText.progress(3400, 0) == 0;
-        boolean ramp = MarqueeText.progress(3401, 0) > 0
-                && MarqueeText.progress(6000, 0) > 0
-                && MarqueeText.progress(6000, 0) < 1.0
-                && MarqueeText.progress(8499, 0) < 1.0;
-        boolean wrap = MarqueeText.progress(8500, 0) == 0;
+        boolean pause = SigmaTextView.progress(0, 0) == 0
+                && SigmaTextView.progress(2000, 0) == 0
+                && SigmaTextView.progress(3400, 0) == 0;
+        boolean ramp = SigmaTextView.progress(3401, 0) > 0
+                && SigmaTextView.progress(6000, 0) > 0
+                && SigmaTextView.progress(6000, 0) < 1.0
+                && SigmaTextView.progress(8499, 0) < 1.0;
+        boolean wrap = SigmaTextView.progress(8500, 0) == 0;
         // phase=-1000 表示在周期里往前挪 1s，所以 t=300 时歌名还在静止段、
         // 歌手行却已经开跑——这正是原版给两行错开的效果。
-        boolean phased = MarqueeText.progress(300, -1000) > 0
-                && MarqueeText.progress(300, 0) == 0;
+        boolean phased = SigmaTextView.progress(300, -1000) > 0
+                && SigmaTextView.progress(300, 0) == 0;
         check("跑马灯前 40% 静止（8500ms 周期）", pause, null);
         check("跑马灯 40%~100% 推进并在整轮处归零", ramp && wrap, null);
         check("phase 错开生效（歌手行早 1s 起跑）", phased, null);
 
-        boolean ease = MarqueeText.easeInOutQuad(0) == 0
-                && MarqueeText.easeInOutQuad(1) == 1
-                && MarqueeText.easeInOutQuad(0.5) < 1
-                && MarqueeText.easeInOutQuad(0.25) < MarqueeText.easeInOutQuad(0.75);
+        boolean ease = SigmaTextView.easeInOutQuad(0) == 0
+                && SigmaTextView.easeInOutQuad(1) == 1
+                && SigmaTextView.easeInOutQuad(0.5) < 1
+                && SigmaTextView.easeInOutQuad(0.25) < SigmaTextView.easeInOutQuad(0.75);
         check("easeInOutQuad 端点与单调性正确", ease, null);
     }
 

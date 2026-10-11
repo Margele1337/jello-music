@@ -109,11 +109,105 @@ public final class KuGouApiClient {
         JsonNode info = r.path("data").get("info");
         if (info != null && info.isArray()) {
             for (JsonNode n : info) {
-                String id = n.path("global_collection_id").asText("");
+                // /playlist/track/all 要的是 global_collection_id，原版优先取 list_create_gid
+                String gid = n.path("list_create_gid").asText("");
+                if (gid.isEmpty()) {
+                    gid = n.path("global_collection_id").asText("");
+                }
                 String name = n.path("name").asText(n.path("listname").asText(""));
                 int count = n.path("count").asInt(0);
-                if (!id.isEmpty()) {
-                    out.add(new Playlist(id, name, count));
+                int sort = n.path("sort").asInt(0);
+                String owner = n.path("list_create_userid").asText("");
+                if (!gid.isEmpty()) {
+                    out.add(new Playlist(gid, name, count, sort, owner));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 组装左栏列表 —— 1:1 照抄原版 {@code SigmaPlaylistPanel.vue} 的 {@code load()}：
+     *
+     * <pre>
+     *   [猜你喜欢, 每日推荐]
+     *   + 我喜欢（若有）
+     *   + 自己的其余歌单
+     *   过滤：name === '我喜欢' || list_create_userid === 自己
+     *   排序：(a.sort ?? 0) - (b.sort ?? 0)     // 升序
+     * </pre>
+     *
+     * <p>之前 Java 侧是「按歌曲数倒序 + 过滤 count&gt;0」，跟原版既不同序也不同项。
+     */
+    public static java.util.List<PlaylistTab> playlistTabs(
+            java.util.List<Playlist> raw, String myUserid) {
+        java.util.List<PlaylistTab> out = new java.util.ArrayList<>();
+        out.add(new PlaylistTab(PlaylistTab.GUESS, "猜你喜欢", null));
+        out.add(new PlaylistTab(PlaylistTab.DAILY, "每日推荐", null));
+
+        java.util.List<Playlist> mine = new java.util.ArrayList<>(raw);
+        mine.removeIf(p -> !p.isMine(myUserid));
+        // sort 升序；null 视为 0
+        mine.sort(java.util.Comparator.comparingInt(Playlist::sort));
+
+        for (Playlist p : mine) {
+            if (p.isLike()) {
+                out.add(new PlaylistTab(PlaylistTab.PLAYLIST, "我喜欢", p.gid()));
+            }
+        }
+        for (Playlist p : mine) {
+            if (p.isLike() || p.gid() == null || p.gid().isEmpty()) {
+                continue;
+            }
+            out.add(new PlaylistTab(PlaylistTab.PLAYLIST, p.name(), p.gid()));
+        }
+        return out;
+    }
+
+    /**
+     * 猜你喜欢 —— {@code /top/card?card_id=1}。
+     *
+     * <p>原版额外加了 {@code &timestamp=} 绕过 KuGouMusicApi 的 2 分钟同 URL 缓存，
+     * 保证每次点都是新推荐，这里照抄。
+     */
+    public java.util.List<com.jello.music.model.Song> topCard(int cardId)
+            throws IOException, InterruptedException {
+        JsonNode r = get("/top/card?card_id=" + cardId + "&timestamp=" + System.currentTimeMillis());
+        if (!isSuccess(r)) {
+            throw new IOException("/top/card 失败: " + errorMessage(r));
+        }
+        java.util.List<com.jello.music.model.Song> out = new java.util.ArrayList<>();
+        JsonNode list = r.path("data").get("song_list");
+        if (list != null && list.isArray()) {
+            for (JsonNode n : list) {
+                var s = com.jello.music.model.Song.fromApi(n);
+                if (s != null) {
+                    out.add(s);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 每日推荐 —— {@code /everyday/recommend?pagesize=&page=}。
+     *
+     * <p>普通账号服务端默认只给 30 首，所以原版按 pagesize=60 翻两页拉，
+     * 还不够再用「猜你喜欢」按 hash 去重补足（见 {@code MainApp#loadDailyRecommend}）。
+     */
+    public java.util.List<com.jello.music.model.Song> everydayRecommend(int page, int pageSize)
+            throws IOException, InterruptedException {
+        JsonNode r = get("/everyday/recommend?pagesize=" + pageSize + "&page=" + page);
+        if (!isSuccess(r)) {
+            throw new IOException("/everyday/recommend 失败: " + errorMessage(r));
+        }
+        java.util.List<com.jello.music.model.Song> out = new java.util.ArrayList<>();
+        JsonNode list = r.path("data").get("song_list");
+        if (list != null && list.isArray()) {
+            for (JsonNode n : list) {
+                var s = com.jello.music.model.Song.fromApi(n);
+                if (s != null) {
+                    out.add(s);
                 }
             }
         }
@@ -146,36 +240,92 @@ public final class KuGouApiClient {
     }
 
     /**
-     * 搜索。对应原版 {@code SigmaSearchBox.vue} 的 {@code /search/complex?keywords=}。
-     * <p>该接口把结果按类型分组（歌曲/歌单/专辑…），这里只取歌曲部分，
-     * 路径为 {@code data.song_list}；个别情况下会退化到 {@code data.songs}。
+     * 搜索结果 —— 歌单卡 + 歌曲卡，原版是 {@code [...playlists, ...songs]} 的顺序。
      */
-    public java.util.List<com.jello.music.model.Song> search(String keyword)
+    public record SearchResult(java.util.List<com.jello.music.model.ResultCard> playlists,
+                               java.util.List<com.jello.music.model.Song> songs) {
+    }
+
+    /**
+     * 搜索。对应原版 {@code SigmaSearchBox.vue} 的 {@code /search/complex?keywords=}。
+     *
+     * <p>原版读的是 {@code data.lists} 里按 {@code type} 分组的数组：
+     * {@code type === 'collect'} 是歌单、{@code type === 'song'} 是歌曲，
+     * 歌单排在前面。之前 Java 侧只取 {@code data.song_list}，
+     * 既漏了歌单卡，分组路径也可能对不上。
+     */
+    public SearchResult search(String keyword)
             throws IOException, InterruptedException {
         String kw = keyword == null ? "" : keyword.trim();
         if (kw.isEmpty()) {
-            return java.util.List.of();
+            return new SearchResult(java.util.List.of(), java.util.List.of());
         }
         JsonNode r = get("/search/complex?keywords=" + encode(kw));
         if (!isSuccess(r)) {
             throw new IOException("/search/complex 失败: " + errorMessage(r));
         }
-        java.util.List<com.jello.music.model.Song> out = new java.util.ArrayList<>();
-        for (String key : new String[]{"song_list", "songs"}) {
-            JsonNode arr = r.path("data").get(key);
-            if (arr != null && arr.isArray()) {
-                for (JsonNode n : arr) {
-                    var s = com.jello.music.model.Song.fromApi(n);
-                    if (s != null) {
-                        out.add(s);
-                    }
+        java.util.List<com.jello.music.model.ResultCard> playlists = new java.util.ArrayList<>();
+        java.util.List<com.jello.music.model.Song> songs = new java.util.ArrayList<>();
+
+        JsonNode lists = r.path("data").get("lists");
+        if (lists != null && lists.isArray()) {
+            for (JsonNode section : lists) {
+                String type = section.path("type").asText("");
+                JsonNode items = section.path("lists");
+                if (items == null || !items.isArray()) {
+                    continue;
                 }
-                if (!out.isEmpty()) {
-                    break;
+                if ("collect".equals(type)) {
+                    for (JsonNode n : items) {
+                        // 搜索结果里 gid 才是 global_collection_id
+                        String gid = n.path("gid").asText("");
+                        if (gid.isEmpty()) {
+                            gid = n.path("global_collection_id").asText("");
+                        }
+                        if (gid.isEmpty()) {
+                            gid = n.path("specialid").asText("");
+                        }
+                        String special = n.path("specialname").asText(n.path("name").asText(""));
+                        int count = n.path("song_count").asInt(0);
+                        String cover = n.path("img").asText("").replace("/150/", "/480/");
+                        playlists.add(com.jello.music.model.ResultCard.playlist(gid,
+                                "歌单 " + stripBrackets(special) + " · " + count + "首", cover));
+                    }
+                } else if ("song".equals(type)) {
+                    for (JsonNode n : items) {
+                        String hash = n.path("HQFileHash").asText("");
+                        if (hash.isEmpty()) {
+                            hash = n.path("SQFileHash").asText("");
+                        }
+                        if (hash.isEmpty()) {
+                            hash = n.path("FileHash").asText("");
+                        }
+                        if (hash.isEmpty()) {
+                            continue;
+                        }
+                        songs.add(new com.jello.music.model.Song(hash,
+                                stripBrackets(firstNonEmpty(
+                                        n.path("OriSongName").asText(""),
+                                        n.path("SongName").asText(""))),
+                                stripBrackets(n.path("SingerName").asText("")),
+                                "",
+                                n.path("Image").asText("").replace("{size}", "480"),
+                                n.path("Duration").asInt(0)));
+                    }
                 }
             }
         }
-        return out;
+        return new SearchResult(playlists, songs);
+    }
+
+    /** 原版 {@code stripBrackets}：去掉括号及其内容。 */
+    public static String stripBrackets(String value) {
+        return value == null ? "" : value.replaceAll("\\([^)]*\\)", "")
+                .replaceAll("\\[[^]]*]", "").trim();
+    }
+
+    private static String firstNonEmpty(String a, String b) {
+        return a != null && !a.isEmpty() ? a : b;
     }
 
     public static String errorMessage(JsonNode node) {

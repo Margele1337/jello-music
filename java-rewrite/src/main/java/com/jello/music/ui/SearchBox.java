@@ -1,11 +1,13 @@
 package com.jello.music.ui;
 
+import com.jello.music.model.ResultCard;
 import com.jello.music.model.Song;
 import javafx.geometry.Pos;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Region;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -38,16 +40,25 @@ public final class SearchBox extends Pane {
     private static final double ROW_STEP = 210;
 
     /** 输入文字/占位符的三档透明度，对齐原版 SigmaTextField 的 alpha 公式。 */
-    private static final String FIELD_ALPHA_UNFOCUSED = "rgba(254,254,254,0.2)";
-    private static final String FIELD_ALPHA_FOCUSED_EMPTY = "rgba(254,254,254,0.45)";
-    private static final String FIELD_ALPHA_FOCUSED_TEXT = "rgba(254,254,254,0.9)";
+    private static final double ALPHA_UNFOCUSED = 0.2;
+    private static final double ALPHA_FOCUSED_EMPTY = 0.45;
+    private static final double ALPHA_FOCUSED_TEXT = 0.9;
 
     private final SigmaScrollablePanel results = new SigmaScrollablePanel(W, H);
     private final TextField field = new TextField();
+    /**
+     * 原版的输入框是「透明 input 只负责输入/光标/输入法，文字由 canvas 画」
+     * （见 SigmaTextField.vue 的注释：自定义点阵字体）。这里照抄：
+     * input 的文字设为透明，文字全部交给图集画布。
+     */
+    private final SigmaTextView glyphs = new SigmaTextView("sans", 25, 490, 70,
+            SigmaTextView.Align.LEFT).fieldBaseline(true);
     private final Region underline = new Region();
 
+    private final List<ResultCard> cards = new ArrayList<>();
     private Consumer<String> onSubmit;
     private Consumer<Song> onPick;
+    private Consumer<String> onOpenPlaylist;
 
     public SearchBox() {
         setPrefSize(W, H);
@@ -61,12 +72,9 @@ public final class SearchBox extends Pane {
         field.setPrefSize(490, 70);
         field.setPromptText("Search...");
         field.setFont(Assets.light(25));
-        // TextField 不是 Labeled，没有 setTextFill，文字颜色只能走 CSS。
-        // 原版 SigmaTextField 的 alpha 是 (field20744/2 + 0.4) * (聚焦且有内容 ? 1 : 0.5)，
-        // 即未聚焦 0.2 / 聚焦空 0.45 / 聚焦有内容 0.9。JavaFX 的 prompt 默认是灰的，
-        // 比原版亮一大截，这里全部自己算。
-        field.setStyle("-fx-background-color: transparent; -fx-text-fill: "
-                + FIELD_ALPHA_UNFOCUSED + "; -fx-prompt-text-fill: " + FIELD_ALPHA_UNFOCUSED + ";");
+        // 文字交给画布画，input 只留光标与选区（对应原版 color: transparent）
+        field.setStyle("-fx-background-color: transparent; -fx-text-fill: transparent;"
+                + " -fx-prompt-text-fill: transparent;");
         field.setPadding(new javafx.geometry.Insets(0, 0, 0, 4));
         field.setAlignment(Pos.CENTER_LEFT);
         field.setOnAction(e -> {
@@ -74,7 +82,13 @@ public final class SearchBox extends Pane {
                 onSubmit.accept(field.getText());
             }
         });
+        field.textProperty().addListener((o, a, b) -> paintFieldText());
         getChildren().add(field);
+
+        glyphs.setLayoutX(30);
+        glyphs.setLayoutY(14);
+        glyphs.setMouseTransparent(true);
+        getChildren().add(glyphs);
 
         // 原版是 ::after 伪元素画的 2px 下划线，这里用一层 Region 代替
         underline.setLayoutX(30);
@@ -89,16 +103,25 @@ public final class SearchBox extends Pane {
         field.focusedProperty().addListener((o, a, b) -> {
             underline.setBackground(javafx.scene.layout.Background.fill(
                     underlinePaint(b ? 1.0 : 0.5)));
-            boolean hasValue = field.getText() != null && !field.getText().isEmpty();
-            String alpha = !b ? FIELD_ALPHA_UNFOCUSED
-                    : hasValue ? FIELD_ALPHA_FOCUSED_TEXT : FIELD_ALPHA_FOCUSED_EMPTY;
-            field.setStyle("-fx-background-color: transparent; -fx-text-fill: " + alpha
-                    + "; -fx-prompt-text-fill: " + alpha + ";");
+            paintFieldText();
         });
+        paintFieldText();
 
         results.setLayoutX(0);
         results.setLayoutY(0);
         getChildren().add(results);
+    }
+
+    /** 有内容画内容、否则画占位符，整串按当前焦点态的 alpha 上色。 */
+    private void paintFieldText() {
+        String value = field.getText();
+        boolean hasValue = value != null && !value.isEmpty();
+        glyphs.setText(hasValue ? value : "Search...");
+        boolean focused = field.isFocused();
+        double alpha = !focused ? ALPHA_UNFOCUSED
+                : hasValue ? ALPHA_FOCUSED_TEXT : ALPHA_FOCUSED_EMPTY;
+        glyphs.setColor(javafx.scene.paint.Color.color(
+                254 / 255.0, 254 / 255.0, 254 / 255.0, alpha));
     }
 
     /** 原版下划线是 rgba(254,254,254,0.5)，聚焦时 alpha 拉到 1。 */
@@ -114,14 +137,24 @@ public final class SearchBox extends Pane {
         this.onPick = r;
     }
 
+    public void onOpenPlaylist(Consumer<String> r) {
+        this.onOpenPlaylist = r;
+    }
+
     public void clear() {
         results.viewport().getChildren().clear();
         results.setContentHeight(0);
+        cards.clear();
     }
 
     /** 结果区的滚动容器，外部（校验工具）需要查滚动状态时用。 */
     public SigmaScrollablePanel resultsPanel() {
         return results;
+    }
+
+    /** 当前铺在网格里的卡片，外部点歌时要用它整体替换队列。 */
+    public List<ResultCard> currentCards() {
+        return List.copyOf(cards);
     }
 
     /**
@@ -131,28 +164,35 @@ public final class SearchBox extends Pane {
      * {@code y=90+floor(i/3)*210}），超出 506 高的部分靠 overflow-y:auto 滚动看到，
      * 没有任何「只显示前 N 张」的逻辑——之前的实现铺满两行就 break，
      * 于是第 4 首之后的结果根本点不到。现在全部铺出来，内容高度按最后一张卡片的底边算。
+     *
+     * <p>歌单卡（青色底）点一下是下钻该歌单，歌曲卡点一下是播放——
+     * 与原版 {@code onCardClick} 一致。
      */
-    public void showResults(List<Song> songs) {
+    public void showResults(List<ResultCard> list) {
         Pane viewport = results.viewport();
         viewport.getChildren().clear();
+        cards.clear();
         double bottom = 0;
-        for (int i = 0; i < songs.size(); i++) {
-            Song s = songs.get(i);
+        for (int i = 0; i < list.size(); i++) {
+            ResultCard rc = list.get(i);
             int col = i % 3;
             int row = i / 3;
             double x = COL_X[col];
             double y = ROW_Y0 + row * ROW_STEP;
-            ThumbnailCard card = new ThumbnailCard(
-                    s.getTitle(), s.getArtist(), s.getCoverUrl(), false);
+            ThumbnailCard card = new ThumbnailCard(rc);
             card.setLayoutX(x);
             card.setLayoutY(y);
-            final Song picked = s;
             card.onClick(() -> {
-                if (onPick != null) {
-                    onPick.accept(picked);
+                if (rc.isPlaylist()) {
+                    if (onOpenPlaylist != null) {
+                        onOpenPlaylist.accept(rc.gid());
+                    }
+                } else if (onPick != null) {
+                    onPick.accept(rc.toSong());
                 }
             });
             viewport.getChildren().add(card);
+            cards.add(rc);
             bottom = Math.max(bottom, y + CARD_H);
         }
         results.setContentHeight(bottom);

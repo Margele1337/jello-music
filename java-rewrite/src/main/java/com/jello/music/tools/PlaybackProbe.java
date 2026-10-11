@@ -60,7 +60,7 @@ public final class PlaybackProbe {
             System.out.println("PLAYBACK PROBE: SKIP (没有非空歌单)");
             System.exit(2);
         }
-        List<Song> songs = api.playlistTracks(target.id(), 1, 50);
+        List<Song> songs = api.playlistTracks(target.gid(), 1, 50);
         if (songs.isEmpty()) {
             System.out.println("PLAYBACK PROBE: SKIP (歌单内没有歌曲)");
             System.exit(2);

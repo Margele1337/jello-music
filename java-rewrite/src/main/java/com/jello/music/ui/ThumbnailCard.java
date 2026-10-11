@@ -26,15 +26,22 @@ public final class ThumbnailCard extends Pane {
     private final ImageView cover = new ImageView();
     private final ImageView coverBlur = new ImageView();
     private final ImageView playIcon = new ImageView();
-    private final Label title = new Label();
-    private final Label artist = new Label();
+    // 原版 .sigma-thumbnail-title/.artist：sans-12、盒高 13、居中。
+    // 注意 sans-12 的 lineHeight 是 16，比盒高 13 大，
+    // 所以文字上沿 y = floor((13-16)/2) = -2，会被 overflow:hidden 切掉 2px —— 原版就这样
+    private final SigmaTextView title =
+            new SigmaTextView("sans", 12, W, 13, SigmaTextView.Align.CENTER);
+    private final SigmaTextView artist =
+            new SigmaTextView("sans", 12, W, 13, SigmaTextView.Align.CENTER);
 
-    public ThumbnailCard(String titleText, String artistText, String coverUrl, boolean playlist) {
+public ThumbnailCard(com.jello.music.model.ResultCard card) {
         setPrefSize(W, H);
         setMinSize(W, H);
         setMaxSize(W, H);
+        boolean playlist = card.isPlaylist();
         setBackground(javafx.scene.layout.Background.fill(
-                playlist ? javafx.scene.paint.Color.web("#037c8c") : javafx.scene.paint.Color.web("#010101")));
+                playlist ? javafx.scene.paint.Color.web("#037c8c")
+                        : javafx.scene.paint.Color.web("#010101")));
 
         configureCover(cover, false);
         configureCover(coverBlur, true);
@@ -50,16 +57,15 @@ public final class ThumbnailCard extends Pane {
         playIcon.setMouseTransparent(true);
         getChildren().add(playIcon);
 
-        title.setText(titleText == null ? "" : titleText);
-        artist.setText(artistText == null ? "" : artistText);
-        boolean hasArtist = artistText != null && !artistText.isBlank();
+title.setText(card.title());
+        artist.setText(card.artist());
+        boolean hasArtist = !card.artist().isBlank();
         artist.setVisible(hasArtist);
         title.setLayoutY(hasArtist ? 181 : 187);
-        styleLine(title, 181, hasArtist ? 181 : 187);
-        styleLine(artist, 194, 194);
+        artist.setLayoutY(194);
         getChildren().addAll(title, artist);
 
-        applyCover(coverUrl);
+        applyCover(card.coverUrl());
 
         setOnMouseEntered(e -> {
             scaleCover(cover, HOVER_SCALE);
@@ -125,24 +131,11 @@ public final class ThumbnailCard extends Pane {
      * 而这个版本的 {@code Node} 又没暴露 {@code setPivotX}，所以改成
      * 「先按缩放比例把 layout 往回挪半个差值」，效果等价于绕中心缩放。
      */
-    private void scaleCover(ImageView v, double s) {
+private void scaleCover(ImageView v, double s) {
         double d = COVER * (s - 1) / 2;
         v.setScaleX(s);
         v.setScaleY(s);
         v.setLayoutX(COVER_INSET - d);
         v.setLayoutY(COVER_INSET - d);
-    }
-
-    private static void styleLine(Label l, double x, double y) {
-        l.setLayoutX(0);
-        l.setLayoutY(y);
-        l.setPrefWidth(W);
-        l.setPrefHeight(16);
-        l.setAlignment(javafx.geometry.Pos.CENTER);
-        l.setFont(Assets.light(12));
-        l.setTextFill(Theme.TEXT);
-        l.setWrapText(false);
-        l.setClip(new javafx.scene.shape.Rectangle(W, 16));
-        l.setMouseTransparent(true);
     }
 }

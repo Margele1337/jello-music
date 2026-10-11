@@ -64,8 +64,17 @@ set JELLO_HASH=歌曲hash
 | 拖动面板 | 移动窗口 |
 | 拖到屏幕最右侧 | 自动贴边收起（露出 40px） |
 | 右 Shift（全局） | 收起 / 展开，1:1 复刻原版 `globalKeyService.js` |
+| 左栏「猜你喜欢」 | 打乱后直接进队列播放，右栏保持空白 |
+| 左栏「每日推荐」 | `/everyday/recommend` 翻两页取 60 首，不够用「猜你喜欢」去重补足，铺到右栏 |
+| 左栏歌单 | 该歌单曲目铺到右栏 |
+| 右栏歌单卡（青色） | 下钻该歌单 |
+| 右栏歌曲卡 | 用当前整列替换队列并播放这首 |
 | 搜索结果区 | 滚轮上下翻，滚动条按原版隐藏 |
 | 频谱 | 后台线程拉流解码 + FFT，实时绘制 |
+
+> Java 端依赖本地 KuGou API：先在仓库根目录 `npm run api`（端口 6521），
+> 凭据走 `JELLO_TOKEN` / `JELLO_USERID` / `JELLO_DFID` 环境变量。
+> api 没起来时左栏仍会显示「猜你喜欢 / 每日推荐」，其余报错只写 stderr（不占面板像素）。
 
 ## 当前已跑通的部分
 
@@ -137,6 +146,34 @@ Java 侧按同一套方案实现（`system/RightShiftPoller.java`），只把 FF
 - 取不到原生热键（非 Windows / JNA 加载失败）时不崩，退回窗口内 `Shift+R`。
   两者不能同时存在——一次按键触发两次会先收起又立刻展开，等于没反应。
 
+## 像素级对齐：字形图集
+
+原版**不是**用浏览器排版画文字的。`utils/sigmaFontAtlas.js` 用 Java2D 把每个字形烘成位图
+（同源于 sigmarebase 的 Slick `TrueTypeFont`），前端只按 `advance` 逐字贴图、
+`imageSmoothingEnabled = false`，注释里写明「保证英文与原版逐像素一致」。
+换成 JavaFX 的 `Label`/`Text` 是另一套光栅化 + 字距调整，英文数字都会差几个百分点。
+
+所以 Java 侧直接把仓库里现成的 8 张图集搬过来用：
+
+| 类 | 职责 |
+|---|---|
+| `ui/SigmaAtlas` | 载入 `atlas-<family>-<size>.json/png`，提供 `lineHeight` / `ascent` / 字形 advance；`measure()` 逐字累加 advance（**不能**用 `Text.getLayoutBounds()`，那是整串排版） |
+| `ui/SigmaTextView` | canvas 渲染的文字节点，1:1 复刻 `SigmaText.vue`：居中/右对齐取 `floor((cssW - textWidth)/2)`、上沿取 `floor((cssH - lineHeight)/2)`、跑马灯、`truncate`、按色缓存的染色 |
+
+已接入的位置与原版完全一致：
+
+| 元素 | 图集 | 盒高 |
+|---|---|---|
+| Logo `Jello` | light-40 | 44 |
+| Logo `music` | light-20 | 22 |
+| 歌名 / 歌手 / 时长 | light-14 | 16 |
+| 歌单项 | light-13 | 17（= `lineHeight`，项高 7+17+7=31，步进 33） |
+| 缩略卡歌名 / 歌手 | sans-12 | 13 |
+| 搜索框 | sans-25 | 70（基线走 `SigmaTextField` 的浏览器度量算法，不是 lineHeight） |
+
+图集只含 ASCII（224 字形），中文等缺字形退回字体渲染，宽度按
+`ceil(单字度量)` 取 —— 与原版的 `FALLBACK_STACK` 分支一致。
+
 ## JavaFX 21 做不到的 CSS（以及绕法）
 
 | 原版 CSS | JavaFX 21.0.5 | 本项目的绕法 |
@@ -150,17 +187,22 @@ Java 侧按同一套方案实现（`system/RightShiftPoller.java`），只把 FF
 ```
 com.jello.music
 ├── api/KuGouApiClient.java     调本地 KuGouMusicApi
-├── api/Playlist.java           歌单元数据
+├── api/Playlist.java           歌单元数据（gid/sort/owner）
+├── api/PlaylistTab.java        左栏条目：猜你喜欢 / 每日推荐 / 歌单
 ├── model/KuGouCredentials.java 登录态与 Authorization 拼装
 ├── model/Song.java             歌曲
+├── model/ResultCard.java       右栏卡片：歌曲卡 / 歌单卡
 ├── player/Fft.java             radix-2 FFT + Hann 窗
 ├── player/SpectrumTap.java     旁路拉流解码取 PCM
 ├── player/SpectrumFeed.java    频谱数据的后台供给
 ├── player/PlayQueue.java       播放队列与循环模式
 ├── system/RightShiftPoller.java 全局右 Shift（Win32 GetAsyncKeyState 轮询）
+├── ui/SigmaAtlas.java          字形图集载入与度量
+├── ui/SigmaTextView.java       canvas 文字节点（SigmaText.vue 1:1）
+├── ui/SigmaScrollablePanel.java 滚动容器（SigmaScrollablePanel.vue 1:1）
 ├── ui/                         JavaFX 界面，坐标全部取自 Theme
 ├── tools/PipelineProbe.java    端到端链路探针（无窗口）
-├── tools/UiProbe.java          静默 UI 校验（不弹窗，48 项断言）
+├── tools/UiProbe.java          静默 UI 校验（不弹窗，65 项断言）
 └── tools/PlaybackProbe.java    静音播放链路实测（不发声）
 ```
 

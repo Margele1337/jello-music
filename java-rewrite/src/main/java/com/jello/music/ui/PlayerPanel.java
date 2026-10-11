@@ -23,18 +23,23 @@ import javafx.scene.paint.Color;
 public final class PlayerPanel extends Pane {
 
     private final ImageView artwork = new ImageView();
-    private final MarqueeText title = new MarqueeText(Theme.TITLE_W, 14, 0);
-    private final MarqueeText subtitle = new MarqueeText(Theme.TITLE_W, 14, -1000);
-    private final Label timeLeft = new Label();
-    private final Label timeRight = new Label();
-    private final Label logo = new Label("Jello");
-    private final Label logoSub = new Label("music");
+    // 原版全部走 SigmaText（字形图集逐字贴图），字号/盒高照抄：
+    // title/subtitle/time 是 light-14 盒高 16，logo 是 light-40 盒高 44，logo-sub 是 light-20 盒高 22
+    private final SigmaTextView title =
+            new SigmaTextView("light", 14, Theme.TITLE_W, 16, SigmaTextView.Align.CENTER, 0);
+    private final SigmaTextView subtitle =
+            new SigmaTextView("light", 14, Theme.TITLE_W, 16, SigmaTextView.Align.CENTER, -1000);
+    private final SigmaTextView timeLeft = new SigmaTextView("light", 14, 0, 16, SigmaTextView.Align.LEFT);
+    private final SigmaTextView timeRight =
+            new SigmaTextView("light", 14, Theme.TIME_R_W, 16, SigmaTextView.Align.RIGHT);
+    private final SigmaTextView logo = new SigmaTextView("light", 40, 0, 44, SigmaTextView.Align.LEFT);
+    private final SigmaTextView logoSub = new SigmaTextView("light", 20, 0, 22, SigmaTextView.Align.LEFT);
+    private final RepeatButton repeatBtn;
 
     private final ImageView prevBtn;
     private final ImageView playBtn;
     private final ImageView nextBtn;
     private final SpectrumToggleButton spectrumBtn;
-    private final RepeatButton repeatBtn;
     private final Region dockTrigger = new Region();
     private final SearchBox search;
     private final VerticalSlider volume;
@@ -105,23 +110,32 @@ public final class PlayerPanel extends Pane {
         // phase 分别是 0 / -1000，和原版一致：两行错开动，不会一起飘
         title.setLayoutX(Theme.TITLE_X);
         title.setLayoutY(Theme.TITLE_Y);
+        title.setScrolling(true, 0);
         getChildren().add(title);
 
         subtitle.setLayoutX(Theme.TITLE_X);
         subtitle.setLayoutY(Theme.SUBTITLE_Y);
+        subtitle.setScrolling(true, -1000);
         getChildren().add(subtitle);
 
         // ---- 时长 ----
-        styleText(timeLeft, Theme.TIME_L_X, Theme.TIME_Y, 60, 14);
+        // 文字节点自己管盒子尺寸（Logo/左时间是 fluid，宽度随文字量出来），
+        // 这里只摆位置，不要走 place()，否则会把盒高覆盖掉
+        timeLeft.setLayoutX(Theme.TIME_L_X);
+        timeLeft.setLayoutY(Theme.TIME_Y);
         getChildren().add(timeLeft);
-        styleText(timeRight, Theme.TIME_R_X, Theme.TIME_Y, Theme.TIME_R_W, 14);
-        timeRight.setTextAlignment(javafx.scene.text.TextAlignment.RIGHT);
+        timeRight.setLayoutX(Theme.TIME_R_X);
+        timeRight.setLayoutY(Theme.TIME_Y);
         getChildren().add(timeRight);
 
         // ---- Logo ----
-        styleText(logo, Theme.LOGO_X, Theme.LOGO_Y, 200, Theme.LOGO_SIZE);
+        logo.setLayoutX(Theme.LOGO_X);
+        logo.setLayoutY(Theme.LOGO_Y);
+        logo.setText("Jello");
         getChildren().add(logo);
-        styleText(logoSub, Theme.LOGO_SUB_X, Theme.LOGO_SUB_Y, 200, Theme.LOGO_SUB_SIZE);
+        logoSub.setLayoutX(Theme.LOGO_SUB_X);
+        logoSub.setLayoutY(Theme.LOGO_SUB_Y);
+        logoSub.setText("music");
         getChildren().add(logoSub);
 
         // ---- 控制按钮（原版用图标图，非文字符号）----
@@ -212,23 +226,6 @@ public final class PlayerPanel extends Pane {
         n.setLayoutX(x);
         n.setLayoutY(y);
         n.setPrefSize(w, h);
-    }
-
-    private static void styleText(Label l, double x, double y, double w, double size) {
-        l.setLayoutX(x);
-        l.setLayoutY(y);
-        l.setPrefWidth(w);
-        // 必须给高度：Label 在 Pane 里不设 prefHeight 时尺寸算出来是 0，
-        // 再叠加不渲染就直接看不见，歌名/时长整片消失，排查这个花了不少时间。
-        l.setPrefHeight(size + 6);
-        l.setMinHeight(size + 6);
-        // 原版这四个文字都是 white-space: nowrap + overflow: hidden。
-        // JavaFX 的 Label 默认会换行，长歌名会折成两行把布局顶歪；
-        // 不换行的话文字又会溢出到右边的时间/按钮上，所以还要 clip 到框宽。
-        l.setWrapText(false);
-        l.setClip(new javafx.scene.shape.Rectangle(w, size + 6));
-        l.setFont(Assets.light(size));
-        l.setTextFill(Theme.TEXT);
     }
 
     private static ImageView iconButton(String icon, double x, double y, double size) {

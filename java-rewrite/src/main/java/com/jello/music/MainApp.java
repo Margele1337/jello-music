@@ -2,7 +2,9 @@ package com.jello.music;
 
 import com.jello.music.api.KuGouApiClient;
 import com.jello.music.api.Playlist;
+import com.jello.music.api.PlaylistTab;
 import com.jello.music.model.KuGouCredentials;
+import com.jello.music.model.ResultCard;
 import com.jello.music.model.Song;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
@@ -28,7 +30,11 @@ import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -50,6 +56,8 @@ public class MainApp extends Application {
 
     private static final int FFT_SIZE = 2048;
     private static final int BAND_COUNT = 48;
+    /** 原版 SigmaSearchBox 的 DAILY_TARGET_COUNT：每日推荐目标首数。 */
+    private static final int DAILY_TARGET_COUNT = 60;
     private static final ExecutorService IO = Executors.newFixedThreadPool(3);
 
     private MediaPlayer player;
@@ -64,7 +72,7 @@ public class MainApp extends Application {
     private final PlayQueue queue = new PlayQueue();
     private final AtomicInteger requestSeq = new AtomicInteger();
     private KuGouApiClient api;
-    private List<Playlist> playlists = List.of();
+    private List<PlaylistTab> tabs = List.of();
     private String currentDirectUrl;
 
     @Override
@@ -110,10 +118,14 @@ public class MainApp extends Application {
                         : state == 1 ? PlayQueue.Repeat.ALL : PlayQueue.Repeat.ONE));
         playerPanel.onDockTrigger(this::expandDock);
         playerPanel.searchBox().onSubmit(this::runSearch);
+        // 点歌曲卡：用「当前网格里的整列」替换队列再播放这首，
+        // 这样下一首/上一首走的是同一批（对应原版 playSongList(songs, hash)）
         playerPanel.searchBox().onPick(song -> {
-            queue.replaceAll(List.of(song));
+            queue.replaceAll(songsOfVisibleCards());
             playCurrent(song);
         });
+        // 点歌单卡：下钻到该歌单的曲目列表
+        playerPanel.searchBox().onOpenPlaylist(this::showPlaylistTracks);
 
         // ---- 状态 ----
         // 原版右栏除搜索框外没有任何文字，之前挂过一个 Label 当状态提示，
@@ -163,51 +175,150 @@ public class MainApp extends Application {
 
     // ---- 歌单 / 队列 ----
 
+    /**
+     * 左栏固定先把「猜你喜欢 / 每日推荐」两项摆上去，再异步补我的歌单。
+     *
+     * <p>这样即使 api 没起来或很慢，左栏也不会是空白的——原版是先摆固定项、
+     * 再 await 拉歌单，行为一致。
+     */
     private void loadPlaylists() {
         status("加载歌单…");
-        int seq = requestSeq.incrementAndGet();
+        tabs = List.of(new PlaylistTab(PlaylistTab.GUESS, "猜你喜欢", null),
+                new PlaylistTab(PlaylistTab.DAILY, "每日推荐", null));
+        playlistPanel.setItems(tabs.stream().map(PlaylistTab::name).toList());
+
         IO.execute(() -> {
             try {
-                List<Playlist> pls = api.userPlaylists(1, 20);
-                pls.sort((a, b) -> b.count() - a.count());
-                // 左栏显示非空歌单
-                List<Playlist> nonEmpty = pls.stream().filter(p -> p.count() > 0).toList();
+                List<Playlist> raw = api.userPlaylists(1, 500);
+                // 原版 SigmaPlaylistPanel.load：sort 升序 + 只留「我喜欢」与自己的歌单，
+                // 「我喜欢」永远排在自定义歌单最前
+                List<PlaylistTab> built = KuGouApiClient.playlistTabs(raw,
+                        credentials().getUserid());
                 Platform.runLater(() -> {
-                    if (seq != requestSeq.get()) {
-                        return;
-                    }
-                    playlists = pls;
-                    playlistPanel.setItems(nonEmpty.stream()
-                            .map(com.jello.music.api.Playlist::name).toList());
-                    // 自动载入第一个非空歌单的歌曲到队列
-                    if (!nonEmpty.isEmpty()) {
-                        loadTracks(nonEmpty.get(0), seq);
-                    } else {
-                        status("没有非空歌单");
-                    }
+                    tabs = built;
+                    playlistPanel.setItems(built.stream().map(PlaylistTab::name).toList());
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> status("加载歌单失败 -> " + describe(e)));
+                status("加载歌单失败 -> " + describe(e));
             }
         });
     }
 
-    private void loadTracks(Playlist pl, int seq) {
+    /** 左栏选中：猜你喜欢直接播、每日推荐与歌单铺到右栏网格。 */
+    private void onPlaylistSelect(int index) {
+        if (index < 0 || index >= tabs.size()) {
+            return;
+        }
+        PlaylistTab tab = tabs.get(index);
+        if (tab.isGuess()) {
+            playGuessYouLike();
+        } else if (tab.isDaily()) {
+            loadDailyRecommend();
+        } else if (tab.gid() != null) {
+            showPlaylistTracks(tab.gid());
+        }
+    }
+
+    /**
+     * 猜你喜欢（{@code /top/card?card_id=1}）：打乱后直接进队列播放，右栏保持空白。
+     * 顺序随机是原版的做法——每次点都是不一样的第一首。
+     */
+    private void playGuessYouLike() {
+        playerPanel.searchBox().clear();
+        status("加载猜你喜欢…");
         IO.execute(() -> {
             try {
-                List<Song> songs = api.playlistTracks(pl.id(), 1, 50);
+                List<Song> songs = api.topCard(1);
+                if (songs.isEmpty()) {
+                    return;
+                }
+                Collections.shuffle(songs);
                 Platform.runLater(() -> {
-                    if (seq != requestSeq.get()) {
-                        return;
-                    }
                     queue.replaceAll(songs);
-                    status(pl.name() + " · " + songs.size() + " 首");
-                    if (!songs.isEmpty()) {
-                        playerPanel.setSong(songs.get(0).getTitle(), songs.get(0).getArtist(),
-                                songs.get(0).getCoverUrl());
-                        playerPanel.setCover(songs.get(0).getCoverUrl());
-                        playCurrent(songs.get(0));
+                    Song first = songs.get(0);
+                    playerPanel.setSong(first.getTitle(), first.getArtist(), first.getCoverUrl());
+                    playerPanel.setCover(first.getCoverUrl());
+                    playCurrent(first);
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> status("猜你喜欢加载失败 -> " + describe(e)));
+            }
+        });
+    }
+
+    /**
+     * 每日推荐。
+     *
+     * <p>普通账号服务端默认只给 30 首（会员 60），所以按 pagesize=60 翻两页拉，
+     * 还不够就用「猜你喜欢」按 hash 去重补足——与原版 {@code loadDailyRecommend} 同一套逻辑。
+     */
+    private void loadDailyRecommend() {
+        playerPanel.searchBox().clear();
+        status("加载每日推荐…");
+        IO.execute(() -> {
+            try {
+                List<Song> collected = new ArrayList<>();
+                Set<String> seen = new HashSet<>();
+                for (int page : new int[]{1, 2}) {
+                    List<Song> list;
+                    try {
+                        list = api.everydayRecommend(page, DAILY_TARGET_COUNT);
+                    } catch (Exception e) {
+                        break;
                     }
+                    if (list.isEmpty()) {
+                        break;
+                    }
+                    int before = collected.size();
+                    for (Song s : list) {
+                        if (s.getHash().isEmpty() || !seen.add(s.getHash())) {
+                            continue;
+                        }
+                        collected.add(s);
+                    }
+                    if (collected.size() >= DAILY_TARGET_COUNT) {
+                        break;
+                    }
+                    // 一首没新增 = 服务端不支持翻页，再翻也是同一批
+                    if (collected.size() == before) {
+                        break;
+                    }
+                }
+                if (collected.size() < DAILY_TARGET_COUNT) {
+                    try {
+                        for (Song s : api.topCard(1)) {
+                            if (collected.size() >= DAILY_TARGET_COUNT) {
+                                break;
+                            }
+                            if (s.getHash().isEmpty() || !seen.add(s.getHash())) {
+                                continue;
+                            }
+                            collected.add(s);
+                        }
+                    } catch (Exception ignored) {
+                        // 补足失败就用已取到的部分
+                    }
+                }
+                List<Song> result = collected;
+                Platform.runLater(() -> {
+                    playerPanel.searchBox().showResults(toCards(result));
+                    status("每日推荐 " + result.size() + " 首");
+                });
+            } catch (Exception e) {
+                Platform.runLater(() -> status("每日推荐加载失败 -> " + describe(e)));
+            }
+        });
+    }
+
+    /** 歌单曲目铺到右栏网格（点歌单卡或点左栏歌单都走这里）。 */
+    private void showPlaylistTracks(String gid) {
+        status("加载歌单…");
+        IO.execute(() -> {
+            try {
+                List<Song> songs = api.playlistTracks(gid, 1, 500);
+                Platform.runLater(() -> {
+                    playerPanel.searchBox().showResults(toCards(songs));
+                    status("歌单 " + songs.size() + " 首");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status("加载歌曲失败 -> " + describe(e)));
@@ -215,7 +326,26 @@ public class MainApp extends Application {
         });
     }
 
-    /** 搜索：走 api 的 /search/complex，结果铺成缩略卡网格。 */
+    private static List<ResultCard> toCards(List<Song> songs) {
+        List<ResultCard> out = new ArrayList<>(songs.size());
+        for (Song s : songs) {
+            out.add(ResultCard.song(s.getHash(), s.getTitle(), s.getArtist(), s.getCoverUrl()));
+        }
+        return out;
+    }
+
+    /** 当前网格里的歌曲卡（歌单卡不是歌，跳过）。 */
+    private List<Song> songsOfVisibleCards() {
+        List<Song> out = new ArrayList<>();
+        for (ResultCard c : playerPanel.searchBox().currentCards()) {
+            if (!c.isPlaylist()) {
+                out.add(c.toSong());
+            }
+        }
+        return out;
+    }
+
+    /** 搜索：走 api 的 /search/complex，歌单卡在前、歌曲卡在后（对齐原版）。 */
     private void runSearch(String keyword) {
         String kw = keyword == null ? "" : keyword.trim();
         if (kw.isEmpty()) {
@@ -223,28 +353,21 @@ public class MainApp extends Application {
             return;
         }
         status("搜索中…");
-        int seq = requestSeq.incrementAndGet();
         IO.execute(() -> {
             try {
-                List<Song> hits = api.search(kw);
+                KuGouApiClient.SearchResult res = api.search(kw);
+                List<ResultCard> cards = new ArrayList<>(res.playlists());
+                cards.addAll(toCards(res.songs()));
                 Platform.runLater(() -> {
-                    if (seq != requestSeq.get()) {
-                        return;
-                    }
-                    playerPanel.searchBox().showResults(hits);
-                    status(hits.isEmpty() ? "没有找到结果" : "找到 " + hits.size() + " 首");
+                    playerPanel.searchBox().showResults(cards);
+                    status(cards.isEmpty() ? "没有找到结果"
+                            : "找到 " + res.playlists().size() + " 个歌单 / "
+                            + res.songs().size() + " 首");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status("搜索失败 -> " + describe(e)));
             }
         });
-    }
-
-    private void onPlaylistSelect(int index) {
-        List<Playlist> nonEmpty = playlists.stream().filter(p -> p.count() > 0).toList();
-        if (index >= 0 && index < nonEmpty.size()) {
-            loadTracks(nonEmpty.get(index), requestSeq.incrementAndGet());
-        }
     }
 
     private void playCurrent(Song song) {
