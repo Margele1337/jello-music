@@ -37,9 +37,23 @@ run.bat
 `run.bat` 会自动找 Maven（优先 PATH，其次 `tools\apache-maven-3.9.9\`）、编译、解析依赖并以 module path 启动 GUI。
 
 ```bat
-run.bat probe          :: 只跑无窗口的链路探针
-run.bat <直链URL>      :: 指定音频直链
+run.bat                  :: build + 确保 api 在跑 + 启动 GUI
+run.bat probe            :: 只跑无窗口的链路探针
+run.bat probe-ui         :: 静默 UI 校验（不弹窗不抢焦点，打游戏时可跑）
+run.bat probe-play       :: 静音播放链路实测
+run.bat <直链URL>         :: 指定音频直链
+run.bat api              :: 前台跑 KuGou API（排查用）
+run.bat api-stop         :: 杀掉占用 API 端口的进程
 ```
+
+**API 自动起停**：`run.bat` 会拉起仓库根目录的 KuGou API
+（`node api/app.js --platform=lite --port=6521`），端口没人监听时才起、退出时收掉；
+你自己起的 API 不会被动。日志在 `%TEMP%\jello-api.log`；`api/` 缺失时提示
+`git submodule update --init`。
+
+> 这里刻意**没有用 PowerShell**：`powershell.exe -Command` 从 .bat 里调起在这台机器上
+> 会返回「拒绝访问」（exit 5），只有 `-File` 能用。探端口与查 PID 改用 `netstat`，
+> 等待用 `ping -n 2`（`timeout` 在 stdin 被重定向时会直接失败）。
 
 Maven 本体需自行下载放到 `tools\`（该目录已 gitignore）：
 
