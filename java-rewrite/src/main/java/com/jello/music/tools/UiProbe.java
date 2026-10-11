@@ -1,6 +1,8 @@
 package com.jello.music.tools;
 
 import com.jello.music.ui.CanvasStrip;
+import com.jello.music.ui.KeybindKeyboard;
+import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SearchBox;
@@ -317,6 +319,7 @@ if (repeat != null) {
         checkPlaylistTabs();
         checkCardKinds();
         checkSearchField();
+        checkOnboarding();
 
         checkMarqueeTiming();
 
@@ -562,6 +565,62 @@ private static void checkPlaylistEllipsis(PlaylistPanel panel) {
         } finally {
             poller.close();
         }
+    }
+
+/**
+ * 新手教程视图（对应 SigmaUI.vue 的 view === 'onboarding'）。
+ *
+ * <p>要点：底 rgba(1,1,1,0.25)、键盘底板 1100x402 圆角 14、键位层内缩 20、
+ * 键帽 63 高行距 74、标题 JelloMedium 40、步数 1 / 1、完成按钮 #f0f0f0 圆角 8、
+ * RSHIFT（GLFW 344）带红框强调。
+ */
+private static void checkOnboarding() {
+OnboardingView view = new OnboardingView(Theme.PANEL_W, Theme.PANEL_H);
+        Pane host = new Pane();
+        host.getChildren().add(view);
+        new Scene(host, Theme.PANEL_W, Theme.PANEL_H);
+        host.applyCss();
+        host.layout();
+        view.layout(Theme.PANEL_W, Theme.PANEL_H);
+
+        check("教程键帽共 61 个（照抄原版键位表）", view.keyCount() == 61,
+                "keys=" + view.keyCount());
+        check("键盘底板 1100x402 / 键位层内缩 20",
+                KeybindKeyboard.plateWidth() == 1100
+                        && KeybindKeyboard.plateHeight() == 402, null);
+
+// RSHIFT 是唯一被强调的键：红色标签 + 2px 红框
+        List<Label> reds = collect(view, Label.class).stream()
+                .filter(l -> l.getTextFill() instanceof javafx.scene.paint.Color c
+                        && c.getRed() > 0.98 && c.getGreen() < 0.4)
+                .toList();
+        check("RSHIFT 标签标红（highlight-keys=[344]）", reds.size() == 1,
+                "reds=" + reds.size());
+
+// 缩放：min(1, (800-60)/1140, (600-180)/402) = 0.649
+        double expect = Math.min(1, Math.min((800 - 60) / 1140.0, (600 - 60 - 120) / 402.0));
+        check("键盘按窗口等比缩放",
+                Math.abs(view.keyboard().getScaleX() - expect) < 0.01,
+                String.format("scale=%.4f expect=%.4f",
+                        view.keyboard().getScaleX(), expect));
+        // JavaFX 缩放绕中心：居中位置与 scale 无关，就是 (宽 - 原始宽) / 2
+        check("键盘水平居中（缩放绕中心，位置与 scale 无关）",
+                view.keyboard().getLayoutX() == (800 - 1100) / 2.0,
+                "x=" + view.keyboard().getLayoutX());
+
+check("标题是 快捷呼出 / 底部步数 1 / 1",
+                "快捷呼出".equals(view.titleLabel().getText())
+                        && "1 / 1".equals(view.stepLabel().getText()), null);
+        check("完成按钮 70x34 圆角 8",
+                view.finishButton().getPrefWidth() == 70
+                        && view.finishButton().getPrefHeight() == 34
+                        && view.finishLabel().getText().equals("完成"), null);
+
+        // easeOutBack 端点
+        check("入场缓动 easeOutBack 端点正确",
+                Math.abs(OnboardingView.easeOutBack(0)) < 1e-9
+                        && Math.abs(OnboardingView.easeOutBack(1) - 1) < 1e-9
+                        && OnboardingView.easeOutBack(0.5) > 1, null);
     }
 
 /**

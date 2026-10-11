@@ -12,6 +12,7 @@ import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.ElasticReveal;
+import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SpectrumView;
@@ -55,7 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MainApp extends Application {
 
     private static final int FFT_SIZE = 2048;
-    private static final int BAND_COUNT = 48;
+private static final int BAND_COUNT = 48;
     /** 原版 SigmaSearchBox 的 DAILY_TARGET_COUNT：每日推荐目标首数。 */
     private static final int DAILY_TARGET_COUNT = 60;
     private static final ExecutorService IO = Executors.newFixedThreadPool(3);
@@ -65,9 +66,14 @@ public class MainApp extends Application {
     private SpectrumView spectrumView;
     private PlayerPanel playerPanel;
     private PlaylistPanel playlistPanel;
-    private EdgeDock dock;
+private EdgeDock dock;
     private ElasticReveal reveal;
     private RightShiftPoller rshift;
+
+    /** 视图容器：原版 SigmaUI.vue 的 sigma-shell，按 view 切换子视图。 */
+    private final StackPane stageHolder = new StackPane();
+    private StackPane playerView;
+    private OnboardingView onboarding;
 
     private final PlayQueue queue = new PlayQueue();
     private final AtomicInteger requestSeq = new AtomicInteger();
@@ -133,10 +139,26 @@ public class MainApp extends Application {
         // 现在只写 stderr（run.bat / jpackage 的控制台能看到），不占面板像素。
         status("加载中…");
 
-        StackPane overlay = new StackPane(root);
+StackPane overlay = new StackPane(root);
+        overlay.setId("sigma-player");
+        playerView = overlay;
         reveal = new ElasticReveal(overlay);
+        stageHolder.getChildren().add(overlay);
 
-        Scene scene = new Scene(overlay, Theme.PANEL_W, Theme.PANEL_H);
+        // ---- 视图切换（原版 SigmaUI.vue 的 view 状态）----
+        // 首次启动先进新手教程：键盘绑定选择 + 右 Shift 强调，完成后写标记不再打扰。
+        if (AppPrefs.shouldShowOnboarding()) {
+            onboarding = new OnboardingView(Theme.PANEL_W, Theme.PANEL_H);
+            onboarding.setId("sigma-onboarding");
+            onboarding.onKeySelect(code -> status("选中按键 " + code));
+            onboarding.onFinish(() -> {
+                AppPrefs.setOnboardingDone();
+                switchToPlayer();
+            });
+            stageHolder.getChildren().add(onboarding);
+        }
+
+        Scene scene = new Scene(stageHolder, Theme.PANEL_W, Theme.PANEL_H);
         scene.setFill(Color.TRANSPARENT);
         // 全局右 Shift 收起/展开。回调在轮询线程上，必须切回 FX 线程。
         rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock));
@@ -156,8 +178,12 @@ public class MainApp extends Application {
         installDragHandlers(root);
         dock.expand();
         reveal.expand(null);
-        stage.show();
+stage.show();
         clampToPrimaryScreen(stage);
+        if (onboarding != null) {
+            // 视图要等 CSS 跑过才知道文字的真实宽度，缩放后再摆一次
+            onboarding.layout(Theme.PANEL_W, Theme.PANEL_H);
+        }
 
         // listener 由 PlayQueue.fire() 同步触发，而 fire() 可能发生在任意线程。
         // 因此这里做一次线程判断：已在 FX 线程就直接更新，否则切过去。
@@ -171,6 +197,20 @@ public class MainApp extends Application {
             }
         });
         loadPlaylists();
+    }
+
+    // ---- 视图切换 ----
+
+    /** 回到主界面（对应 SigmaUI.vue 的 {@code view = 'player'}）。 */
+    private void switchToPlayer() {
+        if (onboarding != null) {
+            onboarding.setVisible(false);
+            stageHolder.getChildren().remove(onboarding);
+            onboarding = null;
+        }
+        if (playerView != null) {
+            playerView.setVisible(true);
+        }
     }
 
     // ---- 歌单 / 队列 ----

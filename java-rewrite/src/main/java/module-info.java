@@ -24,6 +24,8 @@ module com.jello.music {
     requires com.sun.jna;
     requires java.net.http;
     requires java.desktop;
+    // 新手教程完成标记等本地设置（对应原版的 localStorage）
+    requires java.prefs;
     requires jlayer;
     requires org.slf4j;
 
