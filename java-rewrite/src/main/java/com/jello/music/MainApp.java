@@ -12,6 +12,7 @@ import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.ElasticReveal;
+import com.jello.music.ui.LoginView;
 import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
@@ -74,6 +75,10 @@ private EdgeDock dock;
     private final StackPane stageHolder = new StackPane();
     private StackPane playerView;
     private OnboardingView onboarding;
+    private LoginView login;
+    /** 登录态：启动时从 AppPrefs 读回，没有就走环境变量凭据。 */
+    private final KuGouCredentials credentials = new KuGouCredentials();
+    private com.jello.music.model.UserInfo userInfo;
 
     /**
      * 当前音量 0..1。原版音量是跨歌保持的（{@code volumePercent} 存在播放器里），
@@ -93,7 +98,8 @@ private EdgeDock dock;
         // 预热字体，避免首帧字体回退导致排版跳动
         Assets.light(14);
 
-        api = new KuGouApiClient(credentials());
+        initCredentials();
+        api = new KuGouApiClient(credentials);
 
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setTitle("Jello Music");
@@ -155,14 +161,14 @@ StackPane overlay = new StackPane(root);
         stageHolder.getChildren().add(overlay);
 
         // ---- 视图切换（原版 SigmaUI.vue 的 view 状态）----
-        // 首次启动先进新手教程：键盘绑定选择 + 右 Shift 强调，完成后写标记不再打扰。
+        // 顺序与原版一致：没跑过教程先进教程，跑过但没登录态才进登录页（SigmaUI.vue:174-179）
         if (AppPrefs.shouldShowOnboarding()) {
             onboarding = new OnboardingView(Theme.PANEL_W, Theme.PANEL_H);
             onboarding.setId("sigma-onboarding");
             onboarding.onKeySelect(code -> status("选中按键 " + code));
             onboarding.onFinish(() -> {
                 AppPrefs.setOnboardingDone();
-                switchToPlayer();
+                afterOnboarding();
             });
             stageHolder.getChildren().add(onboarding);
             // 教程要教用户「按右 Shift 呼出」，此时热键必须挂起：
@@ -170,6 +176,8 @@ StackPane overlay = new StackPane(root);
             // 对应原版 SigmaUI 切到 onboarding 时发的 sigma-hotkey-suspend。
             // 注意此刻 rshift 还没建（建在 Scene 之后），所以统一交给 syncHotkeySuspend()
             syncHotkeySuspend();
+        } else {
+            afterOnboarding();
         }
 
         Scene scene = new Scene(stageHolder, Theme.PANEL_W, Theme.PANEL_H);
@@ -217,17 +225,68 @@ stage.show();
 
     // ---- 视图切换 ----
 
-    /** 回到主界面（对应 SigmaUI.vue 的 {@code view = 'player'}）。 */
+    /** 教程结束（或本来就不用教程）后的分流：有登录态回主界面，没有就去登录页。 */
+    private void afterOnboarding() {
+        if (userInfo != null && userInfo.isAuthenticated()) {
+            switchToPlayer();
+        } else {
+            switchToLogin();
+        }
+    }
+
+    /** 回主界面（对应 SigmaUI.vue 的 {@code view = 'player'}）。 */
     private void switchToPlayer() {
         if (onboarding != null) {
             onboarding.setVisible(false);
             stageHolder.getChildren().remove(onboarding);
             onboarding = null;
         }
+        if (login != null) {
+            login.dispose();
+            login.setVisible(false);
+            stageHolder.getChildren().remove(login);
+            login = null;
+        }
         if (playerView != null) {
             playerView.setVisible(true);
         }
         syncHotkeySuspend();
+    }
+
+    /** 去登录页（对应 {@code view = 'login'}）。 */
+    private void switchToLogin() {
+        if (onboarding != null) {
+            onboarding.setVisible(false);
+            stageHolder.getChildren().remove(onboarding);
+            onboarding = null;
+        }
+        if (login == null) {
+            login = new LoginView(api);
+            login.setId("sigma-login");
+            login.onSuccess(this::onLoginSuccess);
+            login.onBack(this::switchToPlayer);
+            stageHolder.getChildren().add(login);
+        }
+        login.setVisible(true);
+        if (playerView != null) {
+            playerView.setVisible(false);
+        }
+        syncHotkeySuspend();
+    }
+
+    /**
+     * 登录成功：把登录态写进请求凭据 + 持久化，然后回主界面并重拉歌单。
+     *
+     * <p>原版是 {@code MoeAuth.setData({UserInfo})} 之后 watcher 切回 player
+     * 并发 {@code auth-changed}；这里等价地把 UserInfo 灌进 {@link KuGouCredentials}。
+     */
+    private void onLoginSuccess(com.jello.music.model.UserInfo user) {
+        userInfo = user;
+        user.applyTo(credentials);
+        AppPrefs.saveUser(user);
+        status("登录成功: " + user.getNickname() + " (" + user.getUserid() + ")");
+        switchToPlayer();
+        loadPlaylists();
     }
 
     /**
@@ -263,7 +322,7 @@ stage.show();
                 // 原版 SigmaPlaylistPanel.load：sort 升序 + 只留「我喜欢」与自己的歌单，
                 // 「我喜欢」永远排在自定义歌单最前
                 List<PlaylistTab> built = KuGouApiClient.playlistTabs(raw,
-                        credentials().getUserid());
+                        credentials.getUserid());
                 Platform.runLater(() -> {
                     tabs = built;
                     playlistPanel.setItems(built.stream().map(PlaylistTab::name).toList());
@@ -624,12 +683,22 @@ private void startPlayback(String url) {
         playerPanel.setDockTriggerActive(false);
     }
 
-    private KuGouCredentials credentials() {
-        KuGouCredentials cred = new KuGouCredentials();
-        cred.setToken(env("JELLO_TOKEN"));
-        cred.setUserid(env("JELLO_USERID"));
-        cred.setDfid(env("JELLO_DFID"));
-        return cred;
+/**
+     * 初始化登录态与凭据。
+     *
+     * <p>优先级：上次登录（AppPrefs，原版存 localStorage）> 环境变量。
+     * 这样登录页登录过一次之后就不用每次手动设 {@code JELLO_*} 了。
+     */
+    private void initCredentials() {
+        credentials.setDfid(env("JELLO_DFID"));
+        userInfo = AppPrefs.loadUser();
+        if (userInfo != null && userInfo.isAuthenticated()) {
+            userInfo.applyTo(credentials);
+        } else {
+            userInfo = null;
+            credentials.setToken(env("JELLO_TOKEN"));
+            credentials.setUserid(env("JELLO_USERID"));
+        }
     }
 
     private static String env(String k) {

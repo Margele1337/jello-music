@@ -328,6 +328,146 @@ public final class KuGouApiClient {
         return a != null && !a.isEmpty() ? a : b;
     }
 
+    // ================= 登录（原版 Login.vue） =================
+
+    /**
+     * 手机号验证码 —— {@code /captcha/sent?mobile=}。
+     *
+     * <p>原版成功后进 60s 倒计时（见 {@code LoginView}）。
+     */
+    public void sendCaptcha(String mobile) throws IOException, InterruptedException {
+        JsonNode r = get("/captcha/sent?mobile=" + encode(mobile == null ? "" : mobile));
+        if (!isSuccess(r)) {
+            throw new IOException("验证码发送失败: " + errorMessage(r));
+        }
+    }
+
+    /** 手机号 + 验证码登录。{@code userid} 非空时表示「多账号里选了某一个」。 */
+    public com.jello.music.model.UserInfo loginByPhone(
+            String mobile, String code, String userid) throws IOException, InterruptedException {
+        StringBuilder url = new StringBuilder("/login/cellphone?mobile=").append(encode(mobile))
+                .append("&code=").append(encode(code == null ? "" : code));
+        if (userid != null && !userid.isEmpty()) {
+            url.append("&userid=").append(encode(userid));
+        }
+        JsonNode r = get(url.toString());
+        return readLogin(r);
+    }
+
+    /** 邮箱 + 密码登录（接口参数叫 username）。 */
+    public com.jello.music.model.UserInfo loginByEmail(
+            String email, String password) throws IOException, InterruptedException {
+        JsonNode r = get("/login?username=" + encode(email) + "&password=" + encode(password));
+        return readLogin(r);
+    }
+
+    /**
+     * 二维码登录三步。
+     *
+     * <p>原版：{@code /login/qr/key} 取 key → {@code /login/qr/create?key=&qrimg=true}
+     * 拿 base64 → 每秒轮询 {@code /login/qr/check}，
+     * {@code data.status} 2=已扫码待确认 / 4=成功 / 0=过期。
+     */
+    public String qrKey() throws IOException, InterruptedException {
+        JsonNode r = get("/login/qr/key");
+        if (!isSuccess(r)) {
+            throw new IOException("二维码生成失败: " + errorMessage(r));
+        }
+        return r.path("data").path("qrcode").asText("");
+    }
+
+    public String qrImage(String key) throws IOException, InterruptedException {
+        JsonNode r = get("/login/qr/create?key=" + encode(key) + "&qrimg=true");
+        JsonNode data = r.path("data");
+        String base64 = data.path("base64").asText("");
+        if (base64.isEmpty()) {
+            throw new IOException("获取二维码失败: " + errorMessage(r));
+        }
+        // 原版直接塞进 img.src，所以一般已经带 data: 前缀；没带就补上
+        return base64.startsWith("data:") ? base64 : "data:image/png;base64," + base64;
+    }
+
+    /** 返回 {@code data.status}；4 表示登录成功。 */
+    public int qrStatus(String key) throws IOException, InterruptedException {
+        JsonNode r = get("/login/qr/check?key=" + encode(key) + "&timestamp="
+                + System.currentTimeMillis());
+        return r.path("data").path("status").asInt(-1);
+    }
+
+    public String qrNickname(String key) throws IOException, InterruptedException {
+        JsonNode r = get("/login/qr/check?key=" + encode(key) + "&timestamp="
+                + System.currentTimeMillis());
+        return r.path("data").path("nickname").asText("");
+    }
+
+    /** 扫码成功的最后一次 check 会直接带回登录态，原版就是用它 setData 的。 */
+    public com.jello.music.model.UserInfo qrCheckForUser(String key)
+            throws IOException, InterruptedException {
+        JsonNode r = get("/login/qr/check?key=" + encode(key) + "&timestamp="
+                + System.currentTimeMillis());
+        if (!isSuccess(r)) {
+            throw new IOException(errorMessage(r));
+        }
+        com.jello.music.model.UserInfo u = com.jello.music.model.UserInfo.fromApi(r.path("data"));
+        if (u == null) {
+            u = com.jello.music.model.UserInfo.fromApi(r);
+        }
+        if (u == null || !u.isAuthenticated()) {
+            throw new IOException("登录失败: 响应里没有登录态");
+        }
+        return u;
+    }
+
+    /** 登录响应既可能是 {@code {status:1,data:{...}}} 也可能是 {@code {code:200,data:{...}}}。 */
+    private com.jello.music.model.UserInfo readLogin(JsonNode r) throws IOException {
+        // 多账号：一个手机号绑了多个酷狗账号时，接口在 data.info_list 里回列表而不是登录态。
+        // 原版走的是 catch 分支读 error.response.data.data.info_list，这里效果一样
+        JsonNode list = r.path("data").get("info_list");
+        if (list != null && list.isArray() && !list.isEmpty()) {
+            java.util.List<com.jello.music.model.UserInfo> accounts =
+                    new java.util.ArrayList<>();
+            for (JsonNode n : list) {
+                var u = com.jello.music.model.UserInfo.fromApi(n);
+                if (u != null) {
+                    accounts.add(u);
+                }
+            }
+            if (!accounts.isEmpty()) {
+                throw new MultiAccountException(accounts);
+            }
+        }
+        if (!isSuccess(r) && r.path("code").asInt(0) != 200) {
+            throw new IOException(errorMessage(r));
+        }
+        com.jello.music.model.UserInfo user = com.jello.music.model.UserInfo.fromApi(r.path("data"));
+        if (user == null) {
+            user = com.jello.music.model.UserInfo.fromApi(r);
+        }
+        if (user == null || !user.isAuthenticated()) {
+            throw new IOException("登录失败: 响应里没有登录态");
+        }
+        return user;
+    }
+
+    /**
+     * 「该手机号绑了多个账号，请选择」——原版切到账号选择界面。
+     *
+     * <p>只有首次登录（没带 userid）才会走到；选了某个账号再失败就是真失败了，
+     * 与原版 {@code if (info_list && !selectedUserId)} 的判断一致。
+     */
+    public static final class MultiAccountException extends IOException {
+        private final java.util.List<com.jello.music.model.UserInfo> accounts;
+
+        MultiAccountException(java.util.List<com.jello.music.model.UserInfo> accounts) {
+            super("该手机绑定多个账号，请选择要登录的账号");
+            this.accounts = java.util.List.copyOf(accounts);
+        }
+
+        public java.util.List<com.jello.music.model.UserInfo> accounts() {
+            return accounts;
+        }
+    }
+
     public static String errorMessage(JsonNode node) {
         for (String k : new String[]{"error", "error_msg", "message"}) {
             JsonNode v = node.get(k);

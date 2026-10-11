@@ -16,11 +16,17 @@
 
 ## A. 两个视图完全没做
 
-- [ ] **登录页**（`src/views/Login.vue`，973 行）
-      - [ ] 三段切换：手机号+验证码 / 邮箱 / 扫码
-      - [ ] 多账号选择流程（`data.info_list` 那条分支）
-      - [ ] 六个接口：`/login`、`/captcha/sent`、`/login/cellphone`、`/login/qr/key|create|check`
-      - [ ] `SigmaUI.vue` 的 view 接线：未登录时自动进登录页、登录成功回主界面、设置栏「切换账号」
+- [~] **登录页**（`src/views/Login.vue`，973 行）
+      - [x] 三段切换：手机号+验证码 / 邮箱 / 扫码
+      - [x] 多账号选择流程（`data.info_list` 那条分支，抛 `MultiAccountException`）
+      - [x] 六个接口：`/login`、`/captcha/sent`、`/login/cellphone`、`/login/qr/key|create|check`
+      - [x] `SigmaUI.vue` 的 view 接线：教程 → 未登录进登录页 → 登录成功回主界面并重拉歌单
+      - [x] 登录态持久化（`AppPrefs`，对应原版 localStorage 的 `MoeData`），
+            优先级：上次登录 > `JELLO_*` 环境变量
+      - [ ] 真实接口联调（需要 `npm run api` + 可用的手机号/邮箱）
+      - [ ] **待用户确认**：原版的 `--primary-color` 全仓库从未定义，CSS 里未定义的 var
+            会让声明作废，所以原版登录页实际渲染出来是灰的。现在按 1:1 留空
+            （`LoginView.PRIMARY = null`）；若想显示粉色改这一个常量即可
 - [ ] **设置页**（`src/views/Settings.vue`，1630 行，4 分类 30+ 项）
       - [ ] 先砍清单：Electron 专属项（托盘菜单、代理、自定义 API 地址、日志导出、
             自动更新、API 模式）在 Java 版没有对应物，需与用户确认取舍

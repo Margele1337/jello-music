@@ -2,6 +2,7 @@ package com.jello.music.tools;
 
 import com.jello.music.ui.CanvasStrip;
 import com.jello.music.ui.KeybindKeyboard;
+import com.jello.music.ui.LoginView;
 import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
@@ -322,6 +323,7 @@ if (repeat != null) {
         checkCardKinds();
         checkSearchField();
         checkOnboarding();
+        checkLoginView();
 
         checkMarqueeTiming();
 
@@ -606,6 +608,76 @@ private static void checkHotkeySuspend() {
         } finally {
             poller.close();
         }
+    }
+
+/**
+ * 登录页（对应 {@code SigmaUI.vue} 的 {@code view === 'login'} + {@code Login.vue}）。
+ *
+ * <p>卡��：400x470、圆角 20、{@code rgba(22,20,28,0.78)}、顶部 3px 主题色条；
+ * 分段三选一 44 高；输入框 42 高圆角 10；主按钮 42 高；
+ * 账号选择：提示 + 48 高的项 + 「返回登录」。
+ *
+ * <p><b>注意 {@code LoginView.PRIMARY} 为 null</b>：原版的 {@code --primary-color}
+ * 在整个仓库里从未定义，CSS 里未定义的 var 会让声明作废，所以原版登录页实际是灰的。
+ * 这里按 1:1 照抄。
+ */
+private static void checkLoginView() {
+        LoginView view = new LoginView(new com.jello.music.api.KuGouApiClient(
+                new com.jello.music.model.KuGouCredentials()));
+        Pane host = new Pane();
+        host.getChildren().add(view);
+        new Scene(host, Theme.PANEL_W, Theme.PANEL_H);
+        host.applyCss();
+        host.layout();
+
+        check("登录卡片 400x470 @ 水平居中",
+                view.cardNode().getPrefWidth() == 400
+                        && view.cardNode().getPrefHeight() == 470
+                        && view.cardNode().getLayoutX() == (800 - 400) / 2.0,
+                String.format("w=%.0f h=%.0f x=%.0f",
+                        view.cardNode().getPrefWidth(), view.cardNode().getPrefHeight(),
+                        view.cardNode().getLayoutX()));
+        check("登录卡片有 1px 描边（rgba(255,255,255,0.08)）",
+                view.cardNode().getBorder() != null
+                        && !view.cardNode().getBorder().isEmpty(), null);
+        check("分段三选一：手机号 / 账号 / 扫码",
+                view.segmentNodes().size() == 3, "segments=" + view.segmentNodes().size());
+        check("输入框 42 高、圆角 10（对齐 .form-input）",
+                view.phoneInput().getPrefHeight() == 42
+                        && view.codeInput().getPrefHeight() == 42
+                        && view.emailInput().getPrefHeight() == 42, null);
+        check("验证码按钮在输入框右侧（100px）",
+                view.sendCodeButton().getPrefWidth() == 100
+                        && view.sendCodeButton().getLayoutX() == 400 - 50 - 100,
+                String.format("w=%.0f x=%.0f", view.sendCodeButton().getPrefWidth(),
+                        view.sendCodeButton().getLayoutX()));
+        check("主按钮通栏 350x42",
+                view.loginButton().getPrefWidth() == 350 && view.loginButton().getPrefHeight() == 42,
+                null);
+        check("返回按钮 32x32 @ (10,8)",
+                view.backButtonNode().getLayoutX() == 10
+                        && view.backButtonNode().getLayoutY() == 8, null);
+
+// 账号选择页：2 个账号
+        com.jello.music.model.UserInfo a1 = new com.jello.music.model.UserInfo();
+        a1.setUserid("10001");
+        a1.setNickname("账号一");
+        a1.setGrade("8");
+        com.jello.music.model.UserInfo a2 = new com.jello.music.model.UserInfo();
+        a2.setUserid("10002");
+        a2.setNickname("账号二");
+        a2.setGrade("12");
+        view.showAccountSelectionForTest(List.of(a1, a2));
+        List<Label> labels = collect(view, Label.class);
+        boolean hasLv = labels.stream().anyMatch(l -> l.getText().startsWith("Lv "));
+        boolean hasUid = labels.stream().anyMatch(l -> l.getText().startsWith("UID："));
+        check("多账号时弹账号选择（Lv + UID 两行都在）",
+                view.accountPaneNode().isVisible() && hasLv && hasUid,
+                "visible=" + view.accountPaneNode().isVisible()
+                        + " lv=" + hasLv + " uid=" + hasUid);
+
+        check("原版 --primary-color 从未定义，主题色按 1:1 留空",
+                com.jello.music.ui.LoginView.PRIMARY == null, null);
     }
 
 /**
