@@ -178,11 +178,15 @@ StackPane overlay = new StackPane(root);
         // ---- 视图切换（原版 SigmaUI.vue 的 view 状态）----
         // 顺序与原版一致：没跑过教程先进教程，跑过但没登录态才进登录页（SigmaUI.vue:174-179）
         if (AppPrefs.shouldShowOnboarding()) {
-            onboarding = new OnboardingView(Theme.PANEL_W, Theme.PANEL_H);
+            Rectangle2D bounds = Screen.getScreens().get(0).getVisualBounds();
+            // 必须用全屏尺寸构造：OnboardingView 会 setClip(一个固定尺寸的矩形)，
+            // 传 800x600 的话整页会被裁成左上角一小块（键盘按全屏算出居中位置后
+            // 被裁掉大半，就是上一版截图里那个样子）。
+            onboarding = new OnboardingView(bounds.getWidth(), bounds.getHeight());
             onboarding.setId("sigma-onboarding");
             onboarding.onKeySelect(code -> status("选中按键 " + code));
             onboarding.onFinish(this::completeOnboarding);
-            buildOnboardingStage();
+            buildOnboardingStage(bounds);
             // 教程要教用户「按右 Shift 呼出」，此时热键必须挂起：
             // 否则用户跟着教程按 Shift，窗口当场就收起来了。
             // 对应原版 SigmaUI 切到 onboarding 时发的 sigma-hotkey-suspend。
@@ -245,8 +249,7 @@ dock = new EdgeDock(stage);
      * <p>对应 mod 的 {@code KeyboardScreen}：单独一页，不是主面板里的一个视图。
      * Sigma 窗口此时还没显示，用户在教程里看到的就只有这一页。
      */
-    private void buildOnboardingStage() {
-        Rectangle2D bounds = Screen.getScreens().get(0).getVisualBounds();
+    private void buildOnboardingStage(Rectangle2D bounds) {
         Stage tut = new Stage();
         tut.initStyle(StageStyle.UNDECORATED);
         tut.setTitle("Jello Music");
@@ -261,6 +264,11 @@ dock = new EdgeDock(stage);
         tut.setAlwaysOnTop(true);
         // Alt+F4 直接走「教程结束」，别让用户把自己关到没有窗口可看
         tut.setOnCloseRequest(e -> completeOnboarding());
+        // 屏幕变了（拔显示器 / 改分辨率）要跟着重排，否则又会被裁掉一块
+        tut.widthProperty().addListener((o, was, now) ->
+                onboarding.layout(now.doubleValue(), tut.getHeight()));
+        tut.heightProperty().addListener((o, was, now) ->
+                onboarding.layout(tut.getWidth(), now.doubleValue()));
         onboardingStage = tut;
     }
 

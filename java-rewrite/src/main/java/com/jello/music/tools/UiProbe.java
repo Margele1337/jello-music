@@ -29,7 +29,11 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.Background;
+import javafx.scene.layout.BackgroundFill;
 import javafx.scene.layout.Region;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -327,7 +331,8 @@ if (repeat != null) {
 
         checkMarqueeTiming();
 
-        writeSnapshot(root, pngPath);
+writeSnapshot(root, pngPath);
+        checkOnboardingFullScreen(pngPath.replace(".png", "-onboarding.png"));
         checkStripBlur();
     }
 
@@ -729,11 +734,83 @@ check("标题是 快捷呼出 / 底部步数 1 / 1",
                         && view.finishButton().getPrefHeight() == 34
                         && view.finishLabel().getText().equals("完成"), null);
 
-        // easeOutBack 端点
+// easeOutBack 端点
         check("入场缓动 easeOutBack 端点正确",
                 Math.abs(OnboardingView.easeOutBack(0)) < 1e-9
                         && Math.abs(OnboardingView.easeOutBack(1) - 1) < 1e-9
                         && OnboardingView.easeOutBack(0.5) > 1, null);
+    }
+
+    /**
+     * 教程页按全屏尺寸单独开窗时的校验 —— 正是这个把「800x600 的视图塞进全屏窗口」
+     * 这种一眼可见的错误挡在构建阶段。
+     *
+     * <p>上一版就是这里没测：探针只在 800x600 下断言，属性全对，但真跑起来
+     * 整页被 {@code setClip} 裁成左上角一块，键盘缺一大半。
+     * 所以除了断言还得把整页截成 PNG（{@code jello-ui-probe-onboarding.png}），
+     * 让人能亲眼核对。
+     */
+    private static void checkOnboardingFullScreen(String pngPath) {
+        // 主屏 visualBounds：1920x1080 减去任务栏
+        final double w = 1920;
+        final double h = 1032;
+
+        OnboardingView view = new OnboardingView(w, h);
+        Pane host = new Pane();
+        // 和 MainApp 里教程窗口的 Scene 填充保持一致，截出来的图才和实际一致
+        host.setBackground(new Background(new BackgroundFill(
+                Color.color(16 / 255.0, 17 / 255.0, 20 / 255.0), null, null)));
+        host.getChildren().add(view);
+        new Scene(host, w, h);
+        host.applyCss();
+        host.layout();
+        view.layout(w, h);
+
+        check("教程页铺满整个窗口（不能是 800x600）",
+                view.getWidth() == w && view.getHeight() == h,
+                "size=" + view.getWidth() + "x" + view.getHeight());
+
+        check("教程页裁剪框覆盖整个窗口",
+                view.getClip() instanceof Rectangle r
+                        && r.getWidth() == w && r.getHeight() == h,
+                "clip=" + view.getClip());
+
+        double scale = view.keyboard().getScaleX();
+        check("全屏下键盘 1:1 原尺寸（不缩放）", Math.abs(scale - 1) < 0.001,
+                String.format("scale=%.4f", scale));
+
+        double kbX = view.keyboard().getLayoutX();
+        double kbY = view.keyboard().getLayoutY();
+        double kbRight = kbX + KeybindKeyboard.plateWidth() * scale;
+        double kbBottom = kbY + KeybindKeyboard.plateHeight() * scale;
+        check("键盘完整落在窗口内（不能被裁掉）",
+                kbX >= 0 && kbY >= 0 && kbRight <= w && kbBottom <= h,
+                String.format("x=%.0f..%.0f y=%.0f..%.0f 窗口 %.0fx%.0f",
+                        kbX, kbRight, kbY, kbBottom, w, h));
+
+        double titleW = view.titleLabel().prefWidth(-1);
+        check("标题水平居中且在键盘上方",
+                Math.abs(view.titleLabel().getLayoutX() + titleW / 2 - w / 2) < 1
+                        && view.titleLabel().getLayoutY() + 40 * scale <= kbY,
+                String.format("title x=%.0f y=%.0f", view.titleLabel().getLayoutX(),
+                        view.titleLabel().getLayoutY()));
+
+        check("底部一行完整落在窗口内",
+                view.finishButton().getLayoutY() + 34 <= h
+                        && view.stepLabel().getLayoutY() >= 0,
+                String.format("done y=%.0f step y=%.0f",
+                        view.finishButton().getLayoutY(), view.stepLabel().getLayoutY()));
+
+        // 入场动画 220ms 后正好收敛到 1.0/1.0；截图前直接摆到收敛态，
+        // 否则截到的是 opacity≈0 的第一帧（探针里没有 Scene 窗口，脉冲不保证跑到）
+        view.setOpacity(1);
+        view.setScaleX(1);
+        view.setScaleY(1);
+        try {
+            writeSnapshot(host, pngPath);
+        } catch (Exception e) {
+            check("教程页整页截图", false, String.valueOf(e));
+        }
     }
 
 /**
