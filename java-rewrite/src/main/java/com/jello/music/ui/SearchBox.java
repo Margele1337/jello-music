@@ -37,6 +37,11 @@ public final class SearchBox extends Pane {
     private static final double ROW_Y0 = 90;
     private static final double ROW_STEP = 210;
 
+    /** 输入文字/占位符的三档透明度，对齐原版 SigmaTextField 的 alpha 公式。 */
+    private static final String FIELD_ALPHA_UNFOCUSED = "rgba(254,254,254,0.2)";
+    private static final String FIELD_ALPHA_FOCUSED_EMPTY = "rgba(254,254,254,0.45)";
+    private static final String FIELD_ALPHA_FOCUSED_TEXT = "rgba(254,254,254,0.9)";
+
     private final SigmaScrollablePanel results = new SigmaScrollablePanel(W, H);
     private final TextField field = new TextField();
     private final Region underline = new Region();
@@ -56,8 +61,12 @@ public final class SearchBox extends Pane {
         field.setPrefSize(490, 70);
         field.setPromptText("Search...");
         field.setFont(Assets.light(25));
-        // TextField 不是 Labeled，没有 setTextFill，文字颜色只能走 CSS
-        field.setStyle("-fx-background-color: transparent; -fx-text-fill: #fefefe;");
+        // TextField 不是 Labeled，没有 setTextFill，文字颜色只能走 CSS。
+        // 原版 SigmaTextField 的 alpha 是 (field20744/2 + 0.4) * (聚焦且有内容 ? 1 : 0.5)，
+        // 即未聚焦 0.2 / 聚焦空 0.45 / 聚焦有内容 0.9。JavaFX 的 prompt 默认是灰的，
+        // 比原版亮一大截，这里全部自己算。
+        field.setStyle("-fx-background-color: transparent; -fx-text-fill: "
+                + FIELD_ALPHA_UNFOCUSED + "; -fx-prompt-text-fill: " + FIELD_ALPHA_UNFOCUSED + ";");
         field.setPadding(new javafx.geometry.Insets(0, 0, 0, 4));
         field.setAlignment(Pos.CENTER_LEFT);
         field.setOnAction(e -> {
@@ -75,11 +84,17 @@ public final class SearchBox extends Pane {
         underline.setBackground(javafx.scene.layout.Background.fill(underlinePaint(0.5)));
         getChildren().add(underline);
 
-        // 聚焦时下划线变不透明；hover 同理，但这个版本的 Node 没有 hovered
-        // 属性可监听，只保留聚焦态。
-        field.focusedProperty().addListener((o, a, b) ->
-                underline.setBackground(javafx.scene.layout.Background.fill(
-                        underlinePaint(b ? 1.0 : 0.5))));
+        // 聚焦时文字提亮：原版 (聚焦且有内容 ? 1 : 0.5) 决定 alpha，
+        // 即聚焦有内容 0.9、聚焦空 0.45，未聚焦一律 0.2
+        field.focusedProperty().addListener((o, a, b) -> {
+            underline.setBackground(javafx.scene.layout.Background.fill(
+                    underlinePaint(b ? 1.0 : 0.5)));
+            boolean hasValue = field.getText() != null && !field.getText().isEmpty();
+            String alpha = !b ? FIELD_ALPHA_UNFOCUSED
+                    : hasValue ? FIELD_ALPHA_FOCUSED_TEXT : FIELD_ALPHA_FOCUSED_EMPTY;
+            field.setStyle("-fx-background-color: transparent; -fx-text-fill: " + alpha
+                    + "; -fx-prompt-text-fill: " + alpha + ";");
+        });
 
         results.setLayoutX(0);
         results.setLayoutY(0);

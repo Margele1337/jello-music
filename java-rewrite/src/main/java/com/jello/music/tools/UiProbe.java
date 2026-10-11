@@ -270,6 +270,7 @@ public final class UiProbe {
 
         checkPlaylistEllipsis(playlists);
         checkRightShift();
+        checkInitialState();
 
         checkMarqueeTiming();
 
@@ -302,7 +303,7 @@ public final class UiProbe {
      * 然后比较两者在封面条区域内的平均水平梯度。模糊必然大幅拉低梯度，
      * 所以「模糊版梯度 &lt; 锐利版的一半」这条断言不会因为素材选得不好而误判。
      */
-    private static void checkStripBlur() throws Exception {
+private static void checkStripBlur() throws Exception {
         int w = (int) Theme.STRIP_W;
         int h = (int) Theme.STRIP_H;
         Image checker = loadCheckerboard(480, 480, 40);
@@ -527,6 +528,35 @@ public final class UiProbe {
     }
 
     /**
+ * 刚构造出来、还没喂任何歌的状态。
+ *
+ * <p>原版 {@code titleLine1 = name || 'Jello Music'}：启动时没有歌也不是空白，
+ * 而是单行 "Jello Music" 落在 y=562、歌手行不渲染。
+ * 这条之前没实现，启动后左下角一直空着。
+ */
+private static void checkInitialState() {
+        PlayerPanel fresh = new PlayerPanel();
+        check("初始态标题是 Jello Music",
+                firstWithText(collect(fresh, Label.class), "Jello Music") != null, null);
+        MarqueeText box = collect(fresh, MarqueeText.class).stream()
+                .filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
+        check("初始态单行标题落在 y=562",
+                box != null && box.getLayoutY() == Theme.TITLE_SINGLE_Y,
+                box == null ? "missing" : String.format("y=%.0f", box.getLayoutY()));
+        check("初始态歌手行不渲染",
+                collect(fresh, MarqueeText.class).stream()
+                        .filter(m -> m.phaseMs() == -1000)
+                        .noneMatch(Node::isVisible), null);
+
+        // 原版 background-size:cover：非正方形封面要盖满再裁，不能 contain 留缝
+        ImageView art = collect(fresh, ImageView.class).stream()
+                .filter(v -> v.getFitWidth() == Theme.ARTWORK_S).findFirst().orElse(null);
+        check("专辑封面按 cover 铺满（fit=114 且有 clip）",
+                art != null && art.getClip() != null,
+                art == null ? "missing" : at(art));
+    }
+
+/**
      * 跑马灯时序断言。直接验 {@link MarqueeText#progress(long, long)} 这段纯函数，
      * 不用真等 8.5 秒，也不受跑测时那一刻墙上时间的影响。
      */

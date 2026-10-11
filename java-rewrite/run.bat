@@ -46,7 +46,9 @@ if errorlevel 1 (
 if /i "%~1"=="probe" (
   echo [2/3] Running pipeline probe...
   echo [3/3] Done.
-  call "%MVN_CMD%" -s settings.xml -q exec:java
+  REM Must name the execution id: exec:java without one does not pick up the
+  REM <mainClass> configured in pom.xml and fails with "parameters mainClass missing".
+  call "%MVN_CMD%" -s settings.xml -q exec:java@probe
   exit /b %errorlevel%
 )
 

@@ -19,7 +19,6 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
-import javafx.scene.control.Label;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
@@ -58,7 +57,6 @@ public class MainApp extends Application {
     private SpectrumView spectrumView;
     private PlayerPanel playerPanel;
     private PlaylistPanel playlistPanel;
-    private Label statusLabel;
     private EdgeDock dock;
     private ElasticReveal reveal;
     private RightShiftPoller rshift;
@@ -117,15 +115,11 @@ public class MainApp extends Application {
             playCurrent(song);
         });
 
-        // ---- 状态：放在右栏空白处 ----
-        // 原版这里没有状态文字；早先放在左下角 (8,576) 会和歌手名重叠成一团糊。
-        statusLabel = new Label("加载中…");
-        statusLabel.setFont(Assets.light(11));
-        statusLabel.setTextFill(Theme.TEXT_DIM);
-        statusLabel.setLayoutX(264);
-        statusLabel.setLayoutY(14);
-        statusLabel.setPrefWidth(300);
-        root.getChildren().add(statusLabel);
+        // ---- 状态 ----
+        // 原版右栏除搜索框外没有任何文字，之前挂过一个 Label 当状态提示，
+        // 结果「加载歌单失败: null」直接压在搜索框上方，1:1 做不到。
+        // 现在只写 stderr（run.bat / jpackage 的控制台能看到），不占面板像素。
+        status("加载中…");
 
         StackPane overlay = new StackPane(root);
         reveal = new ElasticReveal(overlay);
@@ -193,7 +187,7 @@ public class MainApp extends Application {
                     }
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> status("加载歌单失败: " + e.getMessage()));
+                Platform.runLater(() -> status("加载歌单失败 -> " + describe(e)));
             }
         });
     }
@@ -216,7 +210,7 @@ public class MainApp extends Application {
                     }
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> status("加载歌曲失败: " + e.getMessage()));
+                Platform.runLater(() -> status("加载歌曲失败 -> " + describe(e)));
             }
         });
     }
@@ -241,7 +235,7 @@ public class MainApp extends Application {
                     status(hits.isEmpty() ? "没有找到结果" : "找到 " + hits.size() + " 首");
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> status("搜索失败: " + e.getMessage()));
+                Platform.runLater(() -> status("搜索失败 -> " + describe(e)));
             }
         });
     }
@@ -273,7 +267,7 @@ public class MainApp extends Application {
                     startPlayback(url);
                 });
             } catch (Exception e) {
-                Platform.runLater(() -> status("取直链失败: " + e.getMessage()));
+                Platform.runLater(() -> status("取直链失败 -> " + describe(e)));
             }
         });
     }
@@ -449,10 +443,32 @@ public class MainApp extends Application {
     }
 
     private void status(String text) {
-        if (statusLabel != null) {
-            Platform.runLater(() -> statusLabel.setText(text));
+        // 频谱那个 AnimationTimer 每帧都会喂状态进来，不去重会把控制台刷爆
+        if (text.equals(lastStatus)) {
+            return;
         }
+        lastStatus = text;
+        System.err.println("[Jello] " + text);
     }
+
+    /**
+     * 失败信息不能只打 {@code e.getMessage()}：{@code InterruptedException} 之类
+     * 的 message 就是 null，界面上只会看到「加载歌单失败: null」，等于没报错。
+     * 带上异常类名，并在 API 没起来时直接点出该开哪个命令。
+     */
+    private String describe(Throwable e) {
+        String msg = e.getMessage();
+        StringBuilder sb = new StringBuilder(e.getClass().getSimpleName());
+        if (msg != null && !msg.isBlank()) {
+            sb.append(": ").append(msg);
+        }
+        if (e instanceof java.net.ConnectException || e instanceof java.io.IOException) {
+            sb.append("（本地 KuGou API 没起来？在仓库根目录执行 npm run api，端口 6521）");
+        }
+        return sb.toString();
+    }
+
+    private String lastStatus = "";
 
     @Override
     public void stop() {

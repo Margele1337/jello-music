@@ -75,6 +75,7 @@ public final class PlayerPanel extends Pane {
         artwork.setFitWidth(Theme.ARTWORK_S);
         artwork.setFitHeight(Theme.ARTWORK_S);
         artwork.setPreserveRatio(true);
+        artwork.setMouseTransparent(true);
         Region artBox = new Region();
         artBox.setBackground(javafx.scene.layout.Background.fill(Theme.ARTWORK_BG));
         // 原版 box-shadow: inset 0 0 0 1px rgba(1,1,1,0.35)，
@@ -167,6 +168,10 @@ public final class PlayerPanel extends Pane {
         // 展开时必须让鼠标穿透，否则这 41px 会挡住左栏歌单和频谱按钮
         dockTrigger.setMouseTransparent(true);
         getChildren().add(dockTrigger);
+
+        // 原版初始态就是「没有歌」：标题行显示 "Jello Music"（单行，y=562），
+        // 歌手行不渲染。不显式铺一次的话 Label 是空的，启动后左下角一片空白。
+        setSong(null, null, null);
     }
 
     /** 收起态下点击 41px 触发条滑出。 */
@@ -255,24 +260,73 @@ public final class PlayerPanel extends Pane {
     // ---------- 对外接口 ----------
 
     public void setSong(String titleText, String artist, String coverUrl) {
-        title.setText(titleText == null ? "" : titleText);
+        // 原版 titleLine1 = name || 'Jello Music'：没有歌曲时不是空白，
+        // 而是单行显示 "Jello Music"（.smp-title.single，y=562）
+        String name = titleText == null || titleText.isBlank() ? "Jello Music" : titleText;
+        title.setText(name);
         boolean hasArtist = artist != null && !artist.isBlank();
         subtitle.setText(hasArtist ? artist : "");
         // 原版 .smp-title.single：无歌手时标题独占一行并下移到 y=562，歌手行不渲染
         subtitle.setVisible(hasArtist);
         title.setLayoutY(hasArtist ? Theme.TITLE_Y : Theme.TITLE_SINGLE_Y);
-        // 原版：无歌手时标题单行居中（single 类），有歌手时两行
-        if (coverUrl != null && !coverUrl.isBlank()) {
-            try {
-                artwork.setImage(new Image(coverUrl, Theme.ARTWORK_S, Theme.ARTWORK_S, true, true));
-            } catch (Exception ex) {
-                artwork.setImage(Assets.image("artwork.png"));
-            }
-        } else {
-            artwork.setImage(Assets.image("artwork.png"));
-        }
+        applyCover(coverUrl);
         timeLeft.setText("00:00");
         timeRight.setText("00:00");
+    }
+
+    /**
+     * 铺专辑封面。
+     *
+     * <p>原版是 CSS {@code background-size: cover} + {@code background-position: center}：
+     * 等比放大到盖满 114x114，再居中裁掉溢出部分。
+     * {@code ImageView.setPreserveRatio(true)} 是「contain」——两边会留缝，
+     * 非正方形的封面就对不上。这里自己按 cover 算 fit 尺寸，再用 clip 裁回 114x114。
+     *
+     * <p>clip 用的是<b>节点本地坐标</b>：图片为了盖满而向左/上挪了 {@code (114-fw)/2}，
+     * 所以可见区要反过来挪回去，即 {@code (fw-114)/2}。
+     */
+    private void applyCover(String coverUrl) {
+        Image fallback = Assets.image("artwork.png");
+        if (coverUrl == null || coverUrl.isBlank()) {
+            layoutCover(fallback);
+            return;
+        }
+        // true = 后台加载：构造函数返回时宽高还是 0，算出来的比例是 NaN，什么都不画。
+        // 所以等 progress 到 1 再回 FX 线程铺。
+        Image img = new Image(coverUrl, true);
+        if (img.getProgress() < 1.0) {
+            img.progressProperty().addListener((o, was, now) -> {
+                if (now.doubleValue() >= 1.0) {
+                    javafx.application.Platform.runLater(() ->
+                            layoutCover(img.getException() == null ? img : fallback));
+                }
+            });
+            return;
+        }
+        layoutCover(img.getException() == null ? img : fallback);
+    }
+
+    private void layoutCover(Image img) {
+        double s = Theme.ARTWORK_S;
+        double ar = img.getWidth() / img.getHeight();
+        double fw;
+        double fh;
+        if (ar > 1) {
+            fh = s;
+            fw = s * ar;
+        } else {
+            fw = s;
+            fh = s / ar;
+        }
+        double dx = (s - fw) / 2;
+        double dy = (s - fh) / 2;
+        artwork.setPreserveRatio(false);
+        artwork.setFitWidth(fw);
+        artwork.setFitHeight(fh);
+        artwork.setLayoutX(Theme.ARTWORK_X + dx);
+        artwork.setLayoutY(Theme.ARTWORK_Y + dy);
+        artwork.setClip(new javafx.scene.shape.Rectangle(-dx, -dy, s, s));
+        artwork.setImage(img);
     }
 
     public void onPrev(Runnable r) {
