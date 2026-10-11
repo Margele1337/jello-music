@@ -14,7 +14,8 @@ import java.util.function.Consumer;
  *
  * <p>容器 550x506 贴在右栏 (250,0)，z-index 2（在左右底板之上、41px 触发条之下）。
  * 输入框 490x70 @ (30,14)，底部一条 2px 的 rgba(254,254,254,0.5) 下划线，
- * hover/聚焦时变不透明。��果卡片 183x220，x=10/183/356，y=90+row*210。
+ * hover/聚焦时变不透明。结果区是 {@link SigmaScrollablePanel}（550x506，滚动条隐藏），
+ * 卡片 183x220，x=10/183/356，y=90+row*210，超出一屏的部分靠滚轮往下翻。
  *
  * <p><b>与原版的唯一取舍</b>：原版输入框的字符是「先渲染进 canvas 再把 input 文字设为
  * transparent」的绕法（为了自定义点阵字体）。Java 侧直接用带字体的 TextField，
@@ -36,7 +37,7 @@ public final class SearchBox extends Pane {
     private static final double ROW_Y0 = 90;
     private static final double ROW_STEP = 210;
 
-    private final Pane results = new Pane();
+    private final SigmaScrollablePanel results = new SigmaScrollablePanel(W, H);
     private final TextField field = new TextField();
     private final Region underline = new Region();
 
@@ -82,9 +83,6 @@ public final class SearchBox extends Pane {
 
         results.setLayoutX(0);
         results.setLayoutY(0);
-        results.setPrefSize(W, H);
-        // 结果区不能溢出到下方的封面条上，原版由 overflow 管着
-        results.setClip(new javafx.scene.shape.Rectangle(W, H - 90));
         getChildren().add(results);
     }
 
@@ -102,21 +100,33 @@ public final class SearchBox extends Pane {
     }
 
     public void clear() {
-        results.getChildren().clear();
+        results.viewport().getChildren().clear();
+        results.setContentHeight(0);
     }
 
-    /** 铺一排搜索结果（只铺前两行，超出的先留着但不显示，等做滚动区）。 */
+    /** 结果区的滚动容器，外部（校验工具）需要查滚动状态时用。 */
+    public SigmaScrollablePanel resultsPanel() {
+        return results;
+    }
+
+    /**
+     * 铺搜索结果。
+     *
+     * <p>原版把卡片绝对定位在滚动容器里（{@code x=[10,183,356][i%3]}、
+     * {@code y=90+floor(i/3)*210}），超出 506 高的部分靠 overflow-y:auto 滚动看到，
+     * 没有任何「只显示前 N 张」的逻辑——之前的实现铺满两行就 break，
+     * 于是第 4 首之后的结果根本点不到。现在全部铺出来，内容高度按最后一张卡片的底边算。
+     */
     public void showResults(List<Song> songs) {
-        results.getChildren().clear();
+        Pane viewport = results.viewport();
+        viewport.getChildren().clear();
+        double bottom = 0;
         for (int i = 0; i < songs.size(); i++) {
             Song s = songs.get(i);
             int col = i % 3;
             int row = i / 3;
             double x = COL_X[col];
             double y = ROW_Y0 + row * ROW_STEP;
-            if (y + CARD_H > H) {
-                break;
-            }
             ThumbnailCard card = new ThumbnailCard(
                     s.getTitle(), s.getArtist(), s.getCoverUrl(), false);
             card.setLayoutX(x);
@@ -127,7 +137,9 @@ public final class SearchBox extends Pane {
                     onPick.accept(picked);
                 }
             });
-            results.getChildren().add(card);
+            viewport.getChildren().add(card);
+            bottom = Math.max(bottom, y + CARD_H);
         }
+        results.setContentHeight(bottom);
     }
 }

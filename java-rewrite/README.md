@@ -63,7 +63,8 @@ set JELLO_HASH=歌曲hash
 |---|---|
 | 拖动面板 | 移动窗口 |
 | 拖到屏幕最右侧 | 自动贴边收起（露出 40px） |
-| `Shift+R` | 收起 / 展开（全局热键待接入，暂用窗口内快捷键代替） |
+| 右 Shift（全局） | 收起 / 展开，1:1 复刻原版 `globalKeyService.js` |
+| 搜索结果区 | 滚轮上下翻，滚动条按原版隐藏 |
 | 频谱 | 后台线程拉流解码 + FFT，实时绘制 |
 
 ## 当前已跑通的部分
@@ -120,19 +121,53 @@ sigmarebase 是 Minecraft 客户端模组，它的音乐播放器 UI 依赖 `glS
 - `Header` 没有 `getSampleRate()` / `getChannels()`，用 `frequency()` 与 `SampleBuffer.getChannelCount()`
 - `OBUFFERSIZE` / `MAXCHANNELS` 挂在 `Obuffer` 上，不在 `Decoder`
 
-## 暂缓的依赖
+## 全局热键：为什么是 JNA 而不是 jnativehook
 
-`com.github.kohlschutterboy:jnativehook`（全局热键，替代 `uiohook-napi`）在本机可达的仓库里都取不到：阿里云 `public`/`central` 无此构件，JitPack 需授权，Maven Central 不可达。已在 `pom.xml` 中注释掉，接入全局热键时需补回。它含 `.dll`/`.dylib`/`.so`，`jpackage` 打包要一并处理。
+原版在 Windows 上**不用低级键盘钩子**，而是每 8ms 轮询 `GetAsyncKeyState(0xA1)`
+（见 `electron/services/globalKeyService.js` 的注释）：游戏普遍注册 Raw Input，
+会让其它进程的 `WH_KEYBOARD_LL` 钩子收不到按键，表现为「游戏内不亮」。轮询游戏里照样有效。
+
+Java 侧按同一套方案实现（`system/RightShiftPoller.java`），只把 FFI 换成 JNA：
+
+- 原先考虑的 `com.github.kohlschutterboy:jnativehook` 在本机可达的仓库里都没有
+  （阿里云 public/central 无此构件，JitPack 需授权，Maven Central 不可达）；
+- `net.java.dev.jna:jna` 阿里云镜像上有，只声明了 `user32.dll` 里的一个函数，
+  不引 `jna-platform`。因为项目按模块运行，jar 要走 module path，
+  `module-info.java` 里对应 `requires com.sun.jna;`（JNA 的 automatic-module 名字）。
+- 取不到原生热键（非 Windows / JNA 加载失败）时不崩，退回窗口内 `Shift+R`。
+  两者不能同时存在——一次按键触发两次会先收起又立刻展开，等于没反应。
+
+## JavaFX 21 做不到的 CSS（以及绕法）
+
+| 原版 CSS | JavaFX 21.0.5 | 本项目的绕法 |
+|---|---|---|
+| `text-overflow: ellipsis` | `Labeled.setTextTruncation` 是 JavaFX 22+ 才有的，21 上没有；`Label` 只会硬裁掉溢出部分，尾部一个字都不剩 | `ui/SigmaText.truncate` 1:1 复刻原版 `truncateSigmaText`：超宽就逐字截到放得下为止再补一个 `…` |
+| `overflow-y: auto` + 隐藏滚动条 | `ScrollPane` 的 `.viewport` 有白色模期背景，只写 `transparent` 管不到它 | `ui/SigmaScrollablePanel`：Pane + 内层 Pane 平移 + clip，滚轮位移直接取 `deltaY` |
+| `transform: scale()` 绕中心 | `Node` 没有公开的 `setPivotX`（`javap` 实测） | 按缩放比例把 `layoutX/Y` 往回挪半个差值，等价于绕中心缩放 |
 
 ## 包结构
 
 ```
 com.jello.music
 ├── api/KuGouApiClient.java     调本地 KuGouMusicApi
-├── model/KuGouCredentials.java  登录态与 Authorization 拼装
+├── api/Playlist.java           歌单元数据
+├── model/KuGouCredentials.java 登录态与 Authorization 拼装
+├── model/Song.java             歌曲
 ├── player/Fft.java             radix-2 FFT + Hann 窗
 ├── player/SpectrumTap.java     旁路拉流解码取 PCM
-└── tools/PipelineProbe.java    端到端探针
+├── player/SpectrumFeed.java    频谱数据的后台供给
+├── player/PlayQueue.java       播放队列与循环模式
+├── system/RightShiftPoller.java 全局右 Shift（Win32 GetAsyncKeyState 轮询）
+├── ui/                         JavaFX 界面，坐标全部取自 Theme
+├── tools/PipelineProbe.java    端到端链路探针（无窗口）
+├── tools/UiProbe.java          静默 UI 校验（不弹窗，48 项断言）
+└── tools/PlaybackProbe.java    静音播放链路实测（不发声）
 ```
 
-`ui/`（JavaFX 界面）、`system/`（托盘/热键/全屏检测）、`MainApp.java` 尚未开始。
+## 三种校验
+
+```bat
+run.bat probe        :: 端到端链路：api -> 直链 -> 解码 -> FFT
+run.bat probe-ui     :: 静默 UI：离屏渲染 + 48 项断言，不弹窗不抢焦点
+run.bat probe-play   :: 静音播放：真实解码/定位/切歌，音量钉 0
+```

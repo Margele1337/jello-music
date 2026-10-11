@@ -4,8 +4,12 @@ import com.jello.music.ui.CanvasStrip;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SearchBox;
+import com.jello.music.ui.SigmaScrollablePanel;
+import com.jello.music.ui.SigmaText;
 import com.jello.music.ui.ThumbnailCard;
 import com.jello.music.model.Song;
+import com.jello.music.system.RightShiftPoller;
+import com.jello.music.ui.Assets;
 import com.jello.music.ui.MarqueeText;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.Theme;
@@ -32,6 +36,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 静默 UI 校验 —— <b>不显示任何窗口、不发声</b>。
@@ -232,27 +238,38 @@ public final class UiProbe {
                     new Song("H1", "歌名一", "歌手一", "专辑一", null, 1000),
                     new Song("H2", "歌名二", "歌手二", "专辑二", null, 2000),
                     new Song("H3", "歌名三", "歌手三", "专辑三", null, 3000),
-                    new Song("H4", "歌名四", "歌手四", "专辑四", null, 4000)));
+                    new Song("H4", "歌名四", "歌手四", "专辑四", null, 4000),
+                    new Song("H5", "歌名五", "歌手五", "专辑五", null, 5000),
+                    new Song("H6", "歌名六", "歌手六", "专辑六", null, 6000)));
             root.layout();
             List<ThumbnailCard> cards = collect(root, ThumbnailCard.class);
-            check("结果卡片铺了 3 列（超出面板高度的不显示）", cards.size() == 3,
+            // 原版滚动容器里没有「只显示前 N 张」的逻辑，
+            // 之前铺满两行就 break，第 4 首之后的结果根本点不到。
+            check("结果卡片全部铺出（6 张，第 4 张起靠滚动看到）", cards.size() == 6,
                     "cards=" + cards.size());
-            // 列 x=10/183/356，行 y=90
+            // 列 x=10/183/356，行 y=90 / 90+210
             double[] wantX = {10, 183, 356};
-            boolean colsOk = cards.size() == 3;
-            for (int i = 0; i < cards.size() && i < 3; i++) {
+            boolean colsOk = cards.size() == 6;
+            for (int i = 0; i < cards.size(); i++) {
                 ThumbnailCard c = cards.get(i);
-                colsOk &= c.getLayoutX() == wantX[i] && c.getLayoutY() == 90
+                colsOk &= c.getLayoutX() == wantX[i % 3]
+                        && c.getLayoutY() == (i < 3 ? 90 : 300)
                         && c.getPrefWidth() == 183 && c.getPrefHeight() == 220;
             }
-            check("卡片坐标/尺寸 == 原版网格", colsOk, cards.isEmpty() ? "no cards"
+            check("卡片坐标/尺寸 == 原版网格（两行）", colsOk, cards.isEmpty() ? "no cards"
                     : String.format("first x=%.0f y=%.0f %.0fx%.0f",
                             cards.get(0).getLayoutX(), cards.get(0).getLayoutY(),
                             cards.get(0).getPrefWidth(), cards.get(0).getPrefHeight()));
+            checkSearchScroll(box);
             box.clear();
             check("clear() 后卡片清空", collect(root, ThumbnailCard.class).isEmpty(),
                     "left=" + collect(root, ThumbnailCard.class).size());
+            check("clear() 后滚动量归零", box.resultsPanel().maxScroll() == 0
+                    && box.resultsPanel().scroll() == 0, null);
         }
+
+        checkPlaylistEllipsis(playlists);
+        checkRightShift();
 
         checkMarqueeTiming();
 
@@ -370,6 +387,143 @@ public final class UiProbe {
         int g = (argb >> 8) & 0xFF;
         int b = argb & 0xFF;
         return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+
+    /**
+     * 结果区滚动。
+     *
+     * <p>原版 {@code SigmaScrollablePanel} 是 {@code overflow-y:auto} + 隐藏滚动条，
+     * 滚轮位移直接取 deltaY，内容高度由最后一张卡片底边决定。
+     * 这里走 {@link SigmaScrollablePanel#onWheel(double)}——也就是 {@code onScroll}
+     * 处理器里那一行位移逻辑（{@code ScrollEvent} 只有全参构造，造一个出来很别扭）。
+     */
+    private static void checkSearchScroll(SearchBox box) {
+        SigmaScrollablePanel panel = box.resultsPanel();
+        check("结果区是 SigmaScrollablePanel 550x506 @ (0,0) 且有 clip",
+                panel.getPrefWidth() == 550 && panel.getPrefHeight() == 506
+                        && panel.getLayoutX() == 0 && panel.getLayoutY() == 0
+                        && panel.getClip() != null,
+                String.format("x=%.0f y=%.0f %.0fx%.0f",
+                        panel.getLayoutX(), panel.getLayoutY(),
+                        panel.getPrefWidth(), panel.getPrefHeight()));
+        // 最后一张卡片底边 = 300 + 220 = 520，比视口 506 高 14px
+        check("内容高度 == 最后一张卡片底边 520", panel.contentHeight() == 520,
+                "content=" + panel.contentHeight());
+        check("最大滚动量 == 520-506 = 14", panel.maxScroll() == 14,
+                "max=" + panel.maxScroll());
+
+        panel.onWheel(120);
+        check("滚轮下滚被钳制在底部（viewport y=-14）",
+                panel.scroll() == 14 && panel.viewport().getLayoutY() == -14,
+                String.format("scroll=%.0f y=%.0f",
+                        panel.scroll(), panel.viewport().getLayoutY()));
+        panel.onWheel(-120);
+        check("反向滚动回到顶部", panel.scroll() == 0 && panel.viewport().getLayoutY() == 0,
+                String.format("scroll=%.0f y=%.0f",
+                        panel.scroll(), panel.viewport().getLayoutY()));
+
+        // 只有一行（底边 310 < 506）时根本不该有滚动量
+        box.showResults(List.of(
+                new Song("H1", "歌名一", "歌手一", "专辑一", null, 1000),
+                new Song("H2", "歌名二", "歌手二", "专辑二", null, 2000),
+                new Song("H3", "歌名三", "歌手三", "专辑三", null, 3000)));
+        box.resultsPanel().onWheel(120);
+        check("内容不满一屏时滚轮无效",
+                box.resultsPanel().maxScroll() == 0 && box.resultsPanel().scroll() == 0,
+                String.format("max=%.0f scroll=%.0f",
+                        box.resultsPanel().maxScroll(), box.resultsPanel().scroll()));
+    }
+
+    /**
+     * 歌单文字省略号。
+     *
+     * <p>原版 {@code SigmaPlaylistPanel} 是唯一给 {@code SigmaText} 传 {@code truncate}
+     * 的地方：超宽时按 {@code truncateSigmaText} 截断并补一个 '…'。
+     * 之前 Java 侧只 clip，长名字直接被切掉半个字，尾部一个字都不剩。
+     */
+    private static void checkPlaylistEllipsis(PlaylistPanel panel) {
+        String longName = "这是一个特别长的歌单名字用来验证省略号截断是否按原版算法工作";
+        panel.setItems(List.of("我喜欢", longName));
+        List<Label> rows = collect(panel, Label.class).stream()
+                .filter(l -> l.getLayoutX() == 8)
+                .toList();
+        check("歌单两行都在", rows.size() == 2, "rows=" + rows.size());
+
+        double boxW = Theme.PLAYLIST_W - 16;   // 面板 padding 4px 8px
+        if (rows.size() == 2) {
+            Label shortRow = rows.get(0);
+            Label longRow = rows.get(1);
+            check("放得下的文字原样保留", "我喜欢".equals(shortRow.getText()),
+                    "text=" + shortRow.getText());
+            check("超宽文字补省略号（对齐 text-overflow:ellipsis）",
+                    longRow.getText().endsWith("…") && !longRow.getText().equals(longName),
+                    "text=" + longRow.getText());
+            double w = SigmaText.measure(longRow.getText(), longRow.getFont());
+            check("截断后宽度落在盒宽内", w <= boxW + 0.5,
+                    String.format("%.1f <= %.0f", w, boxW));
+        }
+
+        // 纯函数断言：放得下不动、放不下截断、极端窄盒只剩省略号
+        javafx.scene.text.Font font = Assets.light(13);
+        check("truncate 放得下时原样返回",
+                SigmaText.truncate("我喜欢", font, boxW).equals("我喜欢"), null);
+        check("truncate 放不下时以 '…' 结尾",
+                SigmaText.truncate(longName, font, boxW).endsWith("…"), null);
+        String tiny = SigmaText.truncate(longName, font, 20);
+        check("极窄盒只留省略号且不超宽",
+                tiny.equals("…") && SigmaText.measure(tiny, font) <= 20,
+                "text=" + tiny);
+    }
+
+    /**
+     * 全局 RSHIFT 热键。
+     *
+     * <p>只断言常量与「按下沿才触发」的状态机——真的按 RSHIFT 会影响正在做的事，
+     * 而且校验跑的时候人未必在键盘前。原生能力用 {@code isNativeSupported()} 探一下，
+     * 触发逻辑则注入假的按键状态，确定性地跑一遍。
+     */
+    private static void checkRightShift() {
+        check("RSHIFT 虚拟键码 == 0xA1（对齐原版）",
+                RightShiftPoller.VK_RSHIFT == 0xa1, null);
+        check("轮询间隔 == 8ms（对齐原版 POLL_INTERVAL_MS）",
+                RightShiftPoller.POLL_INTERVAL_MS == 8, null);
+        check("本机可加载 Win32 GetAsyncKeyState", RightShiftPoller.isNativeSupported(), null);
+
+        AtomicBoolean down = new AtomicBoolean(false);
+        AtomicInteger hits = new AtomicInteger();
+        RightShiftPoller poller = new RightShiftPoller(vk -> down.get(), 5,
+                hits::incrementAndGet);
+        try {
+            Thread.sleep(60);
+            check("未按下时不触发", hits.get() == 0, "hits=" + hits.get());
+
+            down.set(true);
+            Thread.sleep(60);
+            check("按下沿触发一次", hits.get() == 1, "hits=" + hits.get());
+
+            Thread.sleep(60);
+            check("按住不放不连发", hits.get() == 1, "hits=" + hits.get());
+
+            // 对应原版 setGlobalKeySuspended：新手教程里用户要按 Shift，得挂起
+            poller.setSuspended(true);
+            down.set(false);
+            Thread.sleep(60);
+            down.set(true);
+            Thread.sleep(80);
+            check("挂起期间按 RSHIFT 不触发", hits.get() == 1, "hits=" + hits.get());
+
+            poller.setSuspended(false);
+            down.set(false);
+            Thread.sleep(60);
+            down.set(true);
+            Thread.sleep(80);
+            check("恢复后再次触发", hits.get() == 2, "hits=" + hits.get());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            check("热键状态机校验未被打断", false, e.toString());
+        } finally {
+            poller.close();
+        }
     }
 
     /**

@@ -6,6 +6,7 @@ import com.jello.music.model.KuGouCredentials;
 import com.jello.music.model.Song;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
+import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.ElasticReveal;
@@ -41,7 +42,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link MediaPlayer} 出声，{@link SpectrumFeed}（后台线程 + JLayer + FFT）画频谱。
  * JavaFX 的 MediaPlayer 不吐 PCM，拿不到频谱数据，这是 Java 侧必须自己解决的部分。
  *
- * <p><b>快捷键</b>：Shift+R 收起/展开（全局热键待接入）。
+ * <p><b>快捷键</b>：全局右 Shift 收起/展开。原版 Electron 走
+ * {@code globalKeyService.js} 的 Windows 分支（每 8ms 轮询 {@code GetAsyncKeyState(0xA1)}），
+ * Java 侧由 {@link RightShiftPoller} 1:1 复刻。取不到原生热键时（非 Windows / JNA 加载失败）
+ * 退回窗口内的 Shift+R。
  */
 public class MainApp extends Application {
 
@@ -57,6 +61,7 @@ public class MainApp extends Application {
     private Label statusLabel;
     private EdgeDock dock;
     private ElasticReveal reveal;
+    private RightShiftPoller rshift;
 
     private final PlayQueue queue = new PlayQueue();
     private final AtomicInteger requestSeq = new AtomicInteger();
@@ -127,11 +132,17 @@ public class MainApp extends Application {
 
         Scene scene = new Scene(overlay, Theme.PANEL_W, Theme.PANEL_H);
         scene.setFill(Color.TRANSPARENT);
-        scene.setOnKeyPressed(e -> {
-            if (e.getCode() == javafx.scene.input.KeyCode.R && e.isShiftDown()) {
-                toggleDock();
-            }
-        });
+        // 全局右 Shift 收起/展开。回调在轮询线程上，必须切回 FX 线程。
+        rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock));
+        if (rshift == null) {
+            // 拿不到原生热键才退回窗口内快捷键；两者同时存在会一次按键触发两次
+            // （先收起又立刻展开，等于没反应）。
+            scene.setOnKeyPressed(e -> {
+                if (e.getCode() == javafx.scene.input.KeyCode.R && e.isShiftDown()) {
+                    toggleDock();
+                }
+            });
+        }
         stage.setScene(scene);
         stage.setAlwaysOnTop(true);
 
@@ -453,6 +464,9 @@ public class MainApp extends Application {
         }
         if (feed != null) {
             feed.close();
+        }
+        if (rshift != null) {
+            rshift.close();
         }
         disposePlayer();
     }

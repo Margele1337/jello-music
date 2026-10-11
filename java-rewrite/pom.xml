@@ -17,7 +17,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <javafx.version>21.0.5</javafx.version>
     <jackson.version>2.17.2</jackson.version>
-    <jnativehook.version>2.2.3</jnativehook.version>
+    <jna.version>5.14.0</jna.version>
   </properties>
 
   <dependencies>
@@ -69,18 +69,18 @@
       <version>${jackson.version}</version>
     </dependency>
 
-    <!-- 全局热键（RSHIFT）：替代 uiohook-napi，含本地库。
-         暂时移除：com.github.kohlschutterboy:jnativehook 在本机可达的仓库里都没有
-         （阿里云 public/central 无此构件，JitPack 需授权，Maven Central 不可达）。
-         接入全局热键时需在能联网的环境补回，并注意它是含 .dll/.dylib/.so 的本地库依赖，
-         jpackage 打包要一并处理。 -->
-    <!--
+    <!-- 全局热键（RSHIFT）：替代原版 uiohook-napi 的 Win32 分支。
+         原版在 Windows 上不用低级键盘钩子，而是每 8ms 轮询 user32 的 GetAsyncKeyState
+         （游戏普遍注册 Raw Input，会让 WH_KEYBOARD_LL 钩子收不到按键），所以这里只需要
+         一个能调 Win32 的 FFI。原先考虑的 com.github.kohlschutterboy:jnativehook
+         在本机可达的仓库里都没有（阿里云 public/central 无此构件，JitPack 需授权，
+         Maven Central 不可达）；JNA 阿里云镜像上有，且是纯 Java 声明 + 自带本地库，
+         jpackage 只需把 jna.jar 一起带上。 -->
     <dependency>
-      <groupId>com.github.kohlschutterboy</groupId>
-      <artifactId>jnativehook</artifactId>
-      <version>${jnativehook.version}</version>
+      <groupId>net.java.dev.jna</groupId>
+      <artifactId>jna</artifactId>
+      <version>${jna.version}</version>
     </dependency>
-    -->
 
     <dependency>
       <groupId>org.slf4j</groupId>
