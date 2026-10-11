@@ -21,6 +21,9 @@
       - [x] 多账号选择流程（`data.info_list` 那条分支，抛 `MultiAccountException`）
       - [x] 六个接口：`/login`、`/captcha/sent`、`/login/cellphone`、`/login/qr/key|create|check`
       - [x] `SigmaUI.vue` 的 view 接线：教程 → 未登录进登录页 → 登录成功回主界面并重拉歌单
+      - [x] 教程按 mod 的 `KeyboardScreen` 做法单独开一个铺满主屏的无边框窗口，
+            点「完成」才显示 800x600 的 Sigma 窗口（全屏下键盘按 1:1 原尺寸显示，
+            挤在 800x600 里要缩到 0.649）
       - [x] 登录态持久化（`AppPrefs`，对应原版 localStorage 的 `MoeData`），
             优先级：上次登录 > `JELLO_*` 环境变量
       - [ ] 真实接口联调（需要 `npm run api` + 可用的手机号/邮箱）

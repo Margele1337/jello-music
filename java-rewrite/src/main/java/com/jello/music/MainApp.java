@@ -22,6 +22,7 @@ import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.Pane;
@@ -29,6 +30,7 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.paint.Color;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
@@ -76,6 +78,17 @@ private EdgeDock dock;
     private StackPane playerView;
     private OnboardingView onboarding;
     private LoginView login;
+    /**
+     * 教程独占的���屏窗口。点「完成」之前 Sigma 主窗口不显示。
+     *
+     * <p>原版（Electron）是 800x600 面板内的一个视图，但 mod 那边
+     * {@code KeyboardScreen} 是铺满整个游戏窗口的一整页——挤在 800x600 里键盘要
+     * 缩到 0.649 才能塞下，全屏下则按 1:1 原尺寸显示。两者都留着，按 mod 的做法来。
+     */
+    private Stage onboardingStage;
+
+    /** Sigma 主窗口（800x600）。教程阶段不显示，点「完成」后才 show()。 */
+    private Stage sigmaStage;
     /** 登录态：启动时从 AppPrefs 读回，没有就走环境变量凭据。 */
     private final KuGouCredentials credentials = new KuGouCredentials();
     private com.jello.music.model.UserInfo userInfo;
@@ -93,8 +106,10 @@ private EdgeDock dock;
     private List<PlaylistTab> tabs = List.of();
     private String currentDirectUrl;
 
-    @Override
+@Override
     public void start(Stage stage) {
+        // start(Stage) 的参数只在 start() 可见，但教程结束时要在这里之外把窗口显示出来
+        sigmaStage = stage;
         // 预热字体，避免首帧字体回退导致排版跳动
         Assets.light(14);
 
@@ -166,18 +181,13 @@ StackPane overlay = new StackPane(root);
             onboarding = new OnboardingView(Theme.PANEL_W, Theme.PANEL_H);
             onboarding.setId("sigma-onboarding");
             onboarding.onKeySelect(code -> status("选中按键 " + code));
-            onboarding.onFinish(() -> {
-                AppPrefs.setOnboardingDone();
-                afterOnboarding();
-            });
-            stageHolder.getChildren().add(onboarding);
+            onboarding.onFinish(this::completeOnboarding);
+            buildOnboardingStage();
             // 教程要教用户「按右 Shift 呼出」，此时热键必须挂起：
             // 否则用户跟着教程按 Shift，窗口当场就收起来了。
             // 对应原版 SigmaUI 切到 onboarding 时发的 sigma-hotkey-suspend。
             // 注意此刻 rshift 还没建（建在 Scene 之后），所以统一交给 syncHotkeySuspend()
             syncHotkeySuspend();
-        } else {
-            afterOnboarding();
         }
 
         Scene scene = new Scene(stageHolder, Theme.PANEL_W, Theme.PANEL_H);
@@ -198,15 +208,19 @@ rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock)
         stage.setScene(scene);
         stage.setAlwaysOnTop(true);
 
-        dock = new EdgeDock(stage);
+dock = new EdgeDock(stage);
         installDragHandlers(root);
         dock.expand();
         reveal.expand(null);
-stage.show();
-        clampToPrimaryScreen(stage);
-        if (onboarding != null) {
+
+        // 教程开着的话，Sigma 窗口先不显示；等用户点「完成」再显示。
+        if (onboardingStage != null) {
+            onboardingStage.show();
+            clampToPrimaryScreen(onboardingStage);
             // 视图要等 CSS 跑过才知道文字的真实宽度，缩放后再摆一次
-            onboarding.layout(Theme.PANEL_W, Theme.PANEL_H);
+            onboarding.layout(onboardingStage.getWidth(), onboardingStage.getHeight());
+        } else {
+            showSigmaStage();
         }
 
         // listener 由 PlayQueue.fire() 同步触发，而 fire() 可能发生在任意线程。
@@ -225,6 +239,60 @@ stage.show();
 
     // ---- 视图切换 ----
 
+    /**
+     * 给教程开一个铺满主屏幕的无边框窗口。
+     *
+     * <p>对应 mod 的 {@code KeyboardScreen}：单独一页，不是主面板里的一个视图。
+     * Sigma 窗口此时还没显示，用户在教程里看到的就只有这一页。
+     */
+    private void buildOnboardingStage() {
+        Rectangle2D bounds = Screen.getScreens().get(0).getVisualBounds();
+        Stage tut = new Stage();
+        tut.initStyle(StageStyle.UNDECORATED);
+        tut.setTitle("Jello Music");
+        Scene tutScene = new Scene(onboarding, bounds.getWidth(), bounds.getHeight());
+        // Scene 默认是白色填充。OnboardingView 自己那层 rgba(1,1,1,0.25) 是给
+        // 透明主窗口叠在桌面上用的，单独开窗就得先垫一层不透明的深色底，
+        // 否则 25% 黑压白底 = 浅灰，标题全糊。底色沿用登录页的 #101114。
+        tutScene.setFill(Color.color(16 / 255.0, 17 / 255.0, 20 / 255.0));
+        tut.setScene(tutScene);
+        tut.setX(bounds.getMinX());
+        tut.setY(bounds.getMinY());
+        tut.setAlwaysOnTop(true);
+        // Alt+F4 直接走「教程结束」，别让用户把自己关到没有窗口可看
+        tut.setOnCloseRequest(e -> completeOnboarding());
+        onboardingStage = tut;
+    }
+
+    /** 教程结束：记下完成状态、关掉教程窗，再把 Sigma 窗口显示出来。 */
+    private void completeOnboarding() {
+        AppPrefs.setOnboardingDone();
+        closeOnboardingStage();
+        showSigmaStage();
+    }
+
+    private void closeOnboardingStage() {
+        if (onboardingStage != null) {
+            Stage old = onboardingStage;
+            onboardingStage = null;
+            old.close();
+        }
+        if (onboarding != null) {
+            onboarding = null;
+            // 热键只在教程期间挂起；教程一关必须恢复，否则右键 Shift 永远失效。
+            syncHotkeySuspend();
+        }
+    }
+
+    /** 显示 Sigma 主窗口并按登录态分流。 */
+    private void showSigmaStage() {
+        if (!sigmaStage.isShowing()) {
+            sigmaStage.show();
+            clampToPrimaryScreen(sigmaStage);
+        }
+        afterOnboarding();
+    }
+
     /** 教程结束（或本来就不用教程）后的分流：有登录态回主界面，没有就去登录页。 */
     private void afterOnboarding() {
         if (userInfo != null && userInfo.isAuthenticated()) {
@@ -236,11 +304,7 @@ stage.show();
 
     /** 回主界面（对应 SigmaUI.vue 的 {@code view = 'player'}）。 */
     private void switchToPlayer() {
-        if (onboarding != null) {
-            onboarding.setVisible(false);
-            stageHolder.getChildren().remove(onboarding);
-            onboarding = null;
-        }
+        closeOnboardingStage();
         if (login != null) {
             login.dispose();
             login.setVisible(false);
@@ -255,11 +319,7 @@ stage.show();
 
     /** 去登录页（对应 {@code view = 'login'}）。 */
     private void switchToLogin() {
-        if (onboarding != null) {
-            onboarding.setVisible(false);
-            stageHolder.getChildren().remove(onboarding);
-            onboarding = null;
-        }
+        closeOnboardingStage();
         if (login == null) {
             login = new LoginView(api);
             login.setId("sigma-login");
@@ -735,7 +795,10 @@ private void startPlayback(String url) {
     private String lastStatus = "";
 
     @Override
-    public void stop() {
+public void stop() {
+        if (onboardingStage != null) {
+            onboardingStage.hide();
+        }
         if (spectrumStage != null) {
             spectrumStage.hide();
         }
