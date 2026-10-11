@@ -236,9 +236,14 @@ public final class PlayerPanel extends Pane {
         v.setLayoutX(x);
         v.setLayoutY(y);
         v.setPickOnBounds(true);
-        // 原版 hover 时 brightness(0.94)
-        v.setOnMouseEntered(e -> v.setOpacity(0.94));
-        v.setOnMouseExited(e -> v.setOpacity(1.0));
+        // 原版 .sigma-small-image:hover { filter: brightness(0.94) }。
+        // 用 ColorAdjust 等价实现，别用 setOpacity(0.94)——那会让按钮整体透出底色，
+        // 而 brightness 是保持不透明地压暗。brightness(0.94) 对应 brightness = -0.06。
+        // ColorAdjust 没有全参构造，只能逐个 setter。
+        javafx.scene.effect.ColorAdjust dim = new javafx.scene.effect.ColorAdjust();
+        dim.setBrightness(-0.06);
+        v.setOnMouseEntered(e -> v.setEffect(dim));
+        v.setOnMouseExited(e -> v.setEffect(null));
         return v;
     }
 

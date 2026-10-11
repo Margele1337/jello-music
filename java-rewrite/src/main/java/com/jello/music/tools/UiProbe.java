@@ -6,7 +6,9 @@ import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.SigmaScrollablePanel;
 import com.jello.music.ui.SigmaTextView;
+import com.jello.music.ui.ThinProgressBar;
 import com.jello.music.ui.ThumbnailCard;
+import com.jello.music.ui.VerticalSlider;
 import com.jello.music.model.ResultCard;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.ui.Assets;
@@ -207,7 +209,7 @@ public final class UiProbe {
                         && repeat.getLayoutY() == Theme.REPEAT_Y,
                 repeat == null ? "missing"
                         : String.format("x=%.0f y=%.0f", repeat.getLayoutX(), repeat.getLayoutY()));
-        if (repeat != null) {
+if (repeat != null) {
             // 三态雪碧图：0/1/2 各切一次，确认 viewport 跟着走且不抛异常
             repeat.setState(0);
             int a = repeat.state();
@@ -216,7 +218,21 @@ public final class UiProbe {
             repeat.setState(1);
             check("循环按钮三态可切换", a == 0 && b == 2 && repeat.state() == 1,
                     String.format("0->%d 2->%d now=%d", a, b, repeat.state()));
+            // 原版 background-size:300% 靠 overflow:hidden 裁成单格 27px。
+            // 这里曾经把 fitWidth 设成整张雪碧图宽 81，图标被横向拉 3 倍并溢出按钮。
+            ImageView sprite = collect(repeat, ImageView.class).stream()
+                    .findFirst().orElse(null);
+            check("循环图标裁到单格 27x20（不被拉伸溢出）",
+                    sprite != null && sprite.getFitWidth() == 27 && sprite.getFitHeight() == 20
+                            && repeat.getClip() != null,
+                    sprite == null ? "missing"
+                            : String.format("fit=%.0fx%.0f clip=%s",
+                                    sprite.getFitWidth(), sprite.getFitHeight(),
+                                    repeat.getClip() != null));
         }
+
+        checkProgressBarLayers(player);
+        checkVolumeLayers(player);
 
 // 无歌手时标题应下移到 .single 的 y=562
         player.setSong("只有标题", null, null);
@@ -637,6 +653,68 @@ private static void checkCardKinds() {
                 "opened=" + opened + " picked=" + picked.size());
         check("currentCards 保留整列供整列替换队列",
                 box.currentCards().size() == 2, "size=" + box.currentCards().size());
+    }
+
+/**
+ * 进度条四层（轨道 / 已播 / 未播 / 末端高光）。
+ *
+ * <p>之前只有轨道 + 已播，未播那段底色偏亮，且末端少了 {@code shadow_right.png}
+ * 那个 5x5 高光——原版一眼能看出来。
+ */
+private static void checkProgressBarLayers(PlayerPanel player) {
+        ThinProgressBar bar = new ThinProgressBar(Theme.PROGRESS_W, Theme.PROGRESS_H);
+        bar.setLayoutX(Theme.PROGRESS_X);
+        bar.setLayoutY(Theme.PROGRESS_Y);
+        Pane host = new Pane();
+        host.getChildren().add(bar);
+        new Scene(host, Theme.PANEL_W, Theme.PANEL_H);
+        host.applyCss();
+        host.layout();
+
+        check("进度条有未播层（rgba(1,1,1,0.43)）", bar.remainingLayer() != null, null);
+        check("末端高光默认隐藏（percent=0）", !bar.knob().isVisible(), null);
+
+        bar.setPercent(0.5);
+        double w = Theme.PROGRESS_W;
+        check("percent=0.5 时三段宽度/位置对齐原版",
+                Math.abs(bar.knob().getLayoutX() - (w * 0.5 - 5)) < 0.5
+                        && Math.abs(bar.remainingLayer().getLayoutX() - w * 0.5) < 0.5
+                        && Math.abs(bar.remainingLayer().getPrefWidth() - w * 0.5) < 0.5,
+                String.format("knobX=%.1f remainX=%.1f remainW=%.1f",
+                        bar.knob().getLayoutX(), bar.remainingLayer().getLayoutX(),
+                        bar.remainingLayer().getPrefWidth()));
+        check("percent>0 时末端高光出现且是 5x5",
+                bar.knob().isVisible() && bar.knob().getFitWidth() == 5
+                        && bar.knob().getFitHeight() == 5, null);
+        bar.setPercent(0);
+        check("percent 归零时高光隐藏", !bar.knob().isVisible(), null);
+    }
+
+/**
+ * 音量条：原版是「根背景 + dark 层 + fill 层」三层，
+ * 且支持滚轮每格 0.05（向上滚=加音量）。
+ */
+private static void checkVolumeLayers(PlayerPanel player) {
+        VerticalSlider slider = new VerticalSlider(Theme.VOLUME_W, Theme.VOLUME_H);
+        slider.setLayoutX(Theme.VOLUME_X);
+        slider.setLayoutY(Theme.VOLUME_Y);
+        Pane host = new Pane();
+        host.getChildren().add(slider);
+        new Scene(host, Theme.PANEL_W, Theme.PANEL_H);
+        host.applyCss();
+        host.layout();
+
+        check("音量条有未填充层（.sigma-volume-dark）", slider.darkLayer() != null, null);
+        slider.valueProperty().set(0.25);
+        check("value=0.25 时 dark 占 75%", 
+                Math.abs(slider.darkLayer().getPrefHeight() - Theme.VOLUME_H * 0.75) < 0.5,
+                String.format("dark=%.1f expect=%.1f",
+                        slider.darkLayer().getPrefHeight(), Theme.VOLUME_H * 0.75));
+        slider.valueProperty().set(1.0);
+        double before = slider.valueProperty().get();
+        slider.valueProperty().set(Math.max(0, before - 0.05));
+        check("滚轮一格 = 0.05",
+                Math.abs(slider.valueProperty().get() - (before - 0.05)) < 1e-9, null);
     }
 
 /**
