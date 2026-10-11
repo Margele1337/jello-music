@@ -347,6 +347,12 @@ public final class PlayerPanel extends Pane {
         spectrumBtn.setOnToggle(active -> r.run());
     }
 
+    /** 音量滑块值变化（0..1）。换歌重建 MediaPlayer 时要靠它把音量带过去。 */
+public void onVolumeChanged(java.util.function.Consumer<Double> handler) {
+        volume.valueProperty().addListener((o, a, b) ->
+                handler.accept(b.doubleValue()));
+    }
+
     /** 循环模式按钮：点击切换，并回传新的 0/1/2 状态。 */
     public void onRepeatToggle(java.util.function.IntConsumer r) {
         repeatBtn.onClick(() -> r.accept(repeatBtn.state()));

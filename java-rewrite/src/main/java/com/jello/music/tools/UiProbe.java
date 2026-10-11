@@ -315,6 +315,8 @@ if (repeat != null) {
 
         checkPlaylistEllipsis(playlists);
         checkRightShift();
+        checkHotkeySuspend();
+        checkVolumeKept();
         checkInitialState();
         checkPlaylistTabs();
         checkCardKinds();
@@ -517,6 +519,45 @@ private static void checkPlaylistEllipsis(PlaylistPanel panel) {
     }
 
     /**
+ * 回归护栏：修过的两个 bug。
+ *
+ * <p>① 音量跨歌保持 —— {@code startPlayback} 以前每首歌都 {@code setVolume(0.8)}，
+ * 用户拖出来的音量下一首就被冲回 0.8。现在靠 {@code onVolumeChanged} 记住。
+ * ② 教程期间挂起右 Shift —— 不挂起的话，用户跟着教程按 Shift 窗口当场就收起来了。
+ */
+private static void checkHotkeySuspend() {
+        RightShiftPoller poller = new RightShiftPoller(vk -> false, 5, () -> {
+        });
+        check("未挂起时 poller 不处于挂起态", !poller.isSuspended(), null);
+        poller.setSuspended(true);
+        check("setSuspended(true) 生效（教程视图用）", poller.isSuspended(), null);
+        poller.setSuspended(false);
+        check("setSuspended(false) 恢复", !poller.isSuspended(), null);
+        poller.close();
+    }
+
+    private static void checkVolumeKept() {
+        PlayerPanel panel = new PlayerPanel();
+        List<Double> seen = new ArrayList<>();
+        panel.onVolumeChanged(seen::add);
+
+        Pane host = new Pane();
+        host.getChildren().add(panel);
+        new Scene(host, Theme.PANEL_W, Theme.PANEL_H);
+        host.applyCss();
+        host.layout();
+
+        VerticalSlider slider = collect(panel, VerticalSlider.class).stream()
+                .findFirst().orElse(null);
+        check("音量滑块存在", slider != null, null);
+        if (slider != null) {
+            slider.valueProperty().set(0.42);
+            boolean got = seen.stream().anyMatch(v -> Math.abs(v - 0.42) < 1e-9);
+            check("拖动音量会回调出来（换歌时据此保持）", got, "events=" + seen);
+        }
+    }
+
+/**
      * 全局 RSHIFT 热键。
      *
      * <p>只断言常量与「按下沿才触发」的状态机——真的按 RSHIFT 会影响正在做的事，

@@ -75,6 +75,13 @@ private EdgeDock dock;
     private StackPane playerView;
     private OnboardingView onboarding;
 
+    /**
+     * 当前音量 0..1。原版音量是跨歌保持的（{@code volumePercent} 存在播放器里），
+     * 而 Java 侧每首歌会重建一个 MediaPlayer，所以得自己存着。
+     * 初值 1.0 对齐原版 SigmaVolumeSlider 的 default: 1。
+     */
+    private double volume = 1.0;
+
     private final PlayQueue queue = new PlayQueue();
     private final AtomicInteger requestSeq = new AtomicInteger();
     private KuGouApiClient api;
@@ -123,6 +130,8 @@ private EdgeDock dock;
                 state == 0 ? PlayQueue.Repeat.NONE
                         : state == 1 ? PlayQueue.Repeat.ALL : PlayQueue.Repeat.ONE));
         playerPanel.onDockTrigger(this::expandDock);
+        // 记住用户拖出来的音量：换歌会重建 MediaPlayer，音量得自己带着走
+        playerPanel.onVolumeChanged(v -> volume = v);
         playerPanel.searchBox().onSubmit(this::runSearch);
         // 点歌曲卡：用「当前网格里的整列」替换队列再播放这首，
         // 这样下一首/上一首走的是同一批（对应原版 playSongList(songs, hash)）
@@ -156,12 +165,19 @@ StackPane overlay = new StackPane(root);
                 switchToPlayer();
             });
             stageHolder.getChildren().add(onboarding);
+            // 教程要教用户「按右 Shift 呼出」，此时热键必须挂起：
+            // 否则用户跟着教程按 Shift，窗口当场就收起来了。
+            // 对应原版 SigmaUI 切到 onboarding 时发的 sigma-hotkey-suspend。
+            // 注意此刻 rshift 还没建（建在 Scene 之后），所以统一交给 syncHotkeySuspend()
+            syncHotkeySuspend();
         }
 
         Scene scene = new Scene(stageHolder, Theme.PANEL_W, Theme.PANEL_H);
         scene.setFill(Color.TRANSPARENT);
         // 全局右 Shift 收起/展开。回调在轮询线程上，必须切回 FX 线程。
-        rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock));
+rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock));
+        // 建完之后再对一次：教程是在 rshift 之前挂上去的
+        syncHotkeySuspend();
         if (rshift == null) {
             // 拿不到原生热键才退回窗口内快捷键；两者同时存在会一次按键触发两次
             // （先收起又立刻展开，等于没反应）。
@@ -210,6 +226,20 @@ stage.show();
         }
         if (playerView != null) {
             playerView.setVisible(true);
+        }
+        syncHotkeySuspend();
+    }
+
+    /**
+     * 教程视图期间挂起右 Shift 热键。
+     *
+     * <p>原版 {@code SigmaUI} 在 {@code view === 'onboarding'} 时发
+     * {@code sigma-hotkey-suspend}，主进程调 {@code setGlobalKeySuspended(true)}——
+     * 教程第一页就是教「按右 Shift 呼出」，不挂起的话用户一按窗口就没了。
+     */
+    private void syncHotkeySuspend() {
+        if (rshift != null) {
+            rshift.setSuspended(onboarding != null);
         }
     }
 
@@ -458,14 +488,16 @@ stage.show();
 
     // ---- 播放 / 频谱 ----
 
-    private void startPlayback(String url) {
+private void startPlayback(String url) {
         disposePlayer();
         try {
             Media media = new Media(url);
             player = new MediaPlayer(media);
             player.setOnReady(() -> status("就绪"));
             player.setOnError(() -> status("播放失败（MediaPlayer 不支持 FLAC）"));
-            player.setVolume(0.8);
+            // 用记住的音量，不要写死：之前每首歌都 setVolume(0.8)，
+            // 用户拖出来的音量下一首就被冲掉了。原版的 volumePercent 是保持的。
+            player.setVolume(volume);
             player.play();
             playerPanel.bindPlayer(player);
             rewireSpectrum(url);
