@@ -50,6 +50,7 @@ public final class SigmaTextView extends Pane {
     private Color color = Theme.TEXT;
     private double alpha = 1;
     private boolean scrolling;
+    private double offsetX;
 
     private AnimationTimer timer;
 
@@ -207,13 +208,32 @@ private double textTop() {
 }
 
 private double penX(double textWidth) {
-        if (align == Align.CENTER) {
+    if (align == Align.CENTER) {
             return Math.floor((width() - textWidth) / 2);
         }
         if (align == Align.RIGHT) {
             return width() - textWidth;
         }
-        return 0;
+        return offsetX;
+    }
+
+    /**
+     * 横向偏移（只对左对齐有意义）。
+     *
+     * <p>对应原版输入框的 {@code field20746}：文字太长时光标贴到右边界就把文字往回推，
+     * 保证光标始终落在盒子内。
+     */
+    public void setOffsetX(double x) {
+        if (this.offsetX == x) {
+            return;
+        }
+        this.offsetX = x;
+        renderStatic();
+    }
+
+    /** 同步重绘一帧（跑马灯动画每帧会调用）。 */
+    public void renderNow() {
+        renderStatic();
     }
 
     /** 逐字形贴图；缺字形（中文）退回字体渲染，基线对齐图集 ascent。 */

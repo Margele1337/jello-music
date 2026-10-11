@@ -231,8 +231,8 @@ if (repeat != null) {
                                     repeat.getClip() != null));
         }
 
-        checkProgressBarLayers(player);
-        checkVolumeLayers(player);
+        checkProgressBarLayers();
+        checkVolumeLayers();
 
 // 无歌手时标题应下移到 .single 的 y=562
         player.setSong("只有标题", null, null);
@@ -316,6 +316,7 @@ if (repeat != null) {
         checkInitialState();
         checkPlaylistTabs();
         checkCardKinds();
+        checkSearchField();
 
         checkMarqueeTiming();
 
@@ -563,96 +564,50 @@ private static void checkPlaylistEllipsis(PlaylistPanel panel) {
         }
     }
 
-    /**
- * 刚构造出来、还没喂任何歌的状态。
- *
- * <p>原版 {@code titleLine1 = name || 'Jello Music'}：启动时没有歌也不是空白，
- * 而是单行 "Jello Music" 落在 y=562、歌手行不渲染。
- * 这条之前没实现，启动后左下角一直空着。
- */
-private static void checkInitialState() {
-        PlayerPanel fresh = new PlayerPanel();
-        List<SigmaTextView> freshTexts = collect(fresh, SigmaTextView.class);
-        check("初始态标题是 Jello Music",
-                freshTexts.stream().anyMatch(t -> "Jello Music".equals(t.text())), null);
-        SigmaTextView box = freshTexts.stream()
-                .filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
-        check("初始态单行标题落在 y=562",
-                box != null && box.getLayoutY() == Theme.TITLE_SINGLE_Y,
-                box == null ? "missing" : String.format("y=%.0f", box.getLayoutY()));
-        check("初始态歌手行不渲染",
-                freshTexts.stream()
-                        .filter(m -> m.phaseMs() == -1000)
-                        .noneMatch(Node::isVisible), null);
-
-        // 原版 background-size:cover：非正方形封面要盖满再裁，不能 contain 留缝
-        ImageView art = collect(fresh, ImageView.class).stream()
-                .filter(v -> v.getFitWidth() == Theme.ARTWORK_S).findFirst().orElse(null);
-        check("专辑封面按 cover 铺满（fit=114 且有 clip）",
-                art != null && art.getClip() != null,
-                art == null ? "missing" : at(art));
-    }
-
 /**
- * 左栏列表组装 —— 1:1 复刻原版 {@code SigmaPlaylistPanel.load()}。
+ * 搜索框：文字交给画布、input 文字透明、自绘 1px 光标。
  *
- * <p>要点：固定项「猜你喜欢 / 每日推荐」在最前；只留「我喜欢」与自己的歌单；
- * 按 {@code sort} <b>升序</b>（不是按歌曲数倒序）；「我喜欢」永远排在自定义歌单之前。
+ * <p>原版 {@code SigmaTextField} 把 {@code input} 的文字设成 transparent（自定义点阵字体），
+ * 光标与选区都是自己画的。JavaFX 自带光标跟着 {@code -fx-text-fill} 走，
+ * 文字一透明它也没了，所以必须补一个自绘的。
  */
-private static void checkPlaylistTabs() {
-        List<com.jello.music.api.Playlist> raw = List.of(
-                new com.jello.music.api.Playlist("g-默认", "默认收藏", 300, 9, "999"),
-                new com.jello.music.api.Playlist("g-我的B", "我的歌单B", 50, 3, "me"),
-                new com.jello.music.api.Playlist("g-我的A", "我的歌单A", 80, 1, "me"),
-                new com.jello.music.api.Playlist("g-他人", "别人的歌单", 999, 0, "other"),
-                new com.jello.music.api.Playlist("g-喜欢", "我喜欢", 42, 5, "other"));
-        List<com.jello.music.api.PlaylistTab> tabs =
-                com.jello.music.api.KuGouApiClient.playlistTabs(raw, "me");
-        List<String> names = tabs.stream().map(com.jello.music.api.PlaylistTab::name).toList();
-        check("左栏头部固定是 猜你喜欢 / 每日推荐",
-                tabs.get(0).isGuess() && tabs.get(1).isDaily(),
-                String.join(" | ", names));
-        check("别人的歌单被过滤掉", !names.contains("别人的歌单") && !names.contains("默认收藏"),
-                String.join(" | ", names));
-        check("我喜欢 排在自定义歌单之前",
-                names.indexOf("我喜欢") < names.indexOf("我的歌单A"), String.join(" | ", names));
-        check("自定义歌单按 sort 升序",
-                names.indexOf("我的歌单A") < names.indexOf("我的歌单B"), String.join(" | ", names));
-        check("总数 = 2 固定 + 3 歌单", tabs.size() == 5, "size=" + tabs.size());
-}
-
-/**
- * 结果网格同时支持歌曲卡与歌单卡：点歌单卡下钻、点歌曲卡播放。
- */
-private static void checkCardKinds() {
+private static void checkSearchField() {
         SearchBox box = new SearchBox();
-        List<String> opened = new ArrayList<>();
-        List<com.jello.music.model.Song> picked = new ArrayList<>();
-        box.onOpenPlaylist(opened::add);
-        box.onPick(picked::add);
+        Pane host = new Pane();
+        host.getChildren().add(box);
+        new Scene(host, 800, 600);
+        host.applyCss();
+        host.layout();
 
-        ResultCard plCard = ResultCard.playlist("g-x", "歌单 测试 · 3首", null);
-        ResultCard snCard = ResultCard.song("h-x", "歌名", "歌手", null);
-        check("歌单卡 kind / 底色 #037c8c",
-                plCard.isPlaylist() && plCard.gid().equals("g-x") && !snCard.isPlaylist(), null);
+        SigmaTextView glyphs = collect(box, SigmaTextView.class).stream()
+                .filter(t -> t.atlas().size() == 25).findFirst().orElse(null);
+        check("搜索框文字用 sans-25 图集、盒宽 490 盒高 70",
+                glyphs != null && glyphs.atlas().size() == 25
+                        && glyphs.getPrefWidth() == 490 && glyphs.getPrefHeight() == 70,
+                glyphs == null ? "missing" : String.format("size=%d %.0fx%.0f",
+                        glyphs.atlas().size(), glyphs.getPrefWidth(),
+                        glyphs.getPrefHeight()));
+        check("未聚焦时画的是占位符 Search...",
+                glyphs != null && "Search...".equals(glyphs.text()),
+                glyphs == null ? "missing" : glyphs.text());
+        check("搜索框文字节点 @ (30,14)",
+                glyphs != null && glyphs.getLayoutX() == 30 && glyphs.getLayoutY() == 14, null);
 
-        box.showResults(List.of(plCard, snCard));
-        List<ThumbnailCard> cards = collect(box, ThumbnailCard.class);
-        check("歌单卡不画歌手行（对应 .single）", cards.size() == 2, "cards=" + cards.size());
-        cards.get(0).fireEvent(new javafx.scene.input.MouseEvent(
-                javafx.scene.input.MouseEvent.MOUSE_CLICKED, 0, 0, 0, 0,
-                javafx.scene.input.MouseButton.PRIMARY, 1,
-                false, false, false, false, true, false, false, false, false, false, null));
-        cards.get(1).fireEvent(new javafx.scene.input.MouseEvent(
-                javafx.scene.input.MouseEvent.MOUSE_CLICKED, 0, 0, 0, 0,
-                javafx.scene.input.MouseButton.PRIMARY, 1,
-                false, false, false, false, true, false, false, false, false, false, null));
-        check("点歌单卡走下钻、点歌曲卡走播放",
-                opened.size() == 1 && opened.get(0).equals("g-x")
-                        && picked.size() == 1 && picked.get(0).getHash().equals("h-x"),
-                "opened=" + opened + " picked=" + picked.size());
-        check("currentCards 保留整列供整列替换队列",
-                box.currentCards().size() == 2, "size=" + box.currentCards().size());
+        // 光标：1px 宽，垂直居中对齐图集 lineHeight，原版 TextField.draw 的算法
+        Region caret = collect(box, Region.class).stream()
+                .filter(r -> r.getPrefWidth() == 1).findFirst().orElse(null);
+        check("自绘光标 1px 宽、初始隐藏",
+                caret != null && !caret.isVisible(), caret == null ? "missing" : "found");
+        int lineH = 33;   // sans-25 的 lineHeight
+        // 原版是整数运算：yA + height/2 - fontHeight/2 + 2，高 fontHeight - 3
+        check("光标纵向居中（原版 yA+h/2-lh/2+2，高 lh-3）",
+                caret != null && caret.getLayoutY() == 14 + 70 / 2 - lineH / 2 + 2
+                        && caret.getPrefHeight() == lineH - 3,
+                caret == null ? "missing" : String.format("y=%.0f h=%.0f",
+                        caret.getLayoutY(), caret.getPrefHeight()));
+        check("光标左内边距 4px（原版 TextField 的 padding）",
+                caret != null && caret.getLayoutX() == 30 + 4,
+                caret == null ? "missing" : "x=" + caret.getLayoutX());
     }
 
 /**
@@ -661,7 +616,7 @@ private static void checkCardKinds() {
  * <p>之前只有轨道 + 已播，未播那段底色偏亮，且末端少了 {@code shadow_right.png}
  * 那个 5x5 高光——原版一眼能看出来。
  */
-private static void checkProgressBarLayers(PlayerPanel player) {
+private static void checkProgressBarLayers() {
         ThinProgressBar bar = new ThinProgressBar(Theme.PROGRESS_W, Theme.PROGRESS_H);
         bar.setLayoutX(Theme.PROGRESS_X);
         bar.setLayoutY(Theme.PROGRESS_Y);
@@ -690,11 +645,11 @@ private static void checkProgressBarLayers(PlayerPanel player) {
         check("percent 归零时高光隐藏", !bar.knob().isVisible(), null);
     }
 
-/**
- * 音量条：原版是「根背景 + dark 层 + fill 层」三层，
- * 且支持滚轮每格 0.05（向上滚=加音量）。
- */
-private static void checkVolumeLayers(PlayerPanel player) {
+    /**
+     * 音量条：原版是「根背景 + dark 层 + fill 层」三层，
+     * 且支持滚轮每格 0.05（向上滚=加音量）。
+     */
+    private static void checkVolumeLayers() {
         VerticalSlider slider = new VerticalSlider(Theme.VOLUME_W, Theme.VOLUME_H);
         slider.setLayoutX(Theme.VOLUME_X);
         slider.setLayoutY(Theme.VOLUME_Y);
@@ -706,19 +661,108 @@ private static void checkVolumeLayers(PlayerPanel player) {
 
         check("音量条有未填充层（.sigma-volume-dark）", slider.darkLayer() != null, null);
         slider.valueProperty().set(0.25);
-        check("value=0.25 时 dark 占 75%", 
+        check("value=0.25 时 dark 占 75%",
                 Math.abs(slider.darkLayer().getPrefHeight() - Theme.VOLUME_H * 0.75) < 0.5,
                 String.format("dark=%.1f expect=%.1f",
                         slider.darkLayer().getPrefHeight(), Theme.VOLUME_H * 0.75));
-        slider.valueProperty().set(1.0);
         double before = slider.valueProperty().get();
         slider.valueProperty().set(Math.max(0, before - 0.05));
         check("滚轮一格 = 0.05",
                 Math.abs(slider.valueProperty().get() - (before - 0.05)) < 1e-9, null);
     }
 
+    /**
+     * 刚构造出来、还没喂任何歌的状态。
+     *
+     * <p>原版 {@code titleLine1 = name || 'Jello Music'}：启动时没有歌也不是空白，
+     * 而是单行 "Jello Music" 落在 y=562、歌手行不渲染。
+     * 这条之前没实现，启动后左下角一直空着。
+     */
+    private static void checkInitialState() {
+        PlayerPanel fresh = new PlayerPanel();
+        List<SigmaTextView> freshTexts = collect(fresh, SigmaTextView.class);
+        check("初始态标题是 Jello Music",
+                freshTexts.stream().anyMatch(t -> "Jello Music".equals(t.text())), null);
+        SigmaTextView box = freshTexts.stream()
+                .filter(m -> m.phaseMs() == 0).findFirst().orElse(null);
+        check("初始态单行标题落在 y=562",
+                box != null && box.getLayoutY() == Theme.TITLE_SINGLE_Y,
+                box == null ? "missing" : String.format("y=%.0f", box.getLayoutY()));
+        check("初始态歌手行不渲染",
+                freshTexts.stream()
+                        .filter(m -> m.phaseMs() == -1000)
+                        .noneMatch(Node::isVisible), null);
+
+        // 原版 background-size:cover：非正方形封面要盖满再裁，不能 contain 留缝
+        ImageView art = collect(fresh, ImageView.class).stream()
+                .filter(v -> v.getFitWidth() == Theme.ARTWORK_S).findFirst().orElse(null);
+        check("专辑封面按 cover 铺满（fit=114 且有 clip）",
+                art != null && art.getClip() != null,
+                art == null ? "missing" : at(art));
+    }
+
+    /**
+     * 左栏列表组装 —— 1:1 复刻原版 {@code SigmaPlaylistPanel.load()}。
+     *
+     * <p>要点：固定项「猜你喜欢 / 每日推荐」在最前；只留「我喜欢」与自己的歌单；
+     * 按 {@code sort} <b>升序</b>（不是按歌曲数倒序）；「我喜欢」永远排在自定义歌单之前。
+     */
+    private static void checkPlaylistTabs() {
+        List<com.jello.music.api.Playlist> raw = List.of(
+                new com.jello.music.api.Playlist("g-默认", "默认收藏", 300, 9, "999"),
+                new com.jello.music.api.Playlist("g-我的B", "我的歌单B", 50, 3, "me"),
+                new com.jello.music.api.Playlist("g-我的A", "我的歌单A", 80, 1, "me"),
+                new com.jello.music.api.Playlist("g-他人", "别人的歌单", 999, 0, "other"),
+                new com.jello.music.api.Playlist("g-喜欢", "我喜欢", 42, 5, "other"));
+        List<com.jello.music.api.PlaylistTab> tabs =
+                com.jello.music.api.KuGouApiClient.playlistTabs(raw, "me");
+        List<String> names = tabs.stream().map(com.jello.music.api.PlaylistTab::name).toList();
+        check("左栏头部固定是 猜你喜欢 / 每日推荐",
+                tabs.get(0).isGuess() && tabs.get(1).isDaily(),
+                String.join(" | ", names));
+        check("别人的歌单被过滤掉", !names.contains("别人的歌单") && !names.contains("默认收藏"),
+                String.join(" | ", names));
+        check("我喜欢 排在自定义歌单之前",
+                names.indexOf("我喜欢") < names.indexOf("我的歌单A"), String.join(" | ", names));
+        check("自定义歌单按 sort 升序",
+                names.indexOf("我的歌单A") < names.indexOf("我的歌单B"), String.join(" | ", names));
+        check("总数 = 2 固定 + 3 歌单", tabs.size() == 5, "size=" + tabs.size());
+    }
+
+    /**
+     * 结果网格同时支持歌曲卡与歌单卡：点歌单卡下钻、点歌曲卡播放。
+     */
+    private static void checkCardKinds() {
+        SearchBox box = new SearchBox();
+        List<String> opened = new ArrayList<>();
+        List<com.jello.music.model.Song> picked = new ArrayList<>();
+        box.onOpenPlaylist(opened::add);
+        box.onPick(picked::add);
+
+        ResultCard plCard = ResultCard.playlist("g-x", "歌单 测试 · 3首", null);
+        ResultCard snCard = ResultCard.song("h-x", "歌名", "歌手", null);
+        check("歌单卡 kind / 底色 #037c8c",
+                plCard.isPlaylist() && plCard.gid().equals("g-x") && !snCard.isPlaylist(), null);
+
+        box.showResults(List.of(plCard, snCard));
+        List<ThumbnailCard> cards = collect(box, ThumbnailCard.class);
+        check("两种卡都铺进网格", cards.size() == 2, "cards=" + cards.size());
+        for (ThumbnailCard c : cards) {
+            c.fireEvent(new javafx.scene.input.MouseEvent(
+                    javafx.scene.input.MouseEvent.MOUSE_CLICKED, 0, 0, 0, 0,
+                    javafx.scene.input.MouseButton.PRIMARY, 1,
+                    false, false, false, false, true, false, false, false, false, false, null));
+        }
+        check("点歌单卡走下钻、点歌曲卡走播放",
+                opened.size() == 1 && opened.get(0).equals("g-x")
+                        && picked.size() == 1 && picked.get(0).getHash().equals("h-x"),
+                "opened=" + opened + " picked=" + picked.size());
+        check("currentCards 保留整列供整列替换队列",
+                box.currentCards().size() == 2, "size=" + box.currentCards().size());
+    }
+
 /**
- * 跑马灯时序断言。直接验 {@link SigmaTextView#progress(long, long)} 这段纯函数，
+     * 跑马灯时序断言。直接验 {@link SigmaTextView#progress(long, long)} 这段纯函数，
      * 不用真等 8.5 秒，也不受跑测时那一刻墙上时间的影响。
      */
     private static void checkMarqueeTiming() {

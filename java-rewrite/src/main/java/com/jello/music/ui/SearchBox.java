@@ -1,5 +1,6 @@
 package com.jello.music.ui;
 
+import javafx.animation.AnimationTimer;
 import com.jello.music.model.ResultCard;
 import com.jello.music.model.Song;
 import javafx.geometry.Pos;
@@ -39,6 +40,16 @@ public final class SearchBox extends Pane {
     private static final double ROW_Y0 = 90;
     private static final double ROW_STEP = 210;
 
+    /** 输入框几何（原版 .sigma-search-box-field：left 30 / top 14 / 490x70）。 */
+    private static final double FIELD_X = 30;
+    private static final double FIELD_Y = 14;
+    private static final double FIELD_W = 490;
+    private static final double FIELD_H = 70;
+    /** 原版 TextField 里文字的左内边距。 */
+    private static final double FIELD_PAD_LEFT = 4;
+    /** 光标闪烁周期，前半段暗、后半段亮。 */
+    private static final long CARET_PERIOD_MS = 1000;
+
     /** 输入文字/占位符的三档透明度，对齐原版 SigmaTextField 的 alpha 公式。 */
     private static final double ALPHA_UNFOCUSED = 0.2;
     private static final double ALPHA_FOCUSED_EMPTY = 0.45;
@@ -54,6 +65,13 @@ public final class SearchBox extends Pane {
     private final SigmaTextView glyphs = new SigmaTextView("sans", 25, 490, 70,
             SigmaTextView.Align.LEFT).fieldBaseline(true);
     private final Region underline = new Region();
+    private final Region caret = new Region();
+
+    /** 输入框横向滚动：光标贴到右边界时把文字往回推。 */
+    private double scrollX;
+    private double scrollTarget;
+    private long caretStartMs;
+    private AnimationTimer caretTimer;
 
     private final List<ResultCard> cards = new ArrayList<>();
     private Consumer<String> onSubmit;
@@ -67,15 +85,17 @@ public final class SearchBox extends Pane {
         setBackground(javafx.scene.layout.Background.fill(
                 javafx.scene.paint.Color.TRANSPARENT));
 
-        field.setLayoutX(30);
-        field.setLayoutY(14);
-        field.setPrefSize(490, 70);
+        field.setLayoutX(FIELD_X);
+        field.setLayoutY(FIELD_Y);
+        field.setPrefSize(FIELD_W, FIELD_H);
         field.setPromptText("Search...");
         field.setFont(Assets.light(25));
-        // 文字交给画布画，input 只留光标与选区（对应原版 color: transparent）
+        // 文字交给画布画，input 只留光标与选区（对应原版 color: transparent）。
+        // 原版还把 ::selection 设成 transparent（选区自己用 rgba(254,254,254,0.22) 画），
+        // 这里一并关掉 JavaFX 的蓝色原生选区。
         field.setStyle("-fx-background-color: transparent; -fx-text-fill: transparent;"
-                + " -fx-prompt-text-fill: transparent;");
-        field.setPadding(new javafx.geometry.Insets(0, 0, 0, 4));
+                + " -fx-prompt-text-fill: transparent; -fx-highlight-fill: transparent;");
+        field.setPadding(new javafx.geometry.Insets(0, 0, 0, FIELD_PAD_LEFT));
         field.setAlignment(Pos.CENTER_LEFT);
         field.setOnAction(e -> {
             if (onSubmit != null) {
@@ -85,13 +105,24 @@ public final class SearchBox extends Pane {
         field.textProperty().addListener((o, a, b) -> paintFieldText());
         getChildren().add(field);
 
-        glyphs.setLayoutX(30);
-        glyphs.setLayoutY(14);
+        glyphs.setLayoutX(FIELD_X);
+        glyphs.setLayoutY(FIELD_Y);
         glyphs.setMouseTransparent(true);
         getChildren().add(glyphs);
 
+        // 自绘光标 1px：原版 input 文字是透明的，JavaFX 自带光标也跟着隐形了
+        int lineH = glyphs.atlas().lineHeight();
+        caret.setLayoutX(FIELD_X + FIELD_PAD_LEFT);
+        caret.setLayoutY(FIELD_Y + FIELD_H / 2 - lineH / 2 + 2);
+        caret.setPrefSize(1, lineH - 3);
+        caret.setBackground(javafx.scene.layout.Background.fill(
+                javafx.scene.paint.Color.web("#fefefe")));
+        caret.setVisible(false);
+        caret.setMouseTransparent(true);
+        getChildren().add(caret);
+
         // 原版是 ::after 伪元素画的 2px 下划线，这里用一层 Region 代替
-        underline.setLayoutX(30);
+        underline.setLayoutX(FIELD_X);
         underline.setLayoutY(12 + 70);
         underline.setPrefSize(490, 2);
         underline.setMouseTransparent(true);
@@ -104,6 +135,13 @@ public final class SearchBox extends Pane {
             underline.setBackground(javafx.scene.layout.Background.fill(
                     underlinePaint(b ? 1.0 : 0.5)));
             paintFieldText();
+            if (b) {
+                startCaretTimer();
+            } else {
+                stopCaretTimer();
+                scrollX = 0;
+                scrollTarget = 0;
+            }
         });
         paintFieldText();
 
@@ -117,11 +155,72 @@ public final class SearchBox extends Pane {
         String value = field.getText();
         boolean hasValue = value != null && !value.isEmpty();
         glyphs.setText(hasValue ? value : "Search...");
+        glyphs.setOffsetX(scrollX);
         boolean focused = field.isFocused();
         double alpha = !focused ? ALPHA_UNFOCUSED
                 : hasValue ? ALPHA_FOCUSED_TEXT : ALPHA_FOCUSED_EMPTY;
         glyphs.setColor(javafx.scene.paint.Color.color(
                 254 / 255.0, 254 / 255.0, 254 / 255.0, alpha));
+    }
+
+    /**
+     * 输入光标。
+     *
+     * <p><b>为什么自己画</b>：原版把 {@code input} 的文字设成 transparent（自定义点阵字体），
+     * 光标是自己用 {@code drawRoundedRect} 画的 1px 竖线。JavaFX 自带光标跟着
+     * {@code -fx-text-fill} 走，文字透明它也跟着没了。这里照原版补回来。
+     *
+     * <p>参数 1:1 照抄 sigmarebase 的 {@code TextField.draw}：
+     * <pre>
+     *   周期 1000ms：前半段 alpha 0.1、后半段 0.8
+     *   x  = xA + 4 + scrollX + textWidth  （有内容时左边界 -1，空内容时右边界 +1，即恒 1px 宽）
+     *   y  = yA + height/2 - lineHeight/2 + 2 .. yA + height/2 + lineHeight/2 - 1
+     * </pre>
+     *
+     * <p>顺带把原版的横向滚动也做了：光标跑到左右边界时把文字往回推，
+     * 偏移量按每帧 {@code (target - current) / 2} 逼近（{@code field20746/field20747}）。
+     */
+    private void startCaretTimer() {
+        if (caretTimer != null) {
+            return;
+        }
+        caretStartMs = System.currentTimeMillis();
+        caretTimer = new AnimationTimer() {
+            @Override
+            public void handle(long now) {
+                long elapsed = (now / 1_000_000L) - caretStartMs;
+long phase = elapsed % CARET_PERIOD_MS;
+                caret.setOpacity(phase < CARET_PERIOD_MS / 2 ? 0.1 : 0.8);
+
+                // 滚动：目标偏移保证光标落在 [4, 486] 内
+                String value = field.getText() == null ? "" : field.getText();
+                double tw = glyphs.atlas().measure(value);
+                double caretRight = FIELD_PAD_LEFT + scrollX + tw;
+                double maxScroll = FIELD_W - FIELD_PAD_LEFT * 2 - tw;
+                double target = Math.max(0, Math.min(maxScroll, scrollX));
+                if (caretRight > FIELD_W - FIELD_PAD_LEFT) {
+                    target = Math.min(Math.max(0, maxScroll), caretRight - (FIELD_W - FIELD_PAD_LEFT));
+                }
+                scrollTarget = target;
+                double next = scrollX + (scrollTarget - scrollX) / 2.0;
+                if (Math.abs(next - scrollX) > 0.1) {
+                    scrollX = next;
+                    glyphs.setOffsetX(scrollX);
+                    glyphs.renderNow();
+                }
+                caret.setLayoutX(FIELD_X + FIELD_PAD_LEFT + scrollX + tw
+                        - (value.isEmpty() ? 0 : 1));
+            }
+        };
+        caretTimer.start();
+    }
+
+    private void stopCaretTimer() {
+        if (caretTimer != null) {
+            caretTimer.stop();
+            caretTimer = null;
+        }
+        caret.setVisible(false);
     }
 
     /** 原版下划线是 rgba(254,254,254,0.5)，聚焦时 alpha 拉到 1。 */
