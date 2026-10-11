@@ -6,6 +6,7 @@ import com.jello.music.ui.LoginView;
 import com.jello.music.ui.OnboardingView;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.ui.DragGate;
+import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.SearchBox;
@@ -29,6 +30,8 @@ import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.Theme;
 import javafx.application.Platform;
 import javafx.geometry.Bounds;
+import javafx.geometry.Rectangle2D;
+import javafx.stage.Screen;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
@@ -345,6 +348,7 @@ if (repeat != null) {
 writeSnapshot(root, pngPath);
         checkOnboardingFullScreen(pngPath.replace(".png", "-onboarding.png"));
         checkPlaybackModes(pngPath.replace(".png", "-repeat.png"));
+        checkEdgeDock();
         checkDragGate(root, player);
         checkShuffleQueue();
         checkStripBlur();
@@ -700,6 +704,117 @@ private static void checkLoginView() {
     }
 
 /**
+ * 贴边收起的橡皮筋与半透明。
+ *
+ * <p>对应 {@code appServices.js:679-709}（moveSigmaWindow）与
+ * {@code SigmaMusicPlayer.vue:504}（translucent 判据）。
+ * 判定都抽成了纯函数，这里可以穷举边界；真正要看的是「面板到底能滑出多少」，
+ * 所以断言里把越界像素量算出来了。
+     */
+    private static void checkEdgeDock() {
+        final double W = 800;          // 面板宽
+        final double RIGHT = 1920;     // 主屏右缘
+        final double LEFT = 0;
+        // 光标把面板推到最右（desiredX = right - w = 1120）时的位置
+        double clampX = RIGHT - W;
+
+        // ---- 第 1 步：精确夹取，不留余量 ----
+        // movedX 必须小，否则会顺带触发橡皮筋（那是第 2 步）
+        check("拖拽夹取不留余量：右缘最多到工作区右缘",
+                EdgeDock.resolveDragX(99999, W, RIGHT, 10) == clampX,
+                "x=" + EdgeDock.resolveDragX(99999, W, RIGHT, 10));
+        check("拖拽夹取不留余量：左缘不出屏",
+                EdgeDock.resolveDragX(-9999, W, RIGHT, 10) == LEFT,
+                "x=" + EdgeDock.resolveDragX(-9999, W, RIGHT, 10));
+
+        // ---- 第 2 步的两道闸 ----
+        // desiredX + w > right + 200  => desiredX > 1320
+        double justUnder = RIGHT + EdgeDock.RUBBER_BAND_ALLOWANCE - W - 1;   // 1319
+        double justOver = RIGHT + EdgeDock.RUBBER_BAND_ALLOWANCE - W + 1;    // 1321
+        // 越界量取大一些，免得 (desired-clamp-200)*0.5 截断后正好是 0 测不出差别
+        double push = justOver + 200;
+        check("橡皮筋需要越过 right+200 才起效",
+                EdgeDock.resolveDragX(justUnder, W, RIGHT, 500) == clampX,
+                "x=" + EdgeDock.resolveDragX(justUnder, W, RIGHT, 500));
+        check("越过 right+200 后进入橡皮筋（不再被夹死）",
+                EdgeDock.resolveDragX(push, W, RIGHT, 500) > clampX,
+                "x=" + EdgeDock.resolveDragX(push, W, RIGHT, 500));
+
+        check("movedX 必须 > 70 才进橡皮筋",
+                EdgeDock.resolveDragX(push, W, RIGHT,
+                        EdgeDock.RUBBER_BAND_TRIGGER) == clampX,
+                "movedX=70 -> x=" + EdgeDock.resolveDragX(push, W, RIGHT,
+                        EdgeDock.RUBBER_BAND_TRIGGER));
+        check("movedX > 70 进橡皮筋",
+                EdgeDock.resolveDragX(push, W, RIGHT,
+                        EdgeDock.RUBBER_BAND_TRIGGER + 1) > clampX, null);
+
+        // ---- 越界量 ----
+        // desired 是光标推出的期望位置，拖拽过程中**恒定**（原版 x = winX + 屏幕位移，
+        // winX 是按下时的窗口位置），所以橡皮筋是纯粹的一步映射，不存在迭代收敛。
+        double desired = RIGHT + 400;
+        double x = EdgeDock.resolveDragX(desired, W, RIGHT, 400);
+        double overhang = x + W - RIGHT;
+        double expectOverhang = (desired - clampX - EdgeDock.RUBBER_BAND_ALLOWANCE) * 0.5;
+        check("橡皮筋能真正把面板推出屏幕（右缘越过工作区右缘）",
+                EdgeDock.overhangingOf(x, W, RIGHT),
+                String.format("x=%.0f 越界=%.0f", x, overhang));
+        check("越界量 = (超出量 - 200) * 0.5（系数 0.5）",
+                Math.abs(overhang - expectOverhang) < 1.0,
+                String.format("越界=%.1f 期望=%.1f 完整超出=%.0f",
+                        overhang, expectOverhang, desired + W - RIGHT));
+        check("橡皮筋越界量明显小于完整超出量（不会一路爬出屏幕）",
+                overhang > 0 && overhang < (desired + W - RIGHT) * 0.6,
+                String.format("越界=%.0f 完整超出=%.0f", overhang, desired + W - RIGHT));
+        // desired 恒定 -> 结果恒定，拖多久都不会继续往外跑
+        check("desired 恒定时橡皮筋是稳定的（重复求值不漂移）",
+                Math.abs(EdgeDock.resolveDragX(desired, W, RIGHT, 400) - x) < 0.001, null);
+
+        // ---- 半透明判据矩阵（MusicPlayer.java:360-361）----
+        check("半透明矩阵：越界且未请求滑出 -> 半透明",
+                EdgeDock.translucentOf(true, false), null);
+        check("半透明矩阵：请求滑出后即使还越界也变亮",
+                !EdgeDock.translucentOf(true, true), null);
+        check("半透明矩阵：不越界 -> 不半透明",
+                !EdgeDock.translucentOf(false, false), null);
+        check("半透明值 = 0.5，80ms 淡入 / 150ms 淡回",
+                EdgeDock.DOCKED_OPACITY == 0.5 && EdgeDock.DIM_MILLIS == 80
+                        && EdgeDock.BRIGHT_MILLIS == 150, null);
+
+        // ---- 吸附 / 滑出目标 ----
+        check("吸附收起只留 40px 在屏内",
+                EdgeDock.dockTargetX(RIGHT) == RIGHT - 40,
+                "x=" + EdgeDock.dockTargetX(RIGHT));
+        check("滑出后右侧留 20px",
+                EdgeDock.restoreTargetX(W, RIGHT) == RIGHT - W - 20,
+                "x=" + EdgeDock.restoreTargetX(W, RIGHT));
+        check("越界判据是严格大于（等于不算越界）",
+                !EdgeDock.overhangingOf(RIGHT - W, W, RIGHT)
+                        && EdgeDock.overhangingOf(RIGHT - W + 1, W, RIGHT), null);
+
+        // ---- 多显示器：按窗口所在屏取工作区 ----
+        // 这台机器可能只有一块屏，所以按屏数分支断言，不假设一定有第二块
+        Rectangle2D primary = Screen.getPrimary().getVisualBounds();
+        Rectangle2D onPrimary = EdgeDock.displayMatching(
+                primary.getMinX() + 100, primary.getMinY() + 100, W, 600);
+        check("主屏内的窗口用主屏工作区",
+                onPrimary.getMinX() == primary.getMinX()
+                        && Math.abs(onPrimary.getWidth() - primary.getWidth()) < 1,
+                String.format("minX=%.0f width=%.0f", onPrimary.getMinX(), onPrimary.getWidth()));
+        if (Screen.getScreens().size() > 1) {
+            Screen other = Screen.getScreens().stream()
+                    .filter(s -> s != Screen.getPrimary()).findFirst().orElseThrow();
+            Rectangle2D b = other.getVisualBounds();
+            // 窗口完全落在第二块屏里，右缘必须按那块屏算
+            Rectangle2D hit = EdgeDock.displayMatching(
+                    b.getMinX() + 10, b.getMinY() + 10, W, 600);
+            check("多显示器时右缘按窗口所在屏算",
+                    Math.abs(hit.getMinX() - b.getMinX()) < 1,
+                    String.format("minX=%.0f 期望=%.0f", hit.getMinX(), b.getMinX()));
+        }
+    }
+
+    /**
      * 播放模式四态。
      *
      * <p>四态的坑是「模式索引 ≠ 雪碧图帧号」（随机↔顺序对调，见

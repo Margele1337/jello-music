@@ -48,8 +48,12 @@
 - [x] **拖拽排除列表** —— 原版 `SigmaMusicPlayer.vue:340` 的 `NO_DRAG_SELECTOR`
       （12 项）照抄成 `DragGate`，控件挂原版同名的 CSS class，
       按事件目标的父链判定（对应原版 `target.closest(...)`）
-- [ ] **贴边收起的半透明态 + 越界橡皮筋** —— 原版拖拽越过右缘时面板**先半透明**、
-      松手才吸附；`EdgeDock` 目前没有任何 opacity / overhang 逻辑
+- [x] **贴边收起的半透明态 + 越界橡皮筋** —— 原版拖拽越过右缘时面板**先半透明**、
+      松手才吸附。拖拽分两步（appServices.js:679-709）：先精确夹取不留余量，
+      只有 `x+w > right+200`(var14) 且 `movedX > 70` 才进橡皮筋，
+      `x = clampedX + (int)((desired-clampedX-200)*0.5)`；半透明判据
+      `越界 && !已请求滑出`（MusicPlayer.java:360-361），淡到 50% 用 80ms、
+      淡回 100% 用 150ms。吸附只发生在松手
 - [ ] **dock 滑动曲线不一致** —— 原版是每帧 `0.25 × dt/18.10361` 插值 + 120ms 节流 +
       3s 卡死看门狗；现在是固定 450/125ms cubic ease-out
 - [ ] **频谱参数** —— `spectrumScale`（0.2~3）、`spectrumSigmaSmoothing`（默认 0.335）、

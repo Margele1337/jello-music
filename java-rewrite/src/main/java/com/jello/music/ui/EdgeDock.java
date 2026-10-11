@@ -2,6 +2,7 @@ package com.jello.music.ui;
 
 import javafx.animation.AnimationTimer;
 import javafx.geometry.Rectangle2D;
+import javafx.scene.Node;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
@@ -19,13 +20,51 @@ import javafx.stage.Stage;
  *   <li>拖拽夹取无余量，越界只在橡皮筋状态下才可能发生</li>
  * </ul>
  *
+ * <p><b>拖拽分两步</b>（{@code appServices.js:679-709} 的 {@code moveSigmaWindow}）：
+ * <ol>
+ *   <li>第 1 步：{@code clampedX} 精确夹在 {@code [area.left, right - width]}，无越界余量</li>
+ *   <li>第 2 步：只有 {@code desiredX + width > right + 200}（var14）<b>且</b>
+ *       {@code movedX > 70} 时才进橡皮筋：{@code x = clampedX + (int)((desiredX - clampedX - 200) * 0.5)}</li>
+ * </ol>
+ * 不动点是 {@code clamp + 0.5*(desired - clamp - 200)}；基准必须是<b>本 tick 刚夹出来的</b>
+ * clampedX，不能拿上一次留下的窗口位置，否则每帧都在已推出的位置上再推一半，
+ * 面板会一路爬出屏幕且越来越难抓回来。
+ *
+ * <p><b>半透明判据</b>（{@code SigmaMusicPlayer.vue:504}，对应原版 MusicPlayer.java:360-361）：
+ * {@code translucent = 越界 && !已请求滑出}。所以拖拽越过右缘时先半透明，
+ * 点收起条的瞬间就 {@code 已请求滑出=true} 开始 150ms 变亮——哪怕面板还基本在屏幕外，
+ * 视觉上像「醒来」。淡到 50% 用 80ms、淡回 100% 用 150ms，都是线性，
+ * 方向翻转时重新计时（不跳变）。
+ *
+ * <p><b>吸附只发生在松手</b>：拖拽中越界只是变半透明，不吸附。
+ * 之前 {@link #drag} 一越界就立刻收走，用户根本看不到半透明过渡。
+ *
  * <p>滑出动画用 {@link AnimationTimer} 手动推进，不用 {@code ValueAnimator}
  * （该类在 JavaFX 21.0.5 的 graphics jar 里缺失）。
  */
 public final class EdgeDock {
 
+    /** 原版 var14：橡皮筋的越界余量。 */
+    public static final double RUBBER_BAND_ALLOWANCE = 200;
+    /** 原版 {@code newHeight - mouseX > 70}：橡皮筋的另一道闸（相对按下点的横向位移）。 */
+    public static final double RUBBER_BAND_TRIGGER = 70;
+    /** 原版 field20873：收起半透明的透明度。 */
+    public static final double DOCKED_OPACITY = 0.5;
+    /** 原版 {@code new Animation(80, 150, BACKWARDS)}：淡到 50% 用 80ms。 */
+    public static final long DIM_MILLIS = 80;
+    /** 淡回 100% 用 150ms。 */
+    public static final long BRIGHT_MILLIS = 150;
+
     private final Stage stage;
-    private boolean docked;
+
+    /** 原版 {@code sigmaDocked}：离散吸附态，决定动画目标，不描述几何位置。 */
+    private boolean snapped;
+    /** 原版 {@code sigmaOverhanging}：右缘是否越过工作区右缘，连续量。 */
+    private boolean overhanging;
+    /** 原版 {@code field20874}「已请求滑出」，半透明判据的否定项。 */
+    private boolean undockRequested;
+    private boolean translucent;
+
     private AnimationTimer slideTimer;
     private long slideStart;
     private double slideFromX;
@@ -34,65 +73,177 @@ public final class EdgeDock {
     private double slideToY;
     private long slideDurationNanos;
 
+    private Node opacityTarget;
+    private AnimationTimer fadeTimer;
+    private long fadeStart;
+    private double fadeFrom;
+    private double fadeTo;
+    private long fadeDurationNanos;
+
     private double dragAnchorScreenX;
     private double dragAnchorStageX;
     private double dragAnchorScreenY;
     private double dragAnchorStageY;
+    /** {@code movedX} 的基准：按下瞬间的屏幕 x（原版 {@code dragState.startX}）。 */
+    private double dragStartScreenX;
     private boolean dragging;
+    private Runnable dockStateListener;
 
     public EdgeDock(Stage stage) {
         this.stage = stage;
-        this.docked = true;
+        this.snapped = true;
     }
 
     public boolean isDocked() {
-        return docked;
+        return snapped;
+    }
+
+    /**
+     * 吸附态变化时回调（给 MainApp 去开关那条 41px 触发条）。
+     *
+     * <p>必须覆盖<b>所有</b>改 snapped 的路径，包括 {@link #endDrag()} 里
+     * 「拖出去松手被吸走」这一条——只��� RSHIFT 收起时开关触发条的话，
+     * 鼠标拖出去之后就点不回来了。
+     */
+    public void onDockStateChanged(Runnable r) {
+        this.dockStateListener = r;
+    }
+
+    private void setSnapped(boolean value) {
+        if (snapped == value) {
+            return;
+        }
+        snapped = value;
+        if (dockStateListener != null) {
+            dockStateListener.run();
+        }
+    }
+
+    /** 供 UiProbe 断言半透明矩阵。 */
+    public static boolean translucentOf(boolean overhanging, boolean undockRequested) {
+        return overhanging && !undockRequested;
+    }
+
+    /**
+     * 原版 {@code moveSigmaWindow} 的 x 决策，拆成纯函数便于离屏断言。
+     *
+     * @param desiredX 光标推出的期望 x（未夹取）
+     * @param width    窗口宽
+     * @param right    工作区右缘
+     * @param movedX   相对按下点的横向位移
+     */
+    public static double resolveDragX(double desiredX, double width, double right, double movedX) {
+        // 第 1 步：精确夹取，无越界余量
+        double clampedX = Math.min(Math.max(Math.round(desiredX), 0), right - width);
+        // 第 2 步：var14 = 200, newHeight - mouseX > 70
+        if (desiredX + width > right + RUBBER_BAND_ALLOWANCE && movedX > RUBBER_BAND_TRIGGER) {
+            // var15 = desired - xA - var14；Java 的 (long) 截断等价于 Math.trunc
+            return clampedX + (long) ((desiredX - clampedX - RUBBER_BAND_ALLOWANCE) * 0.5);
+        }
+        return clampedX;
+    }
+
+    /** 原版判据 {@code getXA() + getWidthA() > parent.getWidthA()}，严格大于。 */
+    public static boolean overhangingOf(double x, double width, double right) {
+        return x + width > right;
+    }
+
+    /** 收起目标 x：只留 DOCK_VISIBLE 露在屏幕内。 */
+    public static double dockTargetX(double right) {
+        return right - Theme.DOCK_VISIBLE;
+    }
+
+    /** 滑出目标 x：原版 var11 = parentWidth - 20 - width。 */
+    public static double restoreTargetX(double width, double right) {
+        return right - width - Theme.RESTORE_MARGIN;
+    }
+
+    /**
+     * 原版 {@code screen.getDisplayMatching}：取与目标矩形重叠最多的那块屏幕。
+     *
+     * <p>多显示器时必须按窗口所在屏算右缘，不能一律用主屏。
+     */
+    public static Rectangle2D displayMatching(double x, double y, double w, double h) {
+        Rectangle2D best = Screen.getPrimary().getVisualBounds();
+        double bestArea = -1;
+        for (Screen s : Screen.getScreens()) {
+            Rectangle2D b = s.getVisualBounds();
+            double ix = Math.max(0, Math.min(x + w, b.getMaxX()) - Math.max(x, b.getMinX()));
+            double iy = Math.max(0, Math.min(y + h, b.getMaxY()) - Math.max(y, b.getMinY()));
+            double area = ix * iy;
+            if (area > bestArea) {
+                bestArea = area;
+                best = b;
+            }
+        }
+        return best;
     }
 
     private Rectangle2D workArea() {
-        return Screen.getPrimary().getVisualBounds();
+        return displayMatching(stage.getX(), stage.getY(), stage.getWidth(), stage.getHeight());
+    }
+
+    private double centerY(Rectangle2D area) {
+        return Math.round(area.getMinY() + (area.getHeight() - stage.getHeight()) / 2);
     }
 
     /** 收起后的目标 x：面板大部分移出右侧，仅留 DOCK_VISIBLE 可见。 */
-    private double dockedX() {
-        return workArea().getMaxX() - Theme.DOCK_VISIBLE;
+    private double dockedX(Rectangle2D area) {
+        return dockTargetX(area.getMaxX());
     }
 
     /** 展开后的目标 x：靠右但留 RESTORE_MARGIN 间隙。 */
-    private double expandedX() {
-        return workArea().getMaxX() - Theme.RESTORE_MARGIN - stage.getWidth();
-    }
-
-    private double centerY() {
-        Rectangle2D area = workArea();
-        return Math.round(area.getMinY() + (area.getHeight() - stage.getHeight()) / 2);
+    private double expandedX(Rectangle2D area) {
+        return restoreTargetX(stage.getWidth(), area.getMaxX());
     }
 
     /** 初始摆位：先按收起态藏到右缘。 */
     public void placeInitially() {
-        stage.setX(dockedX());
-        stage.setY(centerY());
+        Rectangle2D area = workArea();
+        stage.setX(dockedX(area));
+        stage.setY(centerY(area));
+        setSnapped(true);
+        undockRequested = false;
+        syncFromGeometry();
+        syncTranslucent();
     }
 
     /**
      * 切换收起/展开。这与原版「点右侧 41px 触发条」与「RSHIFT/托盘」共用同一条路径。
      */
     public void toggle() {
-        if (docked) {
+        if (snapped) {
             expand();
         } else {
             collapse();
         }
     }
 
+    /**
+     * 滑出（对应原版 {@code restoreSigmaWindow}）。
+     *
+     * <p>早退条件不是「有没有越界」而是「是否已吸附」：收起动画进行中面板可能还在
+     * 屏幕中间（如 x=1100），按几何判定会误判成无需滑出，面板卡在中间不动。
+     */
     public void expand() {
-        docked = false;
-        slideTo(expandedX(), centerY(), 450);
+        Rectangle2D area = workArea();
+        double w = stage.getWidth();
+        // 原版：if (!sigmaDocked && bounds.x + width <= right) return;
+        if (!snapped && !overhangingOf(stage.getX(), w, area.getMaxX())) {
+            return;
+        }
+        setSnapped(false);
+        // 点一下立刻开始变亮，哪怕面板还基本在屏幕外
+        undockRequested = true;
+        syncTranslucent();
+        slideTo(expandedX(area), centerY(area), 450);
     }
 
     public void collapse() {
-        docked = true;
-        slideTo(dockedX(), centerY(), 125);
+        Rectangle2D area = workArea();
+        setSnapped(true);
+        undockRequested = false;
+        slideTo(dockedX(area), centerY(area), 125);
     }
 
     private void slideTo(double targetX, double targetY, long millis) {
@@ -114,12 +265,16 @@ public final class EdgeDock {
                 double k = 1 - Math.pow(1 - t, 3);
                 stage.setX(slideFromX + (slideToX - slideFromX) * k);
                 stage.setY(slideFromY + (slideToY - slideFromY) * k);
+                // 原版靠 200ms 轮询 updateDockedState 清「已请求滑出」，
+                // 这里在动画帧里直接同步，更准也更省
+                syncFromGeometry();
                 if (t >= 1.0) {
                     slideTimer.stop();
                     slideTimer = null;
                     // 兜底：精确落到目标，避免累积误差导致状态判定不一致
                     stage.setX(targetX);
                     stage.setY(targetY);
+                    syncFromGeometry();
                 }
             }
         };
@@ -132,6 +287,7 @@ public final class EdgeDock {
         dragAnchorScreenY = e.getScreenY();
         dragAnchorStageX = stage.getX();
         dragAnchorStageY = stage.getY();
+        dragStartScreenX = e.getScreenX();
         if (slideTimer != null) {
             slideTimer.stop();
             slideTimer = null;
@@ -139,34 +295,57 @@ public final class EdgeDock {
     }
 
     /**
-     * 拖拽中。判定与原版一致：贴右判定为严格 &gt; right 才吸附收起，
-     * 夹取范围无余量，窗口左上不得越过工作区左上。
+     * 拖拽中，1:1 复刻 {@code moveSigmaWindow}。
+     *
+     * <p>注意这里<b>不吸附</b>：越界只把面板置为半透明，吸附留给 {@link #endDrag()}。
      */
     public void drag(MouseEvent e) {
         if (!dragging) {
             return;
         }
-        Rectangle2D area = workArea();
+        double w = stage.getWidth();
+        double h = stage.getHeight();
         double desiredX = dragAnchorStageX + (e.getScreenX() - dragAnchorScreenX);
         double desiredY = dragAnchorStageY + (e.getScreenY() - dragAnchorScreenY);
+        double movedX = e.getScreenX() - dragStartScreenX;
 
-        if (desiredX + stage.getWidth() > area.getMaxX()) {
-            docked = true;
-            stage.setX(area.getMaxX() - Theme.DOCK_VISIBLE);
-            stage.setY(centerY());
-            return;
-        }
-        docked = false;
-        double clampedX = Math.min(Math.max(desiredX, area.getMinX()),
-                area.getMaxX() - stage.getWidth());
-        double clampedY = Math.min(Math.max(desiredY, area.getMinY()),
-                area.getMaxY() - stage.getHeight());
-        stage.setX(clampedX);
-        stage.setY(clampedY);
+        Rectangle2D area = displayMatching(desiredX, desiredY, w, h);
+        double nextY = Math.min(Math.max(Math.round(desiredY), area.getMinY()),
+                area.getMaxY() - h);
+        double newX = resolveDragX(desiredX, w, area.getMaxX(), movedX);
+
+        stage.setX(newX);
+        stage.setY(nextY);
+        setOverhanging(overhangingOf(newX, w, area.getMaxX()));
     }
 
+    /**
+     * 松手（对应原版 {@code finishSigmaDrag}）：越界就吸附收起，否则夹回工作区。
+     *
+     * <p>因为第 1 步夹取不留余量，普通拖拽不可能触发吸附分支，只有橡皮筋推出去才会。
+     */
     public void endDrag() {
         dragging = false;
+        double w = stage.getWidth();
+        double h = stage.getHeight();
+        Rectangle2D area = workArea();
+        double right = area.getMaxX();
+
+        if (overhangingOf(stage.getX(), w, right)) {
+            setSnapped(true);
+            undockRequested = false;
+            syncTranslucent();
+            slideTo(dockTargetX(right), centerY(area), 450);
+            return;
+        }
+
+        setSnapped(false);
+        stage.setX(Math.min(Math.max(stage.getX(), area.getMinX()), right - w));
+        stage.setY(Math.min(Math.max(stage.getY(), area.getMinY()), area.getMaxY() - h));
+        // 未收起：清掉拖拽期的越界信号，之后透明度只跟吸附态走
+        overhanging = false;
+        undockRequested = false;
+        syncTranslucent();
     }
 
     public boolean isDragging() {
@@ -176,5 +355,79 @@ public final class EdgeDock {
     /** 鼠标是否落在右侧触发条范围内（收起态靠它唤出）。 */
     public boolean isOverEdgeTrigger(double mouseScreenX) {
         return mouseScreenX >= workArea().getMaxX() - Theme.EDGE_TRIGGER;
+    }
+
+    // ---- 半透明 ----
+
+    /**
+     * 透明度动画挂在面板根节点上（对应原版 {@code .sigma-music-player}）。
+     *
+     * <p>注意别和 {@link ElasticReveal} 抢同一个节点：reveal 动的是外层 overlay
+     * 的 opacity，这里动的是面板根，两者叠加才对得上原版「浮层缩放 + 面板变暗」。
+     */
+    public void attachOpacityTarget(Node node) {
+        this.opacityTarget = node;
+    }
+
+    public boolean isTranslucent() {
+        return translucent;
+    }
+
+    private void setOverhanging(boolean value) {
+        if (overhanging == value) {
+            return;
+        }
+        overhanging = value;
+        syncTranslucent();
+    }
+
+    /** 位置一变就同步越界标志；回到屏幕内即视为滑出结束，清掉「已请求滑出」。 */
+    private void syncFromGeometry() {
+        boolean oh = overhangingOf(stage.getX(), stage.getWidth(), workArea().getMaxX());
+        if (!oh) {
+            undockRequested = false;
+        }
+        setOverhanging(oh);
+    }
+
+    private void syncTranslucent() {
+        boolean want = translucentOf(overhanging, undockRequested);
+        if (want == translucent) {
+            return;
+        }
+        translucent = want;
+        fadeTo(want ? DOCKED_OPACITY : 1.0, want ? DIM_MILLIS : BRIGHT_MILLIS);
+    }
+
+    /** 线性淡入淡出；方向翻转时从当前值重新计时，不跳变（对应 CSS transition）。 */
+    private void fadeTo(double target, long millis) {
+        if (opacityTarget == null) {
+            return;
+        }
+        if (fadeTimer != null) {
+            fadeTimer.stop();
+        }
+        fadeFrom = opacityTarget.getOpacity();
+        fadeTo = target;
+        fadeDurationNanos = millis * 1_000_000L;
+        fadeStart = System.nanoTime();
+        if (Math.abs(fadeFrom - fadeTo) < 0.001) {
+            opacityTarget.setOpacity(fadeTo);
+            fadeTimer = null;
+            return;
+        }
+        fadeTimer = new AnimationTimer() {
+            @Override
+            public void handle(long now) {
+                double t = Math.min(1.0, (now - fadeStart) / (double) fadeDurationNanos);
+                opacityTarget.setOpacity(fadeFrom + (fadeTo - fadeFrom) * t);
+                if (t >= 1.0) {
+                    fadeTimer.stop();
+                    fadeTimer = null;
+                    opacityTarget.setOpacity(fadeTo);
+                }
+            }
+        };
+        fadeTimer.start();
     }
 }

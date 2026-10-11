@@ -215,6 +215,13 @@ rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock)
         stage.setAlwaysOnTop(true);
 
 dock = new EdgeDock(stage);
+        // 半透明挂面板根节点（对应原版 .sigma-music-player）；
+        // ElasticReveal 动的是外层 overlay，两者不抢同一个 opacity
+        dock.attachOpacityTarget(root);
+        // 收起态那条 41px 触发条要跟着吸附态开关。注意鼠标拖出去被吸走也算收起，
+        // 只在 RSHIFT 收起时开关的话，拖出去之后就点不回来了
+        dock.onDockStateChanged(
+                () -> playerPanel.setDockTriggerActive(dock.isDocked()));
         installDragHandlers(root);
         dock.expand();
         reveal.expand(null);
