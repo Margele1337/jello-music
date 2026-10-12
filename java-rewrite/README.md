@@ -190,6 +190,45 @@ JavaFX 21 **没有公开的鼠标穿透 API**——`Scene` 上不存在 `setMous
 所以 `system/MousePassthrough.java` 反射取原生句柄，再用 JNA 设
 `WS_EX_TRANSPARENT`——这正是 Electron 内部做的事，语义一致（点击落到下层窗口）。
 取不到句柄时不抛异常，退化成「不穿透」，不影响播放与绘制。
+## 打包（jpackage）
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
+```
+
+产出 `pkgout\JelloMusic\JelloMusic.exe`（约 104 MB，含裁剪过的私有 runtime）。
+装不了 WiX，所以只出 app-image，不出 `.msi` / `.exe` 安装包。
+
+**exe 需要先起 API**：它不像 `run.bat` 那样会自动拉起 KuGou API，
+所以先在仓库根目录 `npm run api`（端口 6521），再双击 exe。
+
+### 为什么这个脚本长这样
+
+四个坑，每一个都卡过一轮（细节见脚本头部注释）：
+
+| # | 现象 | 真因 |
+|---|---|---|
+| 1 | `FileAlreadyExistsException: app\mods`，且删任何单个依赖都无效 | javafx 同时在 runtime image 和 `--module-path` 里 |
+| 2 | `automatic module cannot be read: jlayer` | 自动模块不能当 jlink 根（JDK-8305967），`--bind-services` 无效 |
+| 3 | `FindException: Module java.logging not found` | `jackson-databind` 声明了 `requires java.logging`，jlink 漏了 |
+| 4 | jpackage 发出 classpath launcher，JavaFX 拒绝启动 | 本项目是模块化的，cfg 需改写成 `--module` 模式 |
+
+核心思路是**把 module path 拆成两条**：
+
+```
+jlink     拿 app.jar + javafx-*        → javafx 被链进 runtime image
+jpackage  的 --input 只放 app.jar
+          + jlayer/jna/slf4j/jackson   → 这些自动模块留在 app\ 运行时加载
+```
+
+第 4 步的 cfg 改写有两个细节各花了一轮往返：
+**必须用 `=` 不能用空格**（空格会被拆成两个参数，JVM 报 `Unrecognized option`），
+**不能加引号**（launcher 会把引号留在字符串里，JVM 报
+`IllegalPathException: Illegal char <"> at index 0`）。
+
+PowerShell 侧还有个：`--add-modules` 的参数**不能反引号续行**，逗号后换行会被
+解析成数组，jlink 收到的是 `invalid argument: javafx.media javafx.fxml ...`。
+
 ## 改完 UI 自己看一眼
 
 `probe-ui` 会额外把**新手教程页按全屏尺寸**渲染成

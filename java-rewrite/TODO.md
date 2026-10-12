@@ -143,11 +143,26 @@
 
 ## E. 打包
 
-- [ ] **jpackage** —— `package.ps1` 写好了但从未跑通
-      - [ ] 上次试跑在 `target/` 留了 1329 层自嵌套目录（已清），`.jimg/` 也还在
-      - [ ] 跑通后验证 `JelloMusic.exe` 能启动、能出声
-      - [ ] 注意 `package.ps1` 的去重逻辑会丢掉非 `-win` 的 javafx jar，
-            任何新增依赖都不能依赖那个 jar
+- [x] **jpackage** —— 跑通了。`powershell -File package.ps1` → `pkgout\JelloMusic\JelloMusic.exe`
+      （103.9 MB，含私有 runtime）。实测 exe 能启动、JavaFX 初始化成功、
+      稳定存活 14s+、stderr 无异常（只有「API 未启动」的正常提示）
+
+      卡了很久，四个真正的坑（脚本头部有完整记录）：
+
+  | # | 现象 | 真因 | 解法 |
+  |---|---|---|---|
+  | 1 | `FileAlreadyExistsException: app\mods`，删任何单个依赖都无效 | javafx 同时在 runtime image 和 `--module-path` 里 | **拆成两条 module path**：jlink 拿 app+javafx，jpackage 的 `--input` 只放自动模块 jar |
+  | 2 | `automatic module cannot be read: jlayer` | 自动模块不能当 jlink 根（JDK-8305967），`--bind-services` 也没用 | jlayer/jna/slf4j **不进镜像**，运行时从 `app\` 提供 |
+  | 3 | `FindException: Module java.logging not found` | jackson-databind 声明了 `requires java.logging`，jlink 漏了 | `--add-modules` 补 `java.logging/management/naming/sql/jdk.crypto.ec` |
+  | 4 | cfg 是 classpath 模式，JavaFX 拒绝启动 | jpackage 只发 classpath launcher，本项目是模块化的 | 打包后重写 cfg 为 `--module-path=` + `--module=`；**用 `=` 不能用空格、不加引号**（引号会被当路径字符） |
+
+      - [x] `--input` 下的 jar 必须在**根目录**，放进 `app\` 子目录 jpackage 会拒绝
+      - [x] PowerShell 的 `--add-modules` 不能用反引号续行（逗号后换行会被当数组拆开）
+      - [x] 产物目录已 gitignore：`.jimg/`、`pkgout/`、`mp.txt`、`mp-pkg.txt`、`tools/`
+      - [ ] 打包产物里 `run.bat` 的自动起 API 逻辑用不上（那是开发用的），
+            所以 exe 需要先在仓库根目录 `npm run api`
+      - [ ] 未做：安装包（.msi / exe setup），需要 WiX，本机没装
+      - [ ] 未做：代码签名（Windows SmartScreen 会拦未签名 exe）
 
 ---
 

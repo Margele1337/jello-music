@@ -1,0 +1,12 @@
+# jlink runtime image produced by package.ps1 (recreated on every run, ~100 MB)
+.jimg/
+
+# jpackage output (recreated on every run, ~104 MB)
+pkgout/
+
+# module paths written by package.ps1; both are machine-specific (absolute .m2 paths)
+mp.txt
+mp-pkg.txt
+
+# Maven extracted into tools/ (see README "Environment")
+tools/
