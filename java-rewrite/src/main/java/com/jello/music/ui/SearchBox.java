@@ -148,7 +148,15 @@ public final class SearchBox extends Pane {
 
         results.setLayoutX(0);
         results.setLayoutY(0);
-        getChildren().add(results);
+        // 层级：原版 .sigma-search-box-field 有 z-index:3、.sigma-search-box-results
+        // 没有（SigmaSearchBox.vue:232-244），所以输入框压在结果列表<b>上面</b>。
+        //
+        // Pane 没有 z-index，靠 add 顺序决定叠放：<b>后加的在上</b>。
+        // 这里 results 从 0,0 铺满 550x506，如果按原顺序最后加，
+        // 它会盖住 y=14..84 的搜索框——搜索结果里「我喜欢」这类歌单卡片
+        // 的标题就叠在 "Search..." 上，看起来像搜索框里有两个文字。
+        // 所以要提到最前面先加，让 field/glyphs/caret/underline 压在它上面。
+        getChildren().add(0, results);
     }
 
     /** 有内容画内容、否则画占位符，整串按当前焦点态的 alpha 上色。 */
@@ -245,6 +253,32 @@ long phase = elapsed % CARET_PERIOD_MS;
         results.viewport().getChildren().clear();
         results.setContentHeight(0);
         cards.clear();
+    }
+
+    /**
+     * 搜索结果区在子节点里的位置，供 UiProbe 断言层级顺序。
+     *
+     * <p>原版靠 {@code .sigma-search-box-field { z-index: 3 }} 把输入框压在
+     * 结果列表之上（{@code SigmaSearchBox.vue:232-244}）。JavaFX 的 Pane 没有
+     * z-index，靠 add 顺序决定，所以这个下标就是「谁在谁上面」的依据。
+     */
+    public int resultsLayerIndex() {
+        return getChildren().indexOf(results);
+    }
+
+    /** 输入框在子节点里的位置，供 UiProbe 断言层级顺序。 */
+    public int fieldLayerIndex() {
+        return getChildren().indexOf(field);
+    }
+
+    /** 下划线在子节点里的位置，供 UiProbe 断言层级顺序。 */
+    public int underlineLayerIndex() {
+        return getChildren().indexOf(underline);
+    }
+
+    /** 搜索结果区的纵坐标（原版是 top:0，铺满整块）。 */
+    public double resultsLayoutY() {
+        return results.getLayoutY();
     }
 
     /** 结果区的滚动容器，外部（校验工具）需要查滚动状态时用。 */

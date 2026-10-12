@@ -370,6 +370,39 @@ writeSnapshot(root, pngPath);
         checkApiBaseUrl();
         checkNoWhiteBackdrop();
         checkShellBackdrop();
+        checkSearchBoxLayering();
+    }
+
+    /**
+     * 搜索框必须压在搜索结果<b>之上</b>，1:1 对齐原版的 {@code z-index}。
+     *
+     * <p>原版（{@code SigmaSearchBox.vue:232-244}）：<br>
+     * {@code .sigma-search-box-field} 有 {@code z-index: 3}，
+     * {@code .sigma-search-box-results} <b>没有</b> z-index。
+     * 而 results 是 {@code left:0; top:0; width:550px; height:506px}——
+     * 与 field（{@code left:30px; top:14px; 490x70}）<b>区域重叠</b>。
+     * 靠 z-index 区分：输入框在上。
+     *
+     * <p>JavaFX 的 {@code Pane} 没有 z-index，靠 {@code add} 顺序叠放，
+     * <b>后加的在上</b>。所以 results 必须<b>先</b>加（插到 index 0），
+     * 否则它会盖住搜索框——搜索结果里「我喜欢」这类歌单卡片的标题
+     * 就叠在 "Search..." 上，看着像搜索框里有两个文字。
+     */
+    private static void checkSearchBoxLayering() {
+        var box = new com.jello.music.ui.SearchBox();
+        int r = box.resultsLayerIndex();
+        int f = box.fieldLayerIndex();
+        int u = box.underlineLayerIndex();
+        check("三个节点都在场景树里", r >= 0 && f >= 0 && u >= 0,
+                "results=" + r + " field=" + f + " underline=" + u);
+        check("结果区必须排在输入框之前（add(0, results)，对应 z-index:3）",
+                r >= 0 && f >= 0 && r < f, "results=" + r + " field=" + f);
+        check("下划线也要压在结果区之上",
+                u < 0 || r < u, "results=" + r + " underline=" + u);
+        // 几何上两者确实重叠——这正是需要 z-index 的原因
+        check("结果区铺满 0,0（与 field 的 30,14,490x70 区域重叠）",
+                Math.abs(box.resultsLayoutY()) < 0.001,
+                "results.layoutY=" + box.resultsLayoutY());
     }
 
     /**
