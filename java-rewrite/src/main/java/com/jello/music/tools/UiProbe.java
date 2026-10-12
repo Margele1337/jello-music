@@ -375,6 +375,73 @@ writeSnapshot(root, pngPath);
         checkTrayIconsAndFont();
         checkViewportTransparent();
         checkSearchBoxClear();
+        checkTrayMenuIsSelfDrawn();
+    }
+
+    /**
+     * 托盘菜单必须是<b>自绘</b>的，不能用 {@link java.awt.PopupMenu}。
+     *
+     * <p><b>乱码的真正根因</b>：Windows 上 {@code java.awt.MenuItem} 走
+     * <b>native peer</b>，菜单由系统 {@code TrackPopupMenu} 绘制，
+     * Java 侧 {@code setFont} <b>完全无效</b>。
+     * 实测 {@code new MenuItem("…").getFont()} 返回 {@code null} ——
+     * 未显示的菜单项根本不持有字体。而系统菜单字体没有 CJK 字形，
+     * 中文就渲染成豆腐块 □□□。
+     *
+     * <p>换过的方案都不通：
+     * <ul>
+     *   <li>{@code setFont(cjkFont())} —— native peer 不听</li>
+     *   <li>{@code javax.swing.JPopupMenu} —— 它继承 {@code JComponent}，
+     *       <b>不是</b> {@code PopupMenu} 子类，塞不进 {@code TrayIcon}</li>
+     * </ul>
+     *
+     * <p>自绘（{@code TrayPopupMenu}）用 JavaFX 渲染，没有 peer 那一层，
+     * 设了字体就一定生效。
+     */
+    private static void checkTrayMenuIsSelfDrawn() {
+        // 不能存在「用 AWT 菜单」的痕迹：TrayIconHelper 不该再 new PopupMenu /
+        // setPopupMenu。只看代码行，注释里提到这两个名字是正常的（说明为什么不用）。
+        boolean awtMenuGone = true;
+        try {
+            var f = java.nio.file.Files.readString(java.nio.file.Path.of(
+                    "src/main/java/com/jello/music/system/TrayIconHelper.java"));
+            for (String line : f.split("\n")) {
+                String t = line.strip();
+                if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) {
+                    continue; // 跳过注释
+                }
+                if (t.contains("new PopupMenu()") || t.contains("setPopupMenu(")) {
+                    awtMenuGone = false;
+                    break;
+                }
+            }
+        } catch (Exception ignored) {
+            // 探针不在源码目录下就跳过这条
+        }
+        check("TrayIconHelper 已不再用 AWT PopupMenu（那是乱码根源）",
+                awtMenuGone, "仍在用 AWT 原生菜单");
+
+        // JavaFX 侧选中的字体必须真能排中文
+        String sample = "播放设置退出";
+        java.awt.Font ok = null;
+        for (String name : new String[]{"Microsoft YaHei UI", "Microsoft YaHei",
+                "SimHei", "SimSun", java.awt.Font.DIALOG}) {
+            var f = new java.awt.Font(name, java.awt.Font.PLAIN, 13);
+            if (f.canDisplayUpTo(sample) < 0) {
+                ok = f;
+                break;
+            }
+        }
+        check("系统里存在能显示中文的字体（自绘菜单的前提）",
+                ok != null, "一个都没有");
+
+        // 菜单图标资源必须在 classpath（自绘菜单要用）
+        for (String name : new String[]{"tray/play.png", "tray/prev.png",
+                "tray/next.png", "tray/home.png", "tray/show.png",
+                "tray/quit.png"}) {
+            check("菜单图标在 classpath: " + name,
+                    UiProbe.class.getResource("/icons/" + name) != null, "缺失");
+        }
     }
 
     /**

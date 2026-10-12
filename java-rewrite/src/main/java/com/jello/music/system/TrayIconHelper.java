@@ -28,9 +28,9 @@ import java.awt.image.BufferedImage;
 public final class TrayIconHelper {
 
     private TrayIcon trayIcon;
+    /** 自绘菜单（绕开 AWT 原生菜单的字体限制）。 */
+    private TrayPopupMenu popup;
 
-    /** 用来验证字体有没有中文字形的样本。 */
-    private static final String CJK_SAMPLE = "播放设置退出上一首下一首";
 
     /** 装托盘。系统不支持托盘时静默跳过，不影响主功能。 */
     public void install() {
@@ -42,24 +42,25 @@ public final class TrayIconHelper {
             trayIcon = new TrayIcon(makeIcon(), "Jello Music");
             trayIcon.setImageAutoSize(true);
 
-            PopupMenu menu = new PopupMenu();
+            // <b>不用</b> trayIcon.setPopupMenu(...)：
+            // Windows 上 java.awt.MenuItem 走 native peer，菜单由系统
+            // TrackPopupMenu 绘制，Java 侧 setFont 完全无效
+            // （实测 MenuItem.getFont() 返回 null），而系统菜单字体
+            // 没有 CJK 字形 -> 中文全是豆腐块 □□□。
+            // 详见 {@link TrayPopupMenu} 的类注释。
+            popup = buildMenu();
 
-            menu.add(item("播放 / 暂停", () -> run(onPlayPause)));
-            menu.add(item("上一首", () -> run(onPrev)));
-            menu.add(item("下一首", () -> run(onNext)));
-            menu.addSeparator();
-            menu.add(item("设置", () -> run(onSettings)));
-            menu.add(item("显示 / 隐藏面板", () -> run(onTogglePanel)));
-            menu.addSeparator();
-            menu.add(item("退出", () -> run(onQuit)));
-
-            trayIcon.setPopupMenu(menu);
-            // 左键单击直接展开/收起面板，托盘右键才是菜单
+            // 左键单击展开/收起面板；右键弹自绘菜单。
+            // 中键一并处理：某些环境下 TrayIcon 不区分右键与中键。
             trayIcon.addMouseListener(new MouseAdapter() {
                 @Override
                 public void mouseClicked(MouseEvent e) {
                     if (e.getButton() == MouseEvent.BUTTON1) {
                         run(onTogglePanel);
+                    } else if (e.getButton() == MouseEvent.BUTTON3
+                            || e.getButton() == MouseEvent.BUTTON2) {
+                        TrayPopupMenu.onFx(() ->
+                                popup.showAt(e.getX(), e.getY()));
                     }
                 }
             });
@@ -70,6 +71,20 @@ public final class TrayIconHelper {
         }
     }
 
+    /** 自绘菜单。条目顺序与原版 Electron 托盘一致。 */
+    private TrayPopupMenu buildMenu() {
+        TrayPopupMenu menu = new TrayPopupMenu();
+        menu.addItem("播放 / 暂停", "tray/play.png", () -> run(onPlayPause));
+        menu.addItem("上一首", "tray/prev.png", () -> run(onPrev));
+        menu.addItem("下一首", "tray/next.png", () -> run(onNext));
+        menu.addSeparator();
+        menu.addItem("设置", "tray/home.png", () -> run(onSettings));
+        menu.addItem("显示 / 隐藏面板", "tray/show.png", () -> run(onTogglePanel));
+        menu.addSeparator();
+        menu.addItem("退出", "tray/quit.png", () -> run(onQuit));
+        return menu;
+    }
+
     // 动作回调，由 MainApp 接
     public Runnable onPlayPause;
     public Runnable onPrev;
@@ -78,53 +93,7 @@ public final class TrayIconHelper {
     public Runnable onTogglePanel;
     public Runnable onQuit;
 
-    /**
-     * 造一个菜单项。
-     *
-     * <p><b>字体必须显式指定</b>：AWT 的 {@link MenuItem} 默认走
-     * {@code MenuFont.systemFont}，它在部分 Windows 环境（尤其是精简版系统、
-     * 缺 {@code msyh.ttc} / {@code simhei.ttf} 时）会退到一个<b>没有中文字形</b>
-     * 的字体，于是「播放 / 暂停」渲染成一片豆腐块 □□□。
-     *
-     * <p>这不是编码问题——源码与 class 都是正确的 UTF-8（已实测字节），
-     * 是<b>字体缺字形</b>。所以修复方式是挑一个物理上存在、
-     * 且覆盖 CJK 的字体，而不是去转码或加 {@code -Dfile.encoding}。
-     */
-    private MenuItem item(String label, Runnable action) {
-        MenuItem it = new MenuItem(label);
-        it.setFont(cjkFont());
-        // AWT 的 java.awt.MenuItem <b>没有</b> setIcon（实测 getMethods 里
-        // 没有任何 icon 相关方法），它不是 Swing 组件。
-        // 原生菜单里塞图标只能加兄弟节点，那会变成可点的独立条目，
-        // 出现「点图标区域不触发菜单项」这类怪问题——
-        // 所以 AWT 托盘菜单<b>没有可靠的图标方案</b>，保持纯文字。
-        // 图标统一放在托盘图标本身（用原版 app.ico）。
-        it.addActionListener(e -> Platform.runLater(action));
-        return it;
-    }
 
-    /**
-     * 挑一个带中文字形的字体。
-     *
-     * <p>按优先级试：微软雅黑 -> 黑体 -> 宋体 -> 系统默认。
-     * 每个都用 {@link Font#canDisplayUpTo} 真正验证能否显示中文，
-     * 光看名字不算数——字体文件在但字形被裁掉的情况是存在的。
-     */
-    private static Font cjkFont() {
-        // 托盘菜单在 Windows 上按系统 DPI 缩放，14 是可读的下限
-        int size = 14;
-        for (String name : new String[]{"Microsoft YaHei UI", "Microsoft YaHei",
-                "微软雅黑", "SimHei", "黑体", "SimSun", "宋体",
-                "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei"}) {
-            Font f = new Font(name, Font.PLAIN, size);
-            if (f.canDisplayUpTo(CJK_SAMPLE) < 0) {
-                return f;
-            }
-        }
-        // 都试遍仍没有：显式用 Dialog，它在 AWT 里做最后兜底，
-        // 比默认菜单字体更可能带 CJK fallback
-        return new Font(Font.DIALOG, Font.PLAIN, size);
-    }
 
     private static void run(Runnable r) {
         if (r != null) {
@@ -332,6 +301,10 @@ private static Image drawFallbackIcon() {
 }
 
     public void dispose() {
+        if (popup != null) {
+            TrayPopupMenu.onFx(popup::hide);
+            popup = null;
+        }
         if (trayIcon != null && SystemTray.isSupported()) {
             SystemTray.getSystemTray().remove(trayIcon);
             trayIcon = null;
