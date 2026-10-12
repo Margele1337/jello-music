@@ -269,14 +269,33 @@ Java 版跟的是 **Electron 版**（`appServices.js:679-709`，明确是拖拽�
         否则任务栏会用 `java.exe` 的身份，分组与 Jump List 全乱）
       - `--settings` 启动参数 → 直接进设置页（教程期间会挂起，
         教程完成后补上，因为此时 Sigma 窗口才刚显示）
-      - **那条「设置」任务没做成运行时注册**：Electron 的
-        `setUserTasks` 内部是 `ITaskbarList3::SetUserTasks`（COM 接口），
-        JNA 要手工排布 vtable 且跨 Windows 版本不稳定，
-        代价远大于「只有一条任务」的收益。见 `system/JumpList.java`
-- ~~任务栏缩略图工具条~~ —— **此前记错了，原版没有这个功能。**
-      当时把搜索结果的 `SigmaThumbnailButton` 误认成了任务栏缩略图。
-      全仓 grep `ThumbnailToolbar` / `ITaskbarList` 均无命中，
-      原版只有 `setupJumpList` 一处
+      - 那条「设置」任务没做成运行时注册（见下）
+      - **修正**：此前误记「原版没有缩略图工具条」——那次 grep 用了
+        `ThumbnailToolbar`（拼写不对）所以没命中就下了结论。
+        原版确有 `setThumbarButtons`，见上
+- [x] **最小化到托盘** —— 原版 `appServices.js:112-124`：
+      `if (minimizeToTray === 'off') quit(); event.preventDefault(); hide();`
+      默认 **on**。之前 Java 版关窗口直接退，等于这个开关一直是 off。
+      现在 `setOnCloseRequest` 里 consume + 藏起所有窗口（Sigma / 频谱 / 设置页），
+      真正的退出走托盘菜单的「退出」。
+      注意 JavaFX 透明窗不能最小化，所以「收进托盘」就是 `Stage.hide()`
+- [x] **阻止休眠** —— 原版 `main.js:200` 的
+      `powerSaveBlocker.start('prevent-display-sleep')`。
+      Java 侧走 Win32 `SetThreadExecutionState(ES_CONTINUOUS|ES_DISPLAY_REQUIRED|
+      ES_SYSTEM_REQUIRED)`，恢复时只留 `ES_CONTINUOUS`。
+      **该 API 是 thread-local 的**，必须在 FX 线程调用，见 `system/KeepAwake.java`
+- [x] **托盘「显示/隐藏面板」修 bug** —— 原来直接调 `toggleDock`（贴边收起），
+      但「收进托盘」是 `Stage.hide()`。从托盘点「显示」会去操作一个已经隐藏的窗口：
+      既唤不回来，贴边状态也被弄乱。现在按 `sigmaStage.isShowing()` 分流，
+      并记住收进托盘前频谱窗的状态以便一并恢复
+- [ ] **自定义托盘菜单** —— 原版 `customTrayMenuService.js` 377 行可自定义项；
+      当前 Java 是固定 6 项原生菜单
+- [ ] **自定义 API 地址** —— `apiBaseUrl` / `apiBaseUrlMode`；
+      `KuGouApiClient` 已有 `base` 构造参数，只差设置项与接线
+- [ ] **任务栏缩略图工具条** —— 原版 `appServices.js:1433` `setThumbarButtons`
+      （上一首 / 播放暂停 / 下一首，播放中切换 play-pause 图标）。
+      走 Win32 `ITaskbarList3` COM，JNA 要手工排布 vtable 且跨 Windows 版本不稳定，
+      风险明显高于其它项，建议放最后
 - [ ] 桌面歌词窗、KeyStrokes HUD（WASD + 鼠标键覆盖层）
 - [x] **单实例锁** —— 对应 `electron/main.js:105-133` 的
       `requestSingleInstanceLock` + `second-instance`。见 `system/SingleInstance.java`：

@@ -13,6 +13,7 @@ import com.jello.music.system.ApiSubprocess;
 import com.jello.music.system.AutoStart;
 import com.jello.music.system.JelloProtocol;
 import com.jello.music.system.JumpList;
+import com.jello.music.system.KeepAwake;
 import com.jello.music.system.MediaKeyPoller;
 import com.jello.music.system.MousePassthrough;
 import com.jello.music.system.SingleInstance;
@@ -122,6 +123,8 @@ private EdgeDock dock;
     private WsApiServer wsApi;
     /** 内置 API 是否就绪；false 时登录态与歌单都会加载失败。 */
     private boolean apiReady;
+    /** 收进托盘之前频谱窗是否开着，唤回时一并恢复。 */
+    private boolean spectrumWasOnBeforeHide;
 
     /** 视图容器：原版 SigmaUI.vue 的 sigma-shell，按 view 切换子视图。 */
     private final StackPane stageHolder = new StackPane();
@@ -171,6 +174,9 @@ private EdgeDock dock;
         // 开机自启：每次启动都按当前进程的实际入口重写一遍登录项。
         // 这样从 run.bat（开发）切到 pkgout（打包）时登录项不会指向失效路径。
         AutoStart.applyFromSettings();
+        // 阻止休眠：必须在 FX 线程（SetThreadExecutionState 是 thread-local 的），
+        // 而 start(Stage) 就是 FX 线程上的回调
+        KeepAwake.applyFromSettings();
 
         // 注册 jello:// 协议，对应原版 app.setAsDefaultProtocolClient
         JelloProtocol.register(null);
@@ -378,6 +384,19 @@ rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock)
         stage.setScene(scene);
         stage.setAlwaysOnTop(true);
 
+        // 关闭按钮 = 收进托盘（对应原版 electron/appServices.js:112-124）：
+        //   if (savedConfig?.minimizeToTray === 'off') { app.isQuitting = true; app.quit(); }
+        //   if (!app.isQuitting) { event.preventDefault(); mainWindow.hide(); }
+        // 开关默认 on，所以「点关闭」不该退出应用，而是藏到托盘里等托盘菜单唤醒。
+        // 真正的退出走托盘菜单的「退出」（quitApp）。
+        stage.setOnCloseRequest(e -> {
+            if (!minimizeToTrayEnabled()) {
+                return; // 不拦截：正常退出
+            }
+            e.consume();
+            hideToTray();
+        });
+
         // 界面缩放（对应原版 main.js:204-207 的 force-device-scale-factor）。
         // 只作用于面板：教程窗是铺满主屏的，缩了会在边缘露出空白。
         UiScale.apply(stage, Theme.PANEL_W, Theme.PANEL_H);
@@ -553,6 +572,10 @@ dock = new EdgeDock(stage);
             // 开机自启：原版 main.js:273-277 用 app.setLoginItemSettings，
             // Java 侧写同一个注册表键（见 system/AutoStart）
             settings.onChange("autoStart", v -> AutoStart.apply("on".equals(v)));
+            // 阻止休眠：SetThreadExecutionState 是 thread-local 的，
+            // 必须在 FX 线程调（onChange 本来就在 FX 线程上）
+            settings.onChange("preventAppSuspension",
+                    v -> KeepAwake.apply("on".equals(v)));
             settings.onAction("showTutorial", () -> {
                 AppPrefs.clearOnboardingDone();
                 settings.dispose();
@@ -1418,17 +1441,87 @@ private void installDragHandlers(javafx.scene.Node overlay) {
         tray.onPrev = () -> playCurrent(queue.previous());
         tray.onNext = () -> playCurrent(queue.next());
         tray.onSettings = this::switchToSettings;
-        tray.onTogglePanel = this::toggleDock;
+        // 托盘的「显示 / 隐藏面板」要先分清「收进托盘」与「贴边收起」两种隐藏：
+        // 前者窗口是 Stage.hide() 的，后者只是 Dock 滑出屏幕外。
+        // 早期这里直接调 toggleDock，结果从托盘点「显示」会去操作一个
+        // 已经 hide 的窗口——既唤不回来，贴边状态也被弄乱。
+        tray.onTogglePanel = this::togglePanelFromTray;
         tray.onQuit = () -> Platform.runLater(this::quitApp);
         tray.install();
     }
 
+    /**
+     * 托盘的「显示 / 隐藏面板」。
+     *
+     * <p>对应原版托盘的「显示 / 隐藏面板」：窗口不可见就恢复，可见就再藏一次。
+     *
+     * <p>需要分清两种「隐藏」：
+     * <ul>
+     *   <li><b>收进托盘</b>：{@link Stage#hide()}，窗口整个不在了</li>
+     *   <li><b>贴边收起</b>：窗口还在，只是 Dock 把它滑到屏幕右缘外</li>
+     * </ul>
+     * 早期这里直接调 {@link #toggleDock()}，结果从托盘点「显示」会去操作一个
+     * 已经 hide 的窗口——既唤不回来，贴边状态也被弄乱。
+     */
+    private void togglePanelFromTray() {
+        if (sigmaStage == null) {
+            return;
+        }
+        if (!sigmaStage.isShowing()) {
+            // 收进托盘之后被唤回：先 show，再按贴边状态决定要不要滑出
+            showSigmaStage();
+            if (dock != null && dock.isDocked()) {
+                expandDock();
+            }
+            if (spectrumStage != null && spectrumWasOnBeforeHide) {
+                spectrumStage.show();
+                playerPanel.setSpectrumActive(true);
+            }
+        } else {
+            toggleDock();
+        }
+    }
+
     private void quitApp() {
+        // 恢复休眠状态：SetThreadExecutionState 是 thread-local 的，
+        // 进程退出时系统会自动恢复，但显式关一次更干净。
+        // 内置 API 由 stop() 统一收（quitApp 走 Platform.exit 会触发它）。
+        KeepAwake.apply(false);
         disposePlayer();
         if (tray != null) {
             tray.dispose();
         }
         Platform.exit();
+    }
+
+    /**
+     * 收进托盘：把 Sigma 窗口与所有附属窗口藏起来，进程继续在托盘里活着。
+     *
+     * <p>原版只藏 {@code mainWindow}；Java 版有多个窗（Sigma 面板、频谱窗、
+     * 设置页），收的时候一起藏，否则会出现「面板没了但频谱窗还浮在桌面上」。
+     */
+    private void hideToTray() {
+        // 先记住频谱窗状态，唤回时一并恢复
+        spectrumWasOnBeforeHide = spectrumStage != null && spectrumStage.isShowing();
+        if (sigmaStage != null) {
+            sigmaStage.hide();
+        }
+        if (spectrumStage != null) {
+            spectrumStage.hide();
+            playerPanel.setSpectrumActive(false);
+        }
+        if (settings != null) {
+            settings.setVisible(false);
+        }
+        // 提示用户「没退出、只是收起来了」——原版同样有这一步
+        // （Windows 上关窗口后任务栏还在闪，用户容易以为退出了）
+        status("已收进托盘，从托盘图标可重新打开");
+    }
+
+    /** 读设置里的「最小化到托盘」。默认开，与原版一致。 */
+    private boolean minimizeToTrayEnabled() {
+        return !"off".equals(
+                AppPrefs.getSetting("minimizeToTray", "on"));
     }
 
     private void toggleDock() {

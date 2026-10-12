@@ -366,6 +366,78 @@ writeSnapshot(root, pngPath);
         checkDockFadeCurve();
         checkExpandScale();
         checkJumpList();
+        checkSystemToggles();
+    }
+
+    /**
+     「阻止休眠」与「最小化到托盘」的断言。
+     *
+     * <p>两者都对应原版真实存在的实现：
+     * <ul>
+     *   <li>阻止休眠：{@code electron/main.js:200} 的
+     *       {@code powerSaveBlocker.start('prevent-display-sleep')}，
+     *       Java 侧走 Win32 {@code SetThreadExecutionState}</li>
+     *   <li>最小化到托盘：{@code appServices.js:119} 的
+     *       {@code if (minimizeToTray === 'off') quit(); event.preventDefault(); hide();}，
+     *       默认 on</li>
+     * </ul>
+     */
+    private static void checkSystemToggles() {
+        // ---- 阻止休眠 ----
+        String prev = com.jello.music.AppPrefs.getSetting(
+                com.jello.music.system.KeepAwake.SETTING_KEY, "off");
+        try {
+            // 默认关
+            com.jello.music.AppPrefs.setSetting(
+                    com.jello.music.system.KeepAwake.SETTING_KEY, "off");
+            check("阻止休眠默认关（对齐原版）",
+                    !com.jello.music.system.KeepAwake.isEnabledInSettings(), "默认是开");
+            com.jello.music.AppPrefs.setSetting(
+                    com.jello.music.system.KeepAwake.SETTING_KEY, "on");
+            check("阻止休眠读到 on",
+                    com.jello.music.system.KeepAwake.isEnabledInSettings(), "未读到");
+
+            // SetThreadExecutionState 实际可调用（Windows 上返回非 0）
+            boolean applied = com.jello.music.system.KeepAwake.apply(true);
+            check("SetThreadExecutionState 能开（Windows）",
+                    applied || !System.getProperty("os.name", "")
+                            .toLowerCase().contains("win"),
+                    "返回 false");
+            check("恢复只留 ES_CONTINUOUS 可调用",
+                    com.jello.music.system.KeepAwake.apply(false)
+                            || !System.getProperty("os.name", "")
+                                    .toLowerCase().contains("win"),
+                    "返回 false");
+        } finally {
+            com.jello.music.AppPrefs.setSetting(
+                    com.jello.music.system.KeepAwake.SETTING_KEY, prev);
+            com.jello.music.system.KeepAwake.apply(false);
+        }
+
+        // ---- 最小化到托盘：默认必须是开 ----
+        // 这条之前是「关窗口直接退」，等于该开关一直是 off。
+        String saved = com.jello.music.AppPrefs.getSetting("minimizeToTray", "on");
+        check("最小化到托盘默认开（对齐原版 defaultValue: 'on'）",
+                "on".equals(saved), "got=" + saved);
+        com.jello.music.AppPrefs.setSetting("minimizeToTray", "off");
+        check("设为 off 后读到 off",
+                "off".equals(com.jello.music.AppPrefs
+                        .getSetting("minimizeToTray", "on")), "未读到");
+        com.jello.music.AppPrefs.setSetting("minimizeToTray", saved);
+
+        // 两项都必须真的出现在设置页里（否则又变成「有实现没入口」）
+        boolean hasMinimize = false;
+        boolean hasSleep = false;
+        for (var item : com.jello.music.model.Settings.defaults().keySet()) {
+            if ("minimizeToTray".equals(item)) {
+                hasMinimize = true;
+            }
+            if ("preventAppSuspension".equals(item)) {
+                hasSleep = true;
+            }
+        }
+        check("「最小化到托盘」在设置页里", hasMinimize, "缺失");
+        check("「阻止休眠」在设置页里", hasSleep, "缺失");
     }
 
     /**

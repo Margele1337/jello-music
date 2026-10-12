@@ -10,17 +10,24 @@ import java.util.Map;
  * <p>原版有 4 分类 30 项，这里只保留 <b>Java 版真正有对应物</b>的那些，
  * 砍掉的都是 Electron 专属或依赖尚未实现的功能——留着就是「点了没反应」的死开关。
  *
- * <p><b>保留的 9 项</b>（对照 {@code src/config/settings.js}）：
+ * <p><b>保留的 11 项</b>（对照 {@code src/config/settings.js}）：
  * <pre>
- *   界面: 重新观看教程 / 频谱幅度 / 平滑系数 / 音画差补偿 / 频谱锁定
+ *   界面: 重新观看教程 / 频谱幅度 / 平滑系数 / 音画差补偿 / 频谱锁定 / 界面缩放
  *   声音: 音质选择
- *   系统: 界面缩放 / 开机自启 / 全局快捷键（占位）
+ *   系统: 开机自启 / 最小化到托盘 / 阻止休眠 / 全局快捷键（占位）
  * </pre>
+ * 另有 {@code desktopSpectrum}（频谱窗开关）也已实现，但它是面板上那个频谱按钮
+ * 自己管的、没放进设置页——原版同样主要在面板上切。
  *
- * <p><b>砍掉的 21 项</b>：托盘菜单、按键显示HUD、桌面歌词(+字体)、状态栏歌词(mac)、
- * 响度标准化、音频输出设备、输出变化暂停、数据源、歌词翻译、GPU加速、
- * 最小化到托盘、网络节点、阻止系统休眠、API模式、RPC地址、TouchBar(mac)、
- * 网络代理、日志操作、界面缩放之外的 DPI 开关等。
+ * <p><b>砍掉的 22 项</b>分三类：
+ * <ol>
+ *   <li>Electron / Node 内部实现：自定义托盘菜单、语言切换、网络代理、日志操作、API 模式</li>
+ *   <li>macOS 专属：TouchBar、状态栏歌词(mac)</li>
+ *   <li>依赖尚未实现的能力：响度标准化（要 Web Audio 的 DynamicsCompressor）、
+ *       音频输出设备、输出变化暂停、数据源、歌词翻译、桌面歌词(+字体)、
+ *       按键显示 HUD、GPU 加速、高 DPI(+dpiScale)、网络节点、自定义 API 地址</li>
+ * </ol>
+ * 留着就是「点了没反应」的死开关。
  */
 public final class Settings {
 
@@ -101,6 +108,8 @@ public final class Settings {
                 )),
                 new Section("系统", List.of(
                         toggle("autoStart", "开机自启", "off"),
+                        toggle("minimizeToTray", "最小化到托盘", "on"),
+                        toggle("preventAppSuspension", "阻止休眠", "off"),
                         action("shortcuts", "全局快捷键", "自定义")
                 )));
     }
