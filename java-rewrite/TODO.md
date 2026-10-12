@@ -54,8 +54,9 @@
       `x = clampedX + (int)((desired-clampedX-200)*0.5)`；半透明判据
       `越界 && !已请求滑出`（MusicPlayer.java:360-361），淡到 50% 用 80ms、
       淡回 100% 用 150ms。吸附只发生在松手
-- [ ] **dock 滑动曲线不一致** —— 原版是每帧 `0.25 × dt/18.10361` 插值 + 120ms 节流 +
-      3s 卡死看门狗；现在是固定 450/125ms cubic ease-out
+- [x] **dock 滑动曲线不一致** —— 原版是每帧 `0.25 × dt/18.10361` 插值（x 用 0.25、
+      y 用 0.2）+ 120ms 触发节流 + 3s 卡死看门狗。之前是固定 450/125ms cubic ease-out，
+      观感是「匀速起步再硬停」，与原版的指数逼近（滑到位才停）完全不同
 - [ ] **频谱参数** —— `spectrumScale`（0.2~3）、`spectrumSigmaSmoothing`（默认 0.335）、
       `spectrumAvDelay`（默认 590ms）三个设置没有；HUD 尺寸 220×60、48 频段、FFT 2048 写死
 - [x] 播放模式持久化 —— 原版 `localStorage['player_playback_mode']`（`AppPrefs`，默认 1）

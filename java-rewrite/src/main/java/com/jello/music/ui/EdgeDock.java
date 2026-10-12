@@ -55,6 +55,20 @@ public final class EdgeDock {
     /** 淡回 100% 用 150ms。 */
     public static final long BRIGHT_MILLIS = 150;
 
+    // ---- 进出动画（原版 SigmaMusicPlayer.vue:281-328 / appServices.js:578-608）----
+    /** 原版：var7 = dt / 18.10361ms。 */
+    public static final double ANIM_FRAME_MS = 18.10361;
+    /** 原版 x 每帧走剩余距离的 0.25。 */
+    private static final double ANIM_X_RATE = 0.25;
+    /** 原版 y 每帧走剩余距离的 0.2（比 x 慢）。 */
+    private static final double ANIM_Y_RATE = 0.2;
+    /** dt 上限 40ms：偶发迟到不产生大跳。 */
+    private static final double ANIM_MAX_DT = 40;
+    /** 收敛判据：离目标 < 0.5px 就 snap。 */
+    private static final double ANIM_EPSILON = 0.5;
+    /** 卡死看门狗：超过 3s 强制取消。 */
+    private static final long ANIM_WATCHDOG_MS = 3000;
+
     private final Stage stage;
 
     /** 原版 {@code sigmaDocked}：离散吸附态，决定动画目标，不描述几何位置。 */
@@ -66,12 +80,12 @@ public final class EdgeDock {
     private boolean translucent;
 
     private AnimationTimer slideTimer;
-    private long slideStart;
     private double slideFromX;
     private double slideFromY;
     private double slideToX;
     private double slideToY;
-    private long slideDurationNanos;
+    private long slideLastNanos;
+    private long slideStartedAt;
 
     private Node opacityTarget;
     private AnimationTimer fadeTimer;
@@ -208,8 +222,12 @@ public final class EdgeDock {
         syncTranslucent();
     }
 
-    /**
-     * 切换收起/展开。这与原版「点右侧 41px 触发条」与「RSHIFT/托盘」共用同一条路径。
+/**
+ * 切换收起/展开（不带节流的裸切换）。
+ *
+     * <p>120ms 触发节流由调用方 {@code MainApp.toggleDock()} 负责——那里还要
+ * * 编排 {@link ElasticReveal}，节流必须罩住整条 RSHIFT 路径，不能只卡位置动画。
+ * 这里保留无节流版本给拖拽等非连按场景复用。
      */
     public void toggle() {
         if (snapped) {
@@ -236,17 +254,36 @@ public final class EdgeDock {
         // 点一下立刻开始变亮，哪怕面板还基本在屏幕外
         undockRequested = true;
         syncTranslucent();
-        slideTo(expandedX(area), centerY(area), 450);
+        slideTo(expandedX(area), centerY(area));
     }
 
     public void collapse() {
         Rectangle2D area = workArea();
         setSnapped(true);
         undockRequested = false;
-        slideTo(dockedX(area), centerY(area), 125);
+        slideTo(dockedX(area), centerY(area));
     }
 
-    private void slideTo(double targetX, double targetY, long millis) {
+    /**
+     * 进出动画，1:1 复刻 {@code SigmaMusicPlayer.vue:281-328}。
+     *
+     * <pre>
+     *   frameFactor = dt / 18.10361
+     *   x = clamp(x + (targetX - x) * 0.25 * frameFactor)   // 按方向夹，不许越过目标
+     *   y = clamp(y + (targetY - y) * 0.20 * frameFactor)
+     *   |target - cur| < 0.5 -> snap 到 target 并结束
+     * </pre>
+     *
+     * <p>这是<b>帧率无关</b>的指数插值，不是固定时长的缓动曲线：每帧走剩余
+     * 距离的一个比例，所以 60Hz 和 144Hz 下耗时一致。之前用 450ms/125ms 的
+     * cubic ease-out 是错的——那个曲线与帧率无关但与「原版的速度感」无关，
+     * 收放手感明显更快更硬。
+     *
+     * <p>第一帧用 {@code dt = 1}：收起期间窗口离屏会被系统节流，重新显示后的
+     * 第一帧 dt 可能很大（钳到上限也有 40ms -> frameFactor 2.2，一步走出 45% 的
+     * 路程），表现为「弹出来时先猛跳一下」。原版为此特意不预设 lastTime。
+     */
+    private void slideTo(double targetX, double targetY) {
         if (slideTimer != null) {
             slideTimer.stop();
         }
@@ -254,31 +291,70 @@ public final class EdgeDock {
         slideFromY = stage.getY();
         slideToX = targetX;
         slideToY = targetY;
-        slideDurationNanos = millis * 1_000_000L;
-        slideStart = System.nanoTime();
+        slideLastNanos = 0;
+        slideStartedAt = System.currentTimeMillis();
+
+        // 原版：离目标已经 < 1px 就别启动动画，但必须先停掉在跑的那个，
+        // 否则旧动画会继续往它自己的目标推进（连按时表现为「分散开」）
+        if (Math.abs(slideFromX - targetX) < 1 && Math.abs(slideFromY - targetY) < 1) {
+            slideTimer = null;
+            return;
+        }
 
         slideTimer = new AnimationTimer() {
             @Override
             public void handle(long now) {
-                double t = Math.min(1.0, (now - slideStart) / (double) slideDurationNanos);
-                // ease-out，让接近目标时减速，像原版那样有「滑到位才停」的收尾
-                double k = 1 - Math.pow(1 - t, 3);
-                stage.setX(slideFromX + (slideToX - slideFromX) * k);
-                stage.setY(slideFromY + (slideToY - slideFromY) * k);
+                // 卡死保护：3s 还没走到就直接落位，别让面板永远飘在半路
+                if (System.currentTimeMillis() - slideStartedAt > ANIM_WATCHDOG_MS) {
+                    finishSlide();
+                    return;
+                }
+                double dt;
+                if (slideLastNanos == 0) {
+                    slideLastNanos = now;
+                    dt = 1;
+                } else {
+                    dt = Math.min(ANIM_MAX_DT, Math.max(1, (now - slideLastNanos) / 1_000_000.0));
+                    slideLastNanos = now;
+                }
+                double frameFactor = dt / ANIM_FRAME_MS;
+                slideFromX = approach(slideFromX, slideToX, ANIM_X_RATE * frameFactor);
+                slideFromY = approach(slideFromY, slideToY, ANIM_Y_RATE * frameFactor);
+                stage.setX(slideFromX);
+                stage.setY(slideFromY);
                 // 原版靠 200ms 轮询 updateDockedState 清「已请求滑出」，
                 // 这里在动画帧里直接同步，更准也更省
                 syncFromGeometry();
-                if (t >= 1.0) {
-                    slideTimer.stop();
-                    slideTimer = null;
-                    // 兜底：精确落到目标，避免累积误差导致状态判定不一致
-                    stage.setX(targetX);
-                    stage.setY(targetY);
-                    syncFromGeometry();
+
+                if (Math.abs(slideToX - slideFromX) < ANIM_EPSILON
+                        && Math.abs(slideToY - slideFromY) < ANIM_EPSILON) {
+                    finishSlide();
                 }
             }
         };
         slideTimer.start();
+    }
+
+    /** 按方向夹到目标，绝不越过（对应原版的 Math.min / Math.max 二选一）。 */
+    private static double approach(double current, double target, double step) {
+        return target > current
+                ? Math.min(current + (target - current) * step, target)
+                : Math.max(current + (target - current) * step, target);
+    }
+
+    /** 供 UiProbe 断言的单步插值。 */
+    public static double approachForTest(double current, double target, double step) {
+        return approach(current, target, step);
+    }
+
+    private void finishSlide() {
+        if (slideTimer != null) {
+            slideTimer.stop();
+            slideTimer = null;
+        }
+        stage.setX(slideToX);
+        stage.setY(slideToY);
+        syncFromGeometry();
     }
 
     public void beginDrag(MouseEvent e) {
@@ -335,7 +411,7 @@ public final class EdgeDock {
             setSnapped(true);
             undockRequested = false;
             syncTranslucent();
-            slideTo(dockTargetX(right), centerY(area), 450);
+            slideTo(dockTargetX(right), centerY(area));
             return;
         }
 

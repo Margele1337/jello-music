@@ -792,6 +792,35 @@ private static void checkLoginView() {
                 !EdgeDock.overhangingOf(RIGHT - W, W, RIGHT)
                         && EdgeDock.overhangingOf(RIGHT - W + 1, W, RIGHT), null);
 
+        // ---- 进出动画公式（SigmaMusicPlayer.vue:295-324）----
+        check("动画基准帧长 18.10361ms（var7）",
+                Math.abs(EdgeDock.ANIM_FRAME_MS - 18.10361) < 1e-9, null);
+        // 单步插值：x 走剩余距离的 0.25*frameFactor，y 走 0.2*frameFactor
+        double oneStepX = EdgeDock.approachForTest(1000, 1100, 0.25 * 1.0);
+        double oneStepY = EdgeDock.approachForTest(1000, 1100, 0.20 * 1.0);
+        check("单步插值按剩余距离推进（x 0.25 / y 0.2）",
+                Math.abs(oneStepX - 1025) < 1e-6 && Math.abs(oneStepY - 1020) < 1e-6,
+                String.format("x=%.2f y=%.2f", oneStepX, oneStepY));
+        check("插值绝不越过目标（按方向夹）",
+                Math.abs(EdgeDock.approachForTest(1100, 1000, 0.25) - 1075) < 1e-6
+                        && EdgeDock.approachForTest(1000, 1000, 0.25) == 1000, null);
+
+        // 收敛性：反复用固定 dt 单调逼近目标，不震荡、不越过
+        double cur = 1100;
+        boolean towardTarget = true;
+        for (int i = 0; i < 400; i++) {
+            double prev = cur;
+            cur = EdgeDock.approachForTest(cur, 1880, 0.25 * (16.0 / 18.10361));
+            // 目标在上方：每步都应增大，且不越过目标
+            if (cur < prev - 1e-9 || cur > 1880 + 1e-9) {
+                towardTarget = false;
+                break;
+            }
+        }
+        check("连续推进单调逼近且不越过目标", towardTarget, "cur=" + cur);
+        check("连续推进足够步数后收敛到 target（< 0.5px）",
+                Math.abs(cur - 1880) < 0.5, String.format("cur=%.3f", cur));
+
         // ---- 多显示器：按窗口所在屏取工作区 ----
         // 这台机器可能只有一块屏，所以按屏数分支断言，不假设一定有第二块
         Rectangle2D primary = Screen.getPrimary().getVisualBounds();

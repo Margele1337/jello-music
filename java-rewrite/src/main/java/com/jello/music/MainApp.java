@@ -91,6 +91,9 @@ private EdgeDock dock;
 
     /** Sigma 主窗口（800x600）。教程阶段不显示，点「完成」后才 show()。 */
     private Stage sigmaStage;
+    /** 上次接受的 RSHIFT 收起/展开时刻，用于 120ms 触发节流。 */
+    private long lastToggleAt;
+
     /** 登录态：启动时从 AppPrefs 读回，没有就走环境变量凭据。 */
     private final KuGouCredentials credentials = new KuGouCredentials();
     private com.jello.music.model.UserInfo userInfo;
@@ -767,7 +770,15 @@ private void installDragHandlers(javafx.scene.Node overlay) {
         };
     }
 
-    private void toggleDock() {
+private void toggleDock() {
+        // 原版 SIGMA_TOGGLE_THROTTLE_MS = 120：连按时丢弃过密的请求，
+        // 但动画本身照样跑完，只是不再反复反转。节流要罩住整条 RSHIFT 路径
+        // （位置滑出 + ElasticReveal 一起），不能只卡其中一段。
+        long now = System.currentTimeMillis();
+        if (now - lastToggleAt < 120) {
+            return;
+        }
+        lastToggleAt = now;
         if (dock.isDocked()) {
             expandDock();
         } else {
