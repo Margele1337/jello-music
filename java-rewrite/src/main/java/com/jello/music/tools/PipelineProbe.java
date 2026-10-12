@@ -64,7 +64,9 @@ public final class PipelineProbe {
         System.out.println();
         System.out.println("[3] 拉流解码并计算 FFT");
         try (SpectrumTap tap = new SpectrumTap(directUrl, 2048)) {
-            double[] first = tap.nextFrame();
+            // 探针看的是「频谱形状对不对」，所以用归一化到 0..1 的 magnitudes()；
+            // 渲染链路走的是不归一化的 rawMagnitudes()，两者量纲完全不同。
+            double[] first = tap.frameForProbe();
             if (first == null) {
                 System.out.println("    首帧即结束，音频流为空");
                 return;
@@ -76,7 +78,7 @@ public final class PipelineProbe {
             int frames = 0;
             double sumPeak = 0;
             for (int i = 0; i < 20; i++) {
-                double[] f = tap.nextFrame();
+                double[] f = tap.frameForProbe();
                 if (f == null) {
                     break;
                 }
@@ -86,7 +88,7 @@ public final class PipelineProbe {
             System.out.println("    连续解码帧数=" + frames
                     + "  平均峰值=" + fmt(frames == 0 ? 0 : sumPeak / frames));
 
-            double[] last = tap.nextFrame();
+            double[] last = tap.frameForProbe();
             if (last != null) {
                 double[] bands = SpectrumTap.toLogBands(last, 24);
                 StringBuilder sb = new StringBuilder("    24 频段: ");

@@ -8,7 +8,9 @@ import com.jello.music.model.ResultCard;
 import com.jello.music.model.Song;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
+import com.jello.music.system.MousePassthrough;
 import com.jello.music.system.RightShiftPoller;
+import com.jello.music.system.TrayIconHelper;
 import com.jello.music.ui.Assets;
 import com.jello.music.ui.DragGate;
 import com.jello.music.ui.EdgeDock;
@@ -18,6 +20,7 @@ import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.RepeatButton;
+import com.jello.music.ui.SettingsView;
 import com.jello.music.ui.SpectrumView;
 import com.jello.music.ui.Theme;
 import javafx.animation.AnimationTimer;
@@ -32,6 +35,7 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
@@ -60,8 +64,28 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class MainApp extends Application {
 
-    private static final int FFT_SIZE = 2048;
-private static final int BAND_COUNT = 48;
+    /**
+     * 频谱常量全部取原版 {@code PlayerEngine.vue} 的定义，不再自行取值。
+     *
+     * <p>之前用的是 FFT 2048 / 48 个对数频段，是「人耳感知通用做法」而不是原版做法：
+     * 原版是 FFT 1024 / 114 根条，每根<b>直接对应一个 FFT bin</b>，不分箱。
+     */
+    private static final int FFT_SIZE = com.jello.music.player.SpectrumFeed.FFT_SIZE;
+    private static final int BAND_COUNT = com.jello.music.player.SpectrumFeed.BAR_COUNT;
+
+    /** 原版 {@code SPECTRUM_AV_DELAY_DEFAULT_MS}：频谱领先声音的量。 */
+    private static final double SPECTRUM_AV_DELAY_DEFAULT_MS = 590;
+
+    /**
+     * 频谱悬浮窗尺寸。
+     *
+     * <p>原版的条高是<b>绝对像素</b>（见 {@code SpectrumHUD} 的 sigmaAmp），
+     * 与窗口高度无关——窗口只决定可见范围与余量。
+     * 220x60 是原版 Electron 侧的默认悬浮窗尺寸。
+     */
+    private static final double SPECTRUM_W = 220;
+    private static final double SPECTRUM_H = 60;
+
     /** 原版 SigmaSearchBox 的 DAILY_TARGET_COUNT：每日推荐目标首数。 */
     private static final int DAILY_TARGET_COUNT = 60;
     private static final ExecutorService IO = Executors.newFixedThreadPool(3);
@@ -80,6 +104,8 @@ private EdgeDock dock;
     private StackPane playerView;
     private OnboardingView onboarding;
     private LoginView login;
+    private com.jello.music.ui.SettingsView settings;
+    private TrayIconHelper tray;
     /**
      * 教程独占的���屏窗口。点「完成」之前 Sigma 主窗口不显示。
      *
@@ -147,7 +173,8 @@ private EdgeDock dock;
         // 之前把 Canvas 直接塞在左栏 (15,452)，结果盖住了 (68,430) 的 114x114 专辑封面，
         // 和 1:1 布局冲突。这里改成独立透明窗，由左下角 40x40 频谱按钮开关。
         feed = new SpectrumFeed(null, FFT_SIZE, BAND_COUNT, 60);
-        spectrumView = new SpectrumView(feed, BAND_COUNT, 220, 60);
+        spectrumView = new SpectrumView(feed, BAND_COUNT, SPECTRUM_W, SPECTRUM_H);
+        applySpectrumSettings(feed, spectrumView);
         buildSpectrumStage(stage);
         spectrumView.start();
         playerPanel.onSpectrumToggle(this::toggleSpectrumWindow);
@@ -156,6 +183,7 @@ private EdgeDock dock;
         // 原版存在 localStorage['player_playback_mode']，重启后还是上次的模式
         applyPlaybackMode(AppPrefs.playbackMode());
         playerPanel.onDockTrigger(this::expandDock);
+        setupTray();
         // 记住用户拖出来的音量：换歌会重建 MediaPlayer，音量得自己带着走
         playerPanel.onVolumeChanged(v -> volume = v);
         playerPanel.searchBox().onSubmit(this::runSearch);
@@ -325,6 +353,7 @@ dock = new EdgeDock(stage);
     /** 回主界面（对应 SigmaUI.vue 的 {@code view = 'player'}）。 */
     private void switchToPlayer() {
         closeOnboardingStage();
+        closeSettings();
         if (login != null) {
             login.dispose();
             login.setVisible(false);
@@ -334,6 +363,62 @@ dock = new EdgeDock(stage);
         if (playerView != null) {
             playerView.setVisible(true);
         }
+        syncHotkeySuspend();
+    }
+
+    /** 去设置页。 */
+    private void switchToSettings() {
+        closeOnboardingStage();
+        if (login != null) {
+            login.setVisible(false);
+        }
+        if (settings == null) {
+            settings = new SettingsView();
+            settings.setId("sigma-settings");
+            settings.loadFromPrefs();
+            settings.onBack(this::switchToPlayer);
+            // 频谱四项：原版 SpectrumHUD.vue 靠 spectrum-setting-changed 事件即时生效，
+            // 这里照同样思路在设置变更时立刻套到当前 feed / view，不必重启也不必重开频谱窗。
+            settings.onChange("spectrumScale", v -> applySpectrumSettings(feed, spectrumView));
+            settings.onChange("spectrumSigmaSmoothing", v -> applySpectrumSettings(feed, spectrumView));
+            settings.onChange("spectrumAvDelay", v -> applySpectrumSettings(feed, spectrumView));
+            settings.onChange("spectrumLocked", v -> applySpectrumSettings(feed, spectrumView));
+            settings.onAction("showTutorial", () -> {
+                AppPrefs.clearOnboardingDone();
+                settings.dispose();
+                settings = null;
+                if (playerView != null) {
+                    playerView.setVisible(false);
+                }
+                startOnboarding();
+            });
+            stageHolder.getChildren().add(settings);
+        }
+        settings.setVisible(true);
+        if (playerView != null) {
+            playerView.setVisible(false);
+        }
+    }
+
+    private void closeSettings() {
+        if (settings != null) {
+            settings.dispose();
+            settings.setVisible(false);
+            stageHolder.getChildren().remove(settings);
+            settings = null;
+        }
+    }
+
+    /** 重新打开教程（对应设置页的「重新观看教程」）。 */
+    private void startOnboarding() {
+        Rectangle2D bounds = Screen.getScreens().get(0).getVisualBounds();
+        onboarding = new OnboardingView(bounds.getWidth(), bounds.getHeight());
+        onboarding.setId("sigma-onboarding");
+        onboarding.onKeySelect(code -> status("选中按键 " + code));
+        onboarding.onFinish(this::completeOnboarding);
+        buildOnboardingStage(bounds);
+        onboardingStage.show();
+        onboarding.layout(bounds.getWidth(), bounds.getHeight());
         syncHotkeySuspend();
     }
 
@@ -650,8 +735,12 @@ private void startPlayback(String url) {
             feed.close();
         }
         feed = new SpectrumFeed(url, FFT_SIZE, BAND_COUNT, 60);
+        applySpectrumSettings(feed, spectrumView);
+
         spectrumView.stop();
-        spectrumView = new SpectrumView(feed, BAND_COUNT, 220, 60);
+        spectrumView = new SpectrumView(feed, BAND_COUNT, SPECTRUM_W, SPECTRUM_H);
+        // 新 view 也要立刻套上当前设置，否则换歌后用户的参数会退回默认值
+        applySpectrumSettings(feed, spectrumView);
         // 换到悬浮窗里：替换掉旧 canvas，保持同一个 Scene/Stage
         if (spectrumStage != null) {
             Pane parent = (Pane) spectrumStage.getScene().getRoot();
@@ -667,7 +756,9 @@ private void startPlayback(String url) {
                 }
                 if (feed.error() != null) {
                     status("频谱不可用");
-                } else if (player.getStatus() == MediaPlayer.Status.PLAYING
+                    return;
+                }
+                if (player.getStatus() == MediaPlayer.Status.PLAYING
                         && feed.sampleRate() > 0) {
                     status(String.format("播放中 · %d Hz", feed.sampleRate()));
                 }
@@ -675,21 +766,198 @@ private void startPlayback(String url) {
         }.start();
     }
 
-    private Stage spectrumStage;
+    /**
+     * 把设置页的四个频谱项套到当前 feed / view 上。
+     *
+     * <p>对应原版 {@code SpectrumHUD.vue} 的 {@code spectrum-setting-changed}
+     * 与 {@code AudioController.js} 的 {@code setSpectrumDelay}。
+     * 设置页每次改动都调这里，所以是「读当前值 → 应用」，而不是启动时读一次。
+     */
+    private void applySpectrumSettings(SpectrumFeed f, SpectrumView v) {
+        if (f != null) {
+            f.setLeadSeconds(spectrumAvDelayMs() / 1000.0);
+        }
+        if (v != null) {
+            v.setSpectrumScale(spectrumScale());
+            v.setSpectrumSmoothing(spectrumSmoothing());
+        }
+        applySpectrumLock();
+    }
 
-    /** 建一个透明、无边框、置顶的频谱悬浮窗，贴在主面板左下外侧。 */
+    /** 读 {@code spectrumScale}，越界回落到 1.0（与原版 parseFloat 兜底一致）。 */
+    private double spectrumScale() {
+        String raw = AppPrefs.getSetting("spectrumScale", "1.0");
+        try {
+            double v = Double.parseDouble(raw);
+            if (Double.isFinite(v)) {
+                return v;
+            }
+        } catch (NumberFormatException ignored) {
+            // 落回默认
+        }
+        return 1.0;
+    }
+
+    /** 读 {@code spectrumSigmaSmoothing}，原版夹到 [0.001, 1]。 */
+    private double spectrumSmoothing() {
+        String raw = AppPrefs.getSetting("spectrumSigmaSmoothing", "0.335");
+        try {
+            double v = Double.parseDouble(raw);
+            if (Double.isFinite(v)) {
+                return Math.max(0.001, Math.min(1, v));
+            }
+        } catch (NumberFormatException ignored) {
+            // 落回默认
+        }
+        return SpectrumView.DEFAULT_SMOOTHING;
+    }
+
+    /** 读 {@code spectrumAvDelay}，原版夹到 [0, 2000]，默认 590ms。 */
+    private double spectrumAvDelayMs() {
+        String raw = AppPrefs.getSetting("spectrumAvDelay", "590");
+        try {
+            double v = Double.parseDouble(raw);
+            if (Double.isFinite(v)) {
+                return Math.max(0, Math.min(2000, v));
+            }
+        } catch (NumberFormatException ignored) {
+            // 落回默认
+        }
+        return SPECTRUM_AV_DELAY_DEFAULT_MS;
+    }
+
+    /** 频谱窗是否锁定（鼠标穿透）。默认锁定，与原版一致。 */
+    private boolean spectrumLocked() {
+        return !"off".equals(AppPrefs.getSetting("spectrumLocked", "on"));
+    }
+
+    /**
+     * 应用锁定状态，对应原版 {@code applyLock()}：
+     * 锁定 = 鼠标穿透（不可拖动）；解锁 = 可拖动 + 底色加深提示可编辑。
+     */
+    private void applySpectrumLock() {
+        if (spectrumStage == null) {
+            return;
+        }
+        boolean locked = spectrumLocked();
+        // 原版 applyLock() 是发 IPC 让 main 进程调 setIgnoreMouseEvents，
+        // JavaFX 21 没有对应 API，改走 Win32 的 WS_EX_TRANSPARENT（见 MousePassthrough）
+        MousePassthrough.setPassThrough(spectrumStage, locked);
+        if (spectrumOutline != null) {
+            spectrumOutline.setVisible(!locked);
+        }
+        spectrumStage.setTitle(locked ? "Jello Spectrum" : "Jello Spectrum（已解锁 · 可拖动）");
+    }
+
+    private Stage spectrumStage;
+    private Rectangle spectrumOutline;
+
+    /**
+     * 建一个透明、无边框、置顶的频谱悬浮窗，贴在主面板左下外侧。
+     *
+     * <p>对应原版 {@code SpectrumHUD.vue} 的 {@code .spectrum-hud}：
+     * 默认 {@code locked=true}，场景鼠标穿透、不可拖动；双击切换解锁态
+     * （原版 {@code dblclick} 监听），解锁后出现虚线边框并可拖动窗口。
+     */
     private void buildSpectrumStage(Stage main) {
         spectrumStage = new Stage();
         spectrumStage.initStyle(StageStyle.TRANSPARENT);
         spectrumStage.setTitle("Jello Spectrum");
         spectrumStage.setAlwaysOnTop(true);
+
         Pane holder = new Pane();
         holder.getChildren().add(spectrumView.canvas());
-        Scene sc = new Scene(holder, 220, 60);
+
+        // 解锁态提示：原版 .spectrum-hud.hud-editing 的 2px 虚线 + 圆角 6
+        spectrumOutline = new Rectangle(SPECTRUM_W, SPECTRUM_H);
+        spectrumOutline.setArcWidth(12);
+        spectrumOutline.setArcHeight(12);
+        spectrumOutline.setFill(Color.TRANSPARENT);
+        spectrumOutline.setStroke(Color.color(1, 1, 1, 0.4));
+        spectrumOutline.setStrokeWidth(2);
+        spectrumOutline.setStrokeDashOffset(4);
+        spectrumOutline.setMouseTransparent(true);
+        spectrumOutline.setVisible(false);
+        holder.getChildren().add(spectrumOutline);
+
+        Scene sc = new Scene(holder, SPECTRUM_W, SPECTRUM_H);
         sc.setFill(Color.TRANSPARENT);
         spectrumStage.setScene(sc);
-        repositionSpectrum(main);
+
+        installSpectrumDrag();
+        applySpectrumLock();
+
+        // 位置优先用上次存的（对应原版 spectrumWindowPosition），没有才贴主面板
+        if (!restoreSpectrumPosition()) {
+            repositionSpectrum(main);
+        }
+        persistSpectrumPositionOnExit();
         spectrumStage.hide();
+    }
+
+    /** 频谱窗拖动：只有解锁态可拖，对应原版 {@code -webkit-app-region: drag}。 */
+    private void installSpectrumDrag() {
+        Pane holder = (Pane) spectrumStage.getScene().getRoot();
+        final double[] dragOffset = new double[2];
+        holder.setOnMousePressed(e -> {
+            if (spectrumLocked() || e.getButton() != javafx.scene.input.MouseButton.PRIMARY) {
+                return;
+            }
+            dragOffset[0] = e.getScreenX() - spectrumStage.getX();
+            dragOffset[1] = e.getScreenY() - spectrumStage.getY();
+        });
+        holder.setOnMouseDragged(e -> {
+            if (spectrumLocked()) {
+                return;
+            }
+            javafx.geometry.Rectangle2D area =
+                    javafx.stage.Screen.getPrimary().getVisualBounds();
+            double x = e.getScreenX() - dragOffset[0];
+            double y = e.getScreenY() - dragOffset[1];
+            spectrumStage.setX(Math.max(area.getMinX(), Math.min(x, area.getMaxX() - SPECTRUM_W)));
+            spectrumStage.setY(Math.max(area.getMinY(), Math.min(y, area.getMaxY() - SPECTRUM_H)));
+            // 原版 electron/main.js:459 在移动时同步写盘，这里在拖动结束前先记一次，
+            // 免得用户拖完直接关应用（没触发 onHidden）就丢了位置
+            AppPrefs.setSpectrumWindowPosition(spectrumStage.getX(), spectrumStage.getY());
+        });
+        // 原版双击切换锁定态
+        holder.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2 && e.getTarget() == holder) {
+                AppPrefs.setSetting("spectrumLocked",
+                        spectrumLocked() ? "off" : "on");
+                AppPrefs.putSettings(java.util.Map.of());
+                applySpectrumLock();
+            }
+        });
+    }
+
+    /** 读回上次保存的频谱窗位置；没有或已移出屏幕时返回 false。 */
+    private boolean restoreSpectrumPosition() {
+        double[] pos = AppPrefs.spectrumWindowPosition();
+        if (pos == null) {
+            return false;
+        }
+        javafx.geometry.Rectangle2D area = javafx.stage.Screen.getPrimary().getVisualBounds();
+        // 上次的位置可能落在已拔掉的显示器上，判一下是否还在可见范围内
+        boolean visible = pos[0] + SPECTRUM_W > area.getMinX()
+                && pos[0] < area.getMaxX()
+                && pos[1] + SPECTRUM_H > area.getMinY()
+                && pos[1] < area.getMaxY();
+        if (!visible) {
+            return false;
+        }
+        spectrumStage.setX(pos[0]);
+        spectrumStage.setY(pos[1]);
+        return true;
+    }
+
+    /** 频谱窗关闭时记住位置（原版 electron/main.js:459 同样在移动时写盘）。 */
+    private void persistSpectrumPositionOnExit() {
+        spectrumStage.setOnHidden(e -> {
+            if (spectrumStage != null) {
+                AppPrefs.setSpectrumWindowPosition(spectrumStage.getX(), spectrumStage.getY());
+            }
+        });
     }
 
     private void repositionSpectrum(Stage main) {
@@ -699,8 +967,8 @@ private void startPlayback(String url) {
         javafx.geometry.Rectangle2D area = javafx.stage.Screen.getPrimary().getVisualBounds();
         double x = main.getX() + 12;
         double y = main.getY() + Theme.PANEL_H - 72;
-        spectrumStage.setX(Math.max(area.getMinX(), Math.min(x, area.getMaxX() - 220)));
-        spectrumStage.setY(Math.max(area.getMinY(), Math.min(y, area.getMaxY() - 60)));
+        spectrumStage.setX(Math.max(area.getMinX(), Math.min(x, area.getMaxX() - SPECTRUM_W)));
+        spectrumStage.setY(Math.max(area.getMinY(), Math.min(y, area.getMaxY() - SPECTRUM_H)));
     }
 
     private void toggleSpectrumWindow() {
@@ -716,14 +984,31 @@ private void startPlayback(String url) {
         }
     }
 
+    /**
+     * 播放 / 暂停。
+     *
+     * <p>同步通知频谱：对应原版 {@code playing-status} 事件——暂停时清空幅度，
+     * 条形立即消失；恢复时下一帧直接吸附到目标，不做渐变。
+     */
     private void togglePlay() {
         if (player == null) {
             return;
         }
         if (player.getStatus() == MediaPlayer.Status.PLAYING) {
             player.pause();
+            syncSpectrumPlaying(false);
         } else {
             player.play();
+            syncSpectrumPlaying(true);
+        }
+    }
+
+    private void syncSpectrumPlaying(boolean playing) {
+        if (feed != null) {
+            feed.setPlaying(playing);
+        }
+        if (!playing && spectrumView != null) {
+            spectrumView.clear();
         }
     }
 
@@ -770,7 +1055,29 @@ private void installDragHandlers(javafx.scene.Node overlay) {
         };
     }
 
-private void toggleDock() {
+/**
+ * 系统托盘。设置入口在这（原版也是从托盘进设置，面板左下角放不下也不该放）。
+ */
+    private void setupTray() {
+        tray = new TrayIconHelper();
+        tray.onPlayPause = this::togglePlay;
+        tray.onPrev = () -> playCurrent(queue.previous());
+        tray.onNext = () -> playCurrent(queue.next());
+        tray.onSettings = this::switchToSettings;
+        tray.onTogglePanel = this::toggleDock;
+        tray.onQuit = () -> Platform.runLater(this::quitApp);
+        tray.install();
+    }
+
+    private void quitApp() {
+        disposePlayer();
+        if (tray != null) {
+            tray.dispose();
+        }
+        Platform.exit();
+    }
+
+    private void toggleDock() {
         // 原版 SIGMA_TOGGLE_THROTTLE_MS = 120：连按时丢弃过密的请求，
         // 但动画本身照样跑完，只是不再反复反转。节流要罩住整条 RSHIFT 路径
         // （位置滑出 + ElasticReveal 一起），不能只卡其中一段。

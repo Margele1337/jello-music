@@ -51,6 +51,14 @@ public final class SpectrumTap implements AutoCloseable {
     private int sampleRate;
     private int channels;
     private long decodedFrames;
+    /**
+     * 已解码的采样数（单声道计）。
+     *
+     * <p>原版靠「预读 Audio 领先主播放器 leadMs」来实现频谱领先声音。
+     * Java 侧没有第二个播放器，改成按字节位置做基准，
+     * 由 {@link com.jello.music.player.SpectrumFeed} 拿它和播放位置对齐。
+     */
+    private long decodedSamples;
 
     public SpectrumTap(String directUrl, int fftSize) throws IOException {
         this.fft = new Fft(fftSize);
@@ -91,16 +99,42 @@ public final class SpectrumTap implements AutoCloseable {
         return decodedFrames;
     }
 
+    /** 已解码的采样数（单声道计），用于与播放位置对齐。 */
+    public long decodedSampleCount() {
+        return decodedSamples;
+    }
+
+    /** 已解码音频对应的播放秒数；采样率未知时返回 0。 */
+    public double decodedSeconds() {
+        return sampleRate > 0 ? decodedSamples / (double) sampleRate : 0;
+    }
+
     /**
-     * 解码一帧并返回幅度谱。
+     * 解码一帧并返回<b>原始</b>幅度谱（不归一化）。
      *
-     * @return 长度 fftSize/2 的 0..1 幅度谱；流结束时返回 null
+     * <p>对应原版 {@code PlayerEngine.vue} 的 {@code spectrumRaw}：直接对
+     * 1024 点 FFT 逐点取 {@code sqrt(re*re+im*im)}，不归一化也不分箱。
+     *
+     * @return 长度 fftSize/2 的原始幅度谱；流结束时返回 null
      */
-    public double[] nextFrame() throws IOException {
+    public double[] nextRawFrame() throws IOException {
         double[] mono = new double[fft.size()];
+        if (decodeInto(mono) == 0) {
+            return null;
+        }
+        return fft.rawMagnitudes(mono);
+    }
+
+    /**
+     * 往 {@code mono} 里解满一帧（单声道、Int16 原始量纲），返回写入的采样数。
+     *
+     * @return 实际填充数；0 表示流已结束
+     */
+    private int decodeInto(double[] mono) {
+        int want = Math.min(fft.size(), mono.length);
         int filled = 0;
 
-        while (filled < fft.size()) {
+        while (filled < want) {
             Header header;
             try {
                 header = bitstream.readFrame();
@@ -129,28 +163,47 @@ public final class SpectrumTap implements AutoCloseable {
             if (len <= 0) {
                 break;
             }
-            // short 全幅 32767/32768，除掉得到 -1..1
+            // 保留 Int16 原始量纲（±32768），与原版 spectrumTapProcessor 的 Int16Array 一致。
+            // 不要除 32768：渲染端 sqrt(levels)/12-5 是绝对公式，上游缩放条高就整体不对了。
+            int consumed;
             if (channels == 1) {
-                int take = Math.min(len, fft.size() - filled);
-                for (int i = 0; i < take; i++) {
-                    mono[filled + i] = buf[i] / 32768.0;
+                consumed = Math.min(len, want - filled);
+                for (int i = 0; i < consumed; i++) {
+                    mono[filled + i] = buf[i];
                 }
-                filled += take;
+                filled += consumed;
             } else {
                 // 交错 L R L R...，只取左声道，避免左右混叠影响频谱
                 int pairs = len / 2;
-                int want = Math.min(pairs, fft.size() - filled);
-                for (int i = 0; i < want; i++) {
-                    mono[filled + i] = buf[i * 2] / 32768.0;
+                consumed = Math.min(pairs, want - filled);
+                for (int i = 0; i < consumed; i++) {
+                    mono[filled + i] = buf[i * 2];
                 }
-                filled += want;
+                filled += consumed;
             }
+            decodedSamples += consumed;
         }
 
+        if (filled > 0) {
+            decodedFrames++;
+        }
+        return filled;
+    }
+
+    /**
+     * 探针专用：解码一帧并返回<b>归一化到 0..1</b>的幅度谱。
+     *
+     * <p>只有 {@code PipelineProbe} 用它来看「频谱形状对不对」。
+     * 渲染链路必须走 {@link #nextRawFrame()}——那边是不归一化的原始量纲。
+     *
+     * @return 归一化幅度谱；流结束时返回 null
+     */
+    public double[] frameForProbe() throws IOException {
+        double[] mono = new double[fft.size()];
+        int filled = decodeInto(mono);
         if (filled == 0) {
             return null;
         }
-        decodedFrames++;
         return fft.magnitudes(mono);
     }
 
@@ -169,8 +222,29 @@ public final class SpectrumTap implements AutoCloseable {
     }
 
     /**
-     * 把幅度谱分箱到 n 个对数间隔的频段（更接近人耳感知，也和现有 UI 的柱状图对应）。
+     * 取幅度谱的前 {@code bars} 个 bin —— 1:1 复刻原版 {@code spectrumRaw}。
+     *
+     * <p><b>不要分箱、不要归一化。</b>原版是 {@code SPECTRUM_BAR_COUNT = 114} 根条，
+     * 每根直接对应 FFT 输出的一个 bin（1024 点 FFT 出 512 个 bin，前 114 个用上）。
+     * 之前 Java 版用的是「48 个对数间隔频段的均值」，那是人耳感知的通用做法，
+     * 但和原版的 Sigma 形态完全不是一回事，低频会被过度合并。
+     *
+     * @param magnitudes 原始幅度谱，长度 ≥ bars
+     * @param bars条数，对应原版 {@code SPECTRUM_BAR_COUNT}
+     * @return 长度恰为 bars 的数组，不足处补 0
      */
+    public static double[] takeBins(double[] magnitudes, int bars) {
+        double[] out = new double[bars];
+        System.arraycopy(magnitudes, 0, out, 0, Math.min(bars, magnitudes.length));
+        return out;
+    }
+
+    /**
+     * 把幅度谱分箱到 n 个对数间隔的频段。
+     *
+     * @deprecated 仅 {@code PipelineProbe} 用来看频谱形状；渲染链路走 {@link #takeBins}。
+     */
+    @Deprecated
     public static double[] toLogBands(double[] magnitudes, int bands) {
         double[] out = new double[bands];
         int n = magnitudes.length;

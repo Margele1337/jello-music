@@ -133,6 +133,47 @@ sigmarebase 是 Minecraft 客户端模组，它的音乐播放器 UI 依赖 `glS
 
 原 Electron 版里这些推导过程记录在 `electron/appServices.js` 的注释里，可作为实现依据。
 
+## 频谱：为什么条高不能用「归一化柱状图」
+
+频谱是本项目里最容易写错的一块，因为**上游量和下游公式的量纲必须严格对齐**。
+原版（`PlayerEngine.vue` + `SpectrumHUD.vue`）的整条链路是：
+
+```
+FFT(1024) → levels[i] = sqrt(re*re+im*im)      // Int16 原始量纲，不归一化、不加窗
+          → levels += (targets-levels)*alpha  // alpha 按 τ 指数步进，与帧率无关
+          → height = max(0, sqrt(levels)/12 - 5) * sigmaAmp
+            其中 sigmaAmp = (1009/1080) * spectrumScale
+```
+
+`levels` 的上限是 `2.256e7`，所以**上游任何一次归一化 / 分箱 / 加窗都会让条高整体不对**。
+之前 Java 版用的是「FFT 2048 + 48 个对数频段 + 归一化到 0..1 + 彩色柱状图」，
+是「人耳感知的通用做法」，跟原版的 Sigma 形态完全是两回事。
+
+| 项 | 原版取值 | 备注 |
+|---|---|---|
+| `SPECTRUM_FFT_SIZE` | 1024 | JavaFX `MediaPlayer` 不吐 PCM，只能旁路解码 |
+| `SPECTRUM_BAR_COUNT` | 114 | 每根条**直接对应一个 FFT bin**，不分箱 |
+| `SPECTRUM_MAX_AMPLITUDE` | 2.256e7 | sigmarebase amplitudes 上限 |
+| `GAME_FRAMEBUFFER_HEIGHT` | 1009 | 实测游戏窗口 1920x1009；条高按**绝对像素**算，与频谱窗高度无关 |
+
+### 台阶感是刻意的
+
+原版的音频线程**不是均匀推帧**的：约每 250ms 被 `SourceDataLine` 放行一次，
+一次推入 9~10 帧（间隔直方图 0ms×453 / 250ms×59）。
+所以正确的观感是「保持 250ms 不动 → 整体前移 ~10 帧」，不是平滑流动。
+`SpectrumFeed` 用 `sigmaQueue`（容量 4 帧）+ 250ms 批量入队复刻这个结构。
+
+### 鼠标穿透：JavaFX 没有这个开关
+
+`spectrumLocked` 对应原版的 `set-spectrum-ignore-mouse-events` IPC。
+JavaFX 21 **没有公开的鼠标穿透 API**——`Scene` 上不存在 `setMouseTransparent`，
+`com.sun.javafx.tk.quantum.WindowUtils`（当年拿 HWND 用的）在 21 已被移除，
+只剩包私有的 `WindowStage.getRawHandle()`。
+
+所以 `system/MousePassthrough.java` 反射取原生句柄，再用 JNA 设
+`WS_EX_TRANSPARENT`——这正是 Electron 内部做的事，语义一致（点击落到下层窗口）。
+取不到句柄时不抛异常，退化成「不穿透」，不影响播放与绘制。
+
 ## 改完 UI 自己看一眼
 
 `probe-ui` 会额外把**新手教程页按全屏尺寸**渲染成
@@ -218,11 +259,12 @@ com.jello.music
 ├── model/KuGouCredentials.java 登录态与 Authorization 拼装
 ├── model/Song.java             歌曲
 ├── model/ResultCard.java       右栏卡片：歌曲卡 / 歌单卡
-├── player/Fft.java             radix-2 FFT + Hann 窗
+├── player/Fft.java             radix-2 FFT（不加窗，与原版 JavaFFT 一致）
 ├── player/SpectrumTap.java     旁路拉流解码取 PCM
-├── player/SpectrumFeed.java    频谱数据的后台供给
+├── player/SpectrumFeed.java    sigmaQueue 爆发队列 + 后台供给
 ├── player/PlayQueue.java       播放队列与循环模式
 ├── system/RightShiftPoller.java 全局右 Shift（Win32 GetAsyncKeyState 轮询）
+├── system/MousePassthrough.java 频谱窗鼠标穿透（Win32 WS_EX_TRANSPARENT）
 ├── ui/SigmaAtlas.java          字形图集载入与度量
 ├── ui/SigmaTextView.java       canvas 文字节点（SigmaText.vue 1:1）
 ├── ui/SigmaScrollablePanel.java 滚动容器（SigmaScrollablePanel.vue 1:1）

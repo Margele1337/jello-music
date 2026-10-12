@@ -82,7 +82,49 @@ public final class Fft {
     }
 
     /**
-     * 便捷方法：实数信号 → 幅度谱。
+     * 实数信号 → <b>原始</b>幅度谱（不加窗、不归一化）。频谱渲染链路的唯一入口。
+     *
+     * <p>1:1 对应原版 {@code PlayerEngine.vue}：
+     * <pre>
+     *   for (let i = 0; i&lt;SPECTRUM_FFT_SIZE; i++) spectrumSamples[i] = block[i];
+     *   spectrumFft(spectrumSamples, spectrumReal, spectrumImag);
+     *   for (let i = 0; i&lt;SPECTRUM_BAR_COUNT; i++)
+     *       spectrumRaw[i] = Math.sqrt(re*re + im*im);
+     * </pre>
+     *
+     * <p>两个容易踩空的点：
+     * <ul>
+     *   <li><b>不加窗</b>：原版的 {@code createSpectrumFft} 直接把输入搬进输出，
+     *       没有 Hann 窗。窗函数会让量纲偏小，与原版对不上，所以这里也刻意不加。</li>
+     *   <li><b>输入是 Int16 原始量纲</b>（±32768），不是 -1..1 归一化值。
+     *       渲染端 {@code SpectrumHUD.vue} 用 {@code sqrt(levels)/12 - 5}
+     *       这种绝对公式，上游一旦缩放，条高就整体不对了。</li>
+     * </ul>
+     *
+     * @param samples 实数采样，长度须为 size
+     * @return 长度 size/2 的原始幅度谱
+     */
+    public double[] rawMagnitudes(double[] samples) {
+        if (samples.length != size) {
+            throw new IllegalArgumentException("采样长度必须为 " + size + "，收到 " + samples.length);
+        }
+        double[] re = new double[size];
+        double[] im = new double[size];
+        System.arraycopy(samples, 0, re, 0, size);
+        transform(re, im);
+
+        double[] out = new double[size / 2];
+        for (int i = 0; i < size / 2; i++) {
+            out[i] = Math.hypot(re[i], im[i]);
+        }
+        return out;
+    }
+
+    /**
+     * 实数信号 → 幅度谱，加 Hann 窗后按本帧峰值归一化到 0..1。
+     *
+     * <p>给 {@code PipelineProbe} 这类只想看「形状对不对」的诊断用途。
+     * <b>频谱渲染链路不要用这个</b>——原版既不加窗也不归一化，见 {@link #rawMagnitudes}。
      *
      * @param samples 实数采样，长度须为 size
      * @return 长度 size/2 的幅度谱（已归一化到 0..1）
@@ -91,21 +133,16 @@ public final class Fft {
         if (samples.length != size) {
             throw new IllegalArgumentException("采样长度必须为 " + size + "，收到 " + samples.length);
         }
-        double[] re = new double[size];
-        double[] im = new double[size];
-        // 加 Hann 窗，减少频谱泄漏
+        double[] windowed = new double[size];
         for (int i = 0; i < size; i++) {
             double w = 0.5 * (1 - Math.cos(2.0 * Math.PI * i / (size - 1)));
-            re[i] = samples[i] * w;
+            windowed[i] = samples[i] * w;
         }
-        transform(re, im);
-
-        double[] out = new double[size / 2];
+        double[] out = rawMagnitudes(windowed);
         double max = 1e-9;
-        for (int i = 0; i < size / 2; i++) {
-            out[i] = Math.hypot(re[i], im[i]);
-            if (out[i] > max) {
-                max = out[i];
+        for (double v : out) {
+            if (v > max) {
+                max = v;
             }
         }
         for (int i = 0; i < out.length; i++) {

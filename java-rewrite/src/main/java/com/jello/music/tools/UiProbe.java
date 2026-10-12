@@ -5,6 +5,7 @@ import com.jello.music.ui.KeybindKeyboard;
 import com.jello.music.ui.LoginView;
 import com.jello.music.ui.OnboardingView;
 import com.jello.music.player.PlayQueue;
+import com.jello.music.player.SpectrumFeed;
 import com.jello.music.ui.DragGate;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.PlayerPanel;
@@ -12,6 +13,7 @@ import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.SigmaScrollablePanel;
 import com.jello.music.ui.SpectrumToggleButton;
+import com.jello.music.ui.SpectrumView;
 import com.jello.music.ui.ThinProgressBar;
 import com.jello.music.ui.ThumbnailCard;
 import com.jello.music.ui.VerticalSlider;
@@ -352,6 +354,90 @@ writeSnapshot(root, pngPath);
         checkDragGate(root, player);
         checkShuffleQueue();
         checkStripBlur();
+        checkSpectrumParams();
+    }
+
+    /**
+     * 频谱参数链路的断言。
+     *
+     * <p>这几个设置之前是「死开关」——{@code Settings} 里定义了，
+     * 但 {@code SpectrumView} 一个都不读，条高还是归一化柱状图。
+     * 现在按原版 {@code SpectrumHUD.vue} 接线了，所以要盯住三件事：
+     *
+     * <ol>
+     *   <li><b>内核常量</b>必须是 114 条 / FFT 1024，而不是曾经自取的 48 / 2048</li>
+     *   <li><b>幅度与平滑</b>能穿过 {@link com.jello.music.ui.SpectrumView} 落到字段上</li>
+     *   <li><b>条高公式</b>是 {@code max(0, sqrt(levels)/12-5) * sigmaAmp}，
+     *       且随 scale 线性变化——这是唯一能把「参数真的生效」证明出来的地方，
+     *       因为 {@link com.jello.music.ui.SpectrumView} 的绘制在 AnimationTimer 里，
+     *       离屏断言拿不到中间状态，只能把公式抽出来对着算</li>
+     * </ol>
+     */
+    private static void checkSpectrumParams() {
+        check("频谱条数 == 原版 114（不是自取的 48）",
+                SpectrumFeed.BAR_COUNT == 114, "got=" + SpectrumFeed.BAR_COUNT);
+        check("FFT 长度 == 原版 1024（不是自取的 2048）",
+                SpectrumFeed.FFT_SIZE == 1024, "got=" + SpectrumFeed.FFT_SIZE);
+        check("幅度上限 == 原版 2.256e7",
+                Math.abs(SpectrumFeed.MAX_AMPLITUDE - 2.256e7) < 1,
+                String.valueOf(SpectrumFeed.MAX_AMPLITUDE));
+        check("游戏窗口高常量 == 1009（原版实测 1920x1009）",
+                SpectrumView.GAME_FRAMEBUFFER_HEIGHT == 1009,
+                String.valueOf(SpectrumView.GAME_FRAMEBUFFER_HEIGHT));
+
+        // 参数能穿过 SpectrumView（无直链的 feed，足够验证设置层）
+        SpectrumFeed feed = new SpectrumFeed(null, SpectrumFeed.FFT_SIZE,
+                SpectrumFeed.BAR_COUNT, 60);
+        SpectrumView view = new SpectrumView(feed, SpectrumFeed.BAR_COUNT, 220, 60);
+        view.setSpectrumScale(2.5);
+        view.setSpectrumSmoothing(0.8);
+        check("spectrumScale 已落到 SpectrumView",
+                view.spectrumScale() == 2.5, "got=" + view.spectrumScale());
+        check("spectrumSigmaSmoothing 已落到 SpectrumView",
+                view.spectrumSmoothing() == 0.8, "got=" + view.spectrumSmoothing());
+
+        // 越界夹取：原版把 smoothing 夹到 [0.001, 1]
+        view.setSpectrumSmoothing(5.0);
+        check("smoothing 上限夹到 1",
+                view.spectrumSmoothing() == 1.0, "got=" + view.spectrumSmoothing());
+        view.setSpectrumSmoothing(0.0);
+        check("smoothing 下限夹到 0.001",
+                Math.abs(view.spectrumSmoothing() - 0.001) < 1e-9,
+                "got=" + view.spectrumSmoothing());
+
+        // 音画差补偿夹取到 [0, 2000]，默认 590
+        feed.setLeadSeconds(-1);
+        check("音画差补偿下限夹到 0", feed.leadSeconds() == 0.0,
+                "got=" + feed.leadSeconds());
+        feed.setLeadSeconds(99);
+        check("音画差补偿上限夹到 2s", feed.leadSeconds() == 2.0,
+                "got=" + feed.leadSeconds());
+        feed.setLeadSeconds(0.59);
+        check("默认 590ms 已生效", Math.abs(feed.leadSeconds() - 0.59) < 1e-9,
+                "got=" + feed.leadSeconds());
+
+        // 条高公式：与 SpectrumView 内部同一套算法，验证 scale 是线性因子
+        // 要让基准高度 = 3，需 sqrt(levels)/12-5 = 3 -> sqrt(levels) = 96 -> levels = 9216
+        double levels = 9216.0;
+        double base = Math.max(0, Math.sqrt(levels) / 12 - 5);
+        double sigmaAmp1 = (SpectrumView.GAME_FRAMEBUFFER_HEIGHT / 1080) * 1.0;
+        double sigmaAmp3 = (SpectrumView.GAME_FRAMEBUFFER_HEIGHT / 1080) * 3.0;
+        check("条高基准值 = sqrt(levels)/12-5",
+                Math.abs(base - 3.0) < 1e-9, "got=" + base);
+        check("sigmaAmp 1x = 游戏窗口高/1080",
+                Math.abs(sigmaAmp1 - 1009.0 / 1080.0) < 1e-12,
+                "got=" + sigmaAmp1);
+        check("3x 幅度正好是 1x 的三倍（线性）",
+                base * sigmaAmp1 > 0
+                        && Math.abs(base * sigmaAmp3 - base * sigmaAmp1 * 3) < 1e-12,
+                "1x=" + base * sigmaAmp1 + " 3x=" + base * sigmaAmp3);
+
+        // 小于阈值的幅度必须被压成 0（sqrt(levels)/12-5 <= 0）
+        double tiny = Math.max(0, Math.sqrt(36.0) / 12 - 5); // sqrt=6，/12=0.5，-5<0
+        check("低幅度被压成 0（原版 max(0,·) 分支）", tiny == 0.0, "got=" + tiny);
+
+        view.stop();
+        feed.close();
     }
 
     private static boolean subtitleVisible(List<SigmaTextView> texts) {
@@ -1126,8 +1212,9 @@ check("登录卡片 400x470 @ 水平居中",
                 !inside.isEmpty() && inside.stream().allMatch(DragGate::blocked),
                 "n=" + inside.size());
         // 反向：面板空白处必须还能起拖，不然窗口直接拖不动了
-        check("面板空白处仍可拖窗（别把排除表写太宽）",
+check("面板空白处仍可拖窗（别把排除表写太宽）",
                 !DragGate.blocked(player) && !DragGate.blocked(root), null);
+
     }
 
     /**

@@ -148,6 +148,8 @@ public final class PlayerPanel extends Pane {
         spectrumBtn = new SpectrumToggleButton(Theme.SPECTRUM_S);
         place(spectrumBtn, Theme.SPECTRUM_X, Theme.SPECTRUM_Y, Theme.SPECTRUM_S, Theme.SPECTRUM_S);
         getChildren().add(spectrumBtn);
+        // 设置入口走系统托盘右键菜单（原版就是这样），面板上不再放齿轮：
+        // 左下角这块被封面和 41px 触发条夹着，按钮又难命中。
 
         // ---- 循环模式 27x20 @ (264,540) ----
         repeatBtn = new RepeatButton();
