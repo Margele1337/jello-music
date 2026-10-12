@@ -128,6 +128,17 @@ private EdgeDock dock;
 
     /** 视图容器：原版 SigmaUI.vue 的 sigma-shell，按 view 切换子视图。 */
     private final StackPane stageHolder = new StackPane();
+    {
+        // 对应原版 .sigma-shell 的 background: rgba(6,8,12,0.2)（SigmaUI.vue:215）。
+        //
+        // 这一层是「面板自身唯一的背衬」，不能省：原版主窗口不透明，
+        // 这层叠的是窗口自己的白底，所以面板看上去总是稳定的深色；
+        // 而我们主窗口用了 TRANSPARENT（比原版更透），
+        // 不补这层就等于把桌面直接透出来——收起时实测左栏
+        // 从 #0C0C0C 变成 #6C6C6C（背后那扇白窗透进来了），亮了约 9 倍。
+        stageHolder.setBackground(javafx.scene.layout.Background.fill(
+                Theme.SHELL_BACKDROP));
+    }
     private StackPane playerView;
     private OnboardingView onboarding;
     private LoginView login;

@@ -22,6 +22,29 @@ public final class Theme {
     public static final double PANEL_H = 600;
 
     // ---- 面板底色（与原 CSS 完全一致）----
+    /**
+     * 整块面板的背衬，原版 {@code SigmaUI.vue:215}
+     * {@code background: rgba(6, 8, 12, 0.2)}。
+     *
+     * <p><b>这一层不能省</b>。原版主窗口是<b>不透明</b>的
+     * （{@code appServices.js:50-60} 没有 {@code transparent: true}），
+     * 所以这层 rgba 叠的是「窗口自己的白底」——
+     * 无论桌面上压着什么，面板看上去都是稳定的深色。
+     *
+     * <p>Java 版主窗口用了 {@code StageStyle.TRANSPARENT}（比原版更透），
+     * 于是缺了这层背衬就等于<b>直接把桌面透出来</b>：
+     * 收起时整体 opacity 只有 0.5，底板 0.95×0.5=0.475 不透明，
+     * 剩下 52.5% 全是背后的东西——实测左栏从展开的 {@code #0C0C0C}
+     * 变成收起时的 {@code #6C6C6C}（约 9 倍亮），就是背后那扇白窗透进来了。
+     *
+     * <p>补上后：0.2 背衬 + 0.475 底板 ≈ 0.59 不透明，
+     * 观感回到原版那种「深色半透」而不是「白蒙蒙」。
+     *
+     * <p>注释里说的 alpha 与 {@code ClickGuiScreen.draw:309} 的
+     * DEEP_TEAL 0.2×a 静息值对齐。
+     */
+    public static final Color SHELL_BACKDROP = Color.color(6 / 255.0, 8 / 255.0,
+            12 / 255.0, 0.2);
     /** 左栏 black 95% */
     public static final Color LEFT_PANEL = Color.color(0, 0, 0, 0.95);
     /** 右栏 #262626 80% */

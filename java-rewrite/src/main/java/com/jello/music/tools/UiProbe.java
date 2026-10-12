@@ -369,6 +369,50 @@ writeSnapshot(root, pngPath);
         checkSystemToggles();
         checkApiBaseUrl();
         checkNoWhiteBackdrop();
+        checkShellBackdrop();
+    }
+
+    /**
+     * {@code .sigma-shell} 那层背衬必须存在，1:1 对齐 {@code SigmaUI.vue:215}。
+     *
+     * <p><b>这层为什么不能省</b>（用户实测截图量化出来的）：
+     * <pre>
+     *   收起态左栏，修前 #6D = 109     <- 白蒙蒙
+     *   收起态左栏，修后 #11 = 17      <- 加了背衬
+     *   展开态左栏，参照 #0C = 12
+     * </pre>
+     * 修前亮了 9 倍。原因是：原版主窗口<b>不透明</b>
+     * （{@code appServices.js:50-60} 没有 {@code transparent: true}），
+     * 这层 rgba 叠的是「窗口自己的白底」，面板看上去永远是稳定深色；
+     * 而 Java 版主窗口用了 {@code StageStyle.TRANSPARENT}（比原版更透），
+     * 缺了这层就等于<b>直接把桌面透出来</b>——收起时整体 opacity 只有 0.5，
+     * 底板 0.95×0.5 = 0.475 不透明，剩下 52.5% 全是背后的东西。
+     */
+    private static void checkShellBackdrop() {
+        check("存在 SHELL_BACKDROP（对应 .sigma-shell 的 rgba(6,8,12,0.2)）",
+                com.jello.music.ui.Theme.SHELL_BACKDROP != null, "缺失");
+        double a = com.jello.music.ui.Theme.SHELL_BACKDROP.getOpacity();
+        check("背衬 alpha == 0.2（对齐 SigmaUI.vue:215）",
+                Math.abs(a - 0.2) < 1e-6, "got=" + a);
+        int r = (int) Math.round(
+                com.jello.music.ui.Theme.SHELL_BACKDROP.getRed() * 255);
+        int g = (int) Math.round(
+                com.jello.music.ui.Theme.SHELL_BACKDROP.getGreen() * 255);
+        int b = (int) Math.round(
+                com.jello.music.ui.Theme.SHELL_BACKDROP.getBlue() * 255);
+        check("背衬颜色 == rgb(6,8,12)",
+                r == 6 && g == 8 && b == 12,
+                "got=(" + r + "," + g + "," + b + ")");
+
+        // 合成后的有效不透明度：0.2 背衬 + 0.475 底板
+        // （收起态底板 = rgba(0,0,0,0.95) * 面板 alpha 0.5）
+        double plate = com.jello.music.ui.Theme.LEFT_PANEL.getOpacity();
+        double panelAlpha = 0.5;
+        double effective = plate * panelAlpha + (1 - plate * panelAlpha) * a;
+        check("收起态有效不透明度 >= 0.55（否则背后的白窗会透成一片灰白）",
+                effective >= 0.55, "got=" + String.format("%.3f", effective));
+        check("且 <= 0.65（留足透光感，仍能看出桌面）",
+                effective <= 0.65, "got=" + String.format("%.3f", effective));
     }
 
     /**
