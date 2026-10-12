@@ -123,6 +123,8 @@ private EdgeDock dock;
     private WsApiServer wsApi;
     /** 内置 API 是否就绪；false 时登录态与歌单都会加载失败。 */
     private boolean apiReady;
+    /** 是否已经摆过初始位置（原版对应「记住上次窗口位置」那套）。 */
+    private boolean initialPositioned;
     /** 收进托盘之前频谱窗是否开着，唤回时一并恢复。 */
     private boolean spectrumWasOnBeforeHide;
 
@@ -543,9 +545,37 @@ dock = new EdgeDock(stage);
     private void showSigmaStage() {
         if (!sigmaStage.isShowing()) {
             sigmaStage.show();
-            clampToPrimaryScreen(sigmaStage);
+            // 首次展示要摆到屏幕<b>居中</b>，1:1 对齐原版
+            // electron/appServices.js:41-48：
+            //   if (!isValidPosition) { x = (screenW - w) / 2; y = (screenH - h) / 2; }
+            //
+            // 之前这里只调 clampToPrimaryScreen（只保证在屏内），
+            // 于是窗口一直停在 JavaFX 的默认 (0,0) —— 挤在左上角。
+            // 原版有「记住上次位置」的逻辑（store.get('windowState')），
+            // Java 版还没做持久化，所以每次启动都走「无记忆 -> 居中」这条。
+            if (!initialPositioned) {
+                initialPositioned = true;
+                centerOnPrimaryScreen(sigmaStage);
+            } else {
+                clampToPrimaryScreen(sigmaStage);
+            }
         }
         afterOnboarding();
+    }
+
+    /**
+     * 摆到主屏工作区居中，对应原版的
+     * {@code x = (screenW - w) / 2; y = (screenH - h) / 2}。
+     *
+     * <p>用 {@code workArea} 而不是整个屏幕：任务栏那一侧要留出来，
+     * 否则贴边收起时会被任务栏挡住。
+     */
+    private void centerOnPrimaryScreen(javafx.stage.Stage target) {
+        Rectangle2D area = Screen.getPrimary().getVisualBounds();
+        double x = area.getMinX() + (area.getWidth() - target.getWidth()) / 2;
+        double y = area.getMinY() + (area.getHeight() - target.getHeight()) / 2;
+        target.setX(Math.round(x));
+        target.setY(Math.round(y));
     }
 
     /** 教程结束（或本来就不用教程）后的分流：有登录态回主界面，没有就去登录页。 */

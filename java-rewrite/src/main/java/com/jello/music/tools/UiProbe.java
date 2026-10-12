@@ -371,6 +371,7 @@ writeSnapshot(root, pngPath);
         checkNoWhiteBackdrop();
         checkShellBackdrop();
         checkSearchBoxLayering();
+        checkInitialCentering();
     }
 
     /**
@@ -403,6 +404,58 @@ writeSnapshot(root, pngPath);
         check("结果区铺满 0,0（与 field 的 30,14,490x70 区域重叠）",
                 Math.abs(box.resultsLayoutY()) < 0.001,
                 "results.layoutY=" + box.resultsLayoutY());
+    }
+
+    /**
+     * 首次展示必须摆到屏幕<b>居中</b>，不能停在 (0,0)。
+     *
+     * <p>1:1 对齐原版 {@code electron/appServices.js:41-48}：
+     * <pre>
+     *   const isValidPosition = x !== undefined &amp;&amp; y !== undefined &amp;&amp; ...;
+     *   if (!isValidPosition) {
+     *       x = Math.floor((screenWidth  - width)  / 2);
+     *       y = Math.floor((screenHeight - height) / 2);
+     *   }
+     * </pre>
+     *
+     * <p>之前 {@code showSigmaStage} 只调 {@code clampToPrimaryScreen}
+     * （只保证「在屏内」），而 (0,0) 也算在屏内 —— 于是窗口一直停在
+     * JavaFX 的默认位置，挤在左上角。这个 bug 藏了很久：搜索框的层级
+     * 一改、面板外观一变，它才暴露出来。
+     *
+     * <p>原版还有「记住上次窗口位置」（{@code store.get('windowState')}），
+     * Java 版尚未做持久化，所以每次启动都该走「无记忆 -> 居中」这条。
+     */
+    private static void checkInitialCentering() {
+        javafx.stage.Screen screen =
+                javafx.stage.Screen.getPrimary();
+        javafx.geometry.Rectangle2D area = screen.getVisualBounds();
+        double w = com.jello.music.ui.Theme.PANEL_W;
+        double h = com.jello.music.ui.Theme.PANEL_H;
+        double expectX = area.getMinX() + (area.getWidth() - w) / 2;
+        double expectY = area.getMinY() + (area.getHeight() - h) / 2;
+
+        // 直接验算法本身：窗口不应当在 (0,0)，且四边留白应当接近相等
+        check("居中后 x 不为 0（原版是 (screenW-w)/2，不是 0）",
+                Math.abs(expectX) > 1.0,
+                "expectX=" + (int) expectX);
+        check("居中后 y 不为 0",
+                Math.abs(expectY) > 1.0,
+                "expectY=" + (int) expectY);
+        double leftGap = expectX - area.getMinX();
+        double rightGap = area.getMaxX() - (expectX + w);
+        check("左右留白对称（居中的定义）",
+                Math.abs(leftGap - rightGap) < 1.0,
+                String.format("left=%.0f right=%.0f", leftGap, rightGap));
+        double topGap = expectY - area.getMinY();
+        double bottomGap = area.getMaxY() - (expectY + h);
+        check("上下留白对称",
+                Math.abs(topGap - bottomGap) < 1.0,
+                String.format("top=%.0f bottom=%.0f", topGap, bottomGap));
+        // 面板必须完全落在工作区内，不能被任务栏挡住
+        check("面板不超出工作区右界",
+                expectX + w <= area.getMaxX() + 1,
+                String.format("right=%.0f maxX=%.0f", expectX + w, area.getMaxX()));
     }
 
     /**
