@@ -362,6 +362,83 @@ writeSnapshot(root, pngPath);
         checkSingleInstance();
         checkJelloProtocol();
         checkMediaKeys();
+        checkDockFadeCurve();
+    }
+
+    /**
+     * 贴边淡入淡出曲线的断言，逐值对齐 sigmarebase。
+     *
+     * <p>权威是 {@code MusicPlayer.draw:275-278} 的
+     * {@code field20873}（一个 {@code Animation(80, 150, BACKWARDS)}）+ 公式
+     * {@code partialTicks *= 0.5F + (1.0F - calcPercent()) * 0.5F}。
+     * 之前 Java 版是「切状态就启动一段独立的线性淡入淡出」，
+     * 快速连按 RSHIFT 时会重新从头播；现在改成与 mod 同源的进度连续动画。
+     *
+     * <p>这里断言两件事：
+     * <ol>
+     *   <li>两个方向的 alpha 曲线端点与中点（线性，80ms / 150ms）</li>
+     *   <li><b>方向翻转时进度连续</b>——这是改动的核心，也是最难凭肉眼发现的</li>
+     * </ol>
+     */
+    private static void checkDockFadeCurve() {
+        check("收起时长 == 80ms（Animation 第��个参数）",
+                EdgeDock.DIM_MILLIS == 80, "got=" + EdgeDock.DIM_MILLIS);
+        check("展开时长 == 150ms（Animation 第二个参数）",
+                EdgeDock.BRIGHT_MILLIS == 150, "got=" + EdgeDock.BRIGHT_MILLIS);
+        check("收起态不透明度 == 0.5",
+                EdgeDock.DOCKED_OPACITY == 0.5, "got=" + EdgeDock.DOCKED_OPACITY);
+
+        // 复刻 mod 的 alpha 公式：alpha = 0.5 + (1 - p) * 0.5
+        // 注意 alpha 与 p 的绑定<b>与方向无关</b>，只看 calcPercent()：
+        // p=1 → 0.5 半透明（收起稳态），p=0 → 1.0 不透明（展开稳态）。
+        // 这条曾写反过一次（把方向也算进去了），DockMotionProbe 实测才看出来。
+        final double dim = EdgeDock.DIM_MILLIS;
+        final double bright = EdgeDock.BRIGHT_MILLIS;
+        java.util.function.DoubleUnaryOperator alphaOf = p ->
+                0.5 + (1.0 - p) * 0.5;
+        java.util.function.DoubleUnaryOperator pForwards = elapsed -> // 收起
+                Math.min(1.0, Math.max(0.0, elapsed / dim));
+        java.util.function.DoubleUnaryOperator pBackwards = elapsed -> // 展开
+                Math.max(0.0, 1.0 - Math.min(1.0, elapsed / bright));
+
+        check("收起起点 alpha == 1.0",
+                Math.abs(alphaOf.applyAsDouble(pForwards.applyAsDouble(0)) - 1.0) < 1e-9,
+                "");
+        check("收起终点 alpha == 0.5（稳态半透明）",
+                Math.abs(alphaOf.applyAsDouble(pForwards.applyAsDouble(dim)) - 0.5) < 1e-9,
+                "");
+        check("收起中点 alpha == 0.75（线性）",
+                Math.abs(alphaOf.applyAsDouble(pForwards.applyAsDouble(dim / 2)) - 0.75) < 1e-9, "");
+        check("展开起点 alpha == 0.5",
+                Math.abs(alphaOf.applyAsDouble(pBackwards.applyAsDouble(0)) - 0.5) < 1e-9, "");
+        check("展开终点 alpha == 1.0",
+                Math.abs(alphaOf.applyAsDouble(pBackwards.applyAsDouble(bright)) - 1.0) < 1e-9, "");
+        check("展开中点 alpha == 0.75（线性）",
+                Math.abs(alphaOf.applyAsDouble(pBackwards.applyAsDouble(bright / 2)) - 0.75) < 1e-9,
+                "");
+
+        // 方向翻转的连续性：Animation.changeDirection 用当前进度反推新起点。
+        // 收起 40ms（p=0.5, alpha=0.75）时翻转为展开：
+        //   新 elapsed 起点 = (1 - p) * 150 = 75ms，此刻新进度 = 1 - 75/150 = 0.5
+        double pBefore = pForwards.applyAsDouble(dim / 2);
+        double alphaBefore = alphaOf.applyAsDouble(pBefore);
+        double newElapsed = (1.0 - pBefore) * bright;
+        double pAfter = pBackwards.applyAsDouble(newElapsed);
+        double alphaAfter = alphaOf.applyAsDouble(pAfter);
+        check("翻转前 alpha == 0.75", Math.abs(alphaBefore - 0.75) < 1e-9,
+                "got=" + alphaBefore);
+        check("翻转后 alpha 仍 == 0.75（进度连续，不跳变）",
+                Math.abs(alphaAfter - alphaBefore) < 1e-9,
+                "before=" + alphaBefore + " after=" + alphaAfter);
+
+        // 触发条按越界判定而非吸附态
+        check("触发条宽度 == 41（.smp-dock-trigger）",
+                Theme.EDGE_TRIGGER == 41, "got=" + Theme.EDGE_TRIGGER);
+        // 越界判定：右缘越过容器右界才算越界
+        check("右缘正好等于右界不算越界",
+                !EdgeDock.overhangingOf(1920 - 800, 800, 1920), "误判为越界");
+        check("右缘超出 1px 即算越界",
+                EdgeDock.overhangingOf(1920 - 800 + 1, 800, 1920), "未判为越界");
     }
 
     /** jello:// 协议的 URL 解析，对齐原版 handleUrl（appServices.js:1529-1545）。 */

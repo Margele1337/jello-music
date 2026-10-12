@@ -375,6 +375,10 @@ dock = new EdgeDock(stage);
         // 只在 RSHIFT 收起时开关的话，拖出去之后就点不回来了
         dock.onDockStateChanged(
                 () -> playerPanel.setDockTriggerActive(dock.isDocked()));
+        // 触发条的显隐另按「越界」判定，对应 mod MusicPlayer:275 的每帧 widthA(越界 ? 41 : 0)。
+        // 与上面那条分工：吸附态控制播放键的高亮，越界控制 41px 触发条本身。
+        dock.onOverhangChanged(
+                () -> playerPanel.setDockTriggerVisible(dock.isOverhanging()));
         installDragHandlers(root);
         dock.expand();
         reveal.expand(null);

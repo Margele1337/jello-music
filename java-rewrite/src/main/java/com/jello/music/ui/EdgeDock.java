@@ -90,9 +90,12 @@ public final class EdgeDock {
     private Node opacityTarget;
     private AnimationTimer fadeTimer;
     private long fadeStart;
-    private double fadeFrom;
-    private double fadeTo;
-    private long fadeDurationNanos;
+    /**
+     * 淡入淡出方向，对应 mod 的 {@code Animation.Direction}。
+     * 初始 BACKWARDS（完全展开、不透明），与 mod 的
+     * {@code new Animation(80, 150, Direction.BACKWARDS)} 一致。
+     */
+    private FadeDirection fadeDirection = FadeDirection.BACKWARDS;
 
     private double dragAnchorScreenX;
     private double dragAnchorStageX;
@@ -102,6 +105,8 @@ public final class EdgeDock {
     private double dragStartScreenX;
     private boolean dragging;
     private Runnable dockStateListener;
+    /** 越界状态变化回调（对应 mod 每帧的触发条宽度判定）。 */
+    private Runnable overhangListener;
 
     public EdgeDock(Stage stage) {
         this.stage = stage;
@@ -229,6 +234,20 @@ public final class EdgeDock {
         undockRequested = false;
         syncFromGeometry();
         syncTranslucent();
+        // 初始摆位直接落到动画终点：mod 的 field20873 是每帧从 elapsed=0 起算，
+        // 首次 draw 时 p 还没走完，所以视觉上确实有一小段淡出；
+        // 但这里是「还没显示就摆好」，没有中间态可言——
+        // 立刻设成收起态的终值（alpha 0.5），避免启动时闪一下全亮。
+        //
+        // 对应公式 alpha = 0.5 + (1-p)*0.5，要得到 0.5 就得让 p = 1，
+        // 也就是把 fadeStart 往前推满一个 DIM_MILLIS（elapsed 满格 p 才是 1）。
+        fadeStart = System.nanoTime() - DIM_MILLIS * 1_000_000L;
+        fadeDirection = FadeDirection.FORWARDS;
+        // 注意传「当前时刻」而不是 fadeStart：
+        // applyFade(now) 内部按 (now - fadeStart)/duration 算 elapsed，
+        // 传 fadeStart 会得到 elapsed=0 → p=0 → alpha=1.0，正好反了。
+        applyFade(System.nanoTime());
+        stopSelf();
     }
 
 /**
@@ -464,6 +483,26 @@ public final class EdgeDock {
         }
         overhanging = value;
         syncTranslucent();
+        // 触发条按「越界」而非「吸附态」开关，对应 MusicPlayer:275 的每帧判定。
+        // 差在拖拽滑出途中：那时还没吸附，但 mod 已经把触发条显示出来了。
+        if (overhangListener != null) {
+            overhangListener.run();
+        }
+    }
+
+    /**
+     * 越界状态变化时回调（给 MainApp 开关 41px 触发条）。
+     *
+     * <p>与 {@link #onDockStateChanged}（吸附态）是<b>两件事</b>：
+     * 吸附态是用户操作触发的离散事件，越界是每帧连续判定。
+     */
+    public void onOverhangChanged(Runnable r) {
+        this.overhangListener = r;
+    }
+
+    /** 面板当前是否越界（供断言与诊断用）。 */
+    public boolean isOverhanging() {
+        return overhanging;
     }
 
     /** 位置一变就同步越界标志；回到屏幕内即视为滑出结束，清掉「已请求滑出」。 */
@@ -477,42 +516,153 @@ public final class EdgeDock {
 
     private void syncTranslucent() {
         boolean want = translucentOf(overhanging, undockRequested);
-        if (want == translucent) {
-            return;
+        FadeDirection next = want ? FadeDirection.FORWARDS : FadeDirection.BACKWARDS;
+        long now = System.nanoTime();
+        if (fadeDirection != next) {
+            // 1:1 复刻 mod 的 {@code Animation.changeDirection}（:50-58）：
+            // 用<b>当前进度</b>反推新方向的时间起点，保证翻转时进度连续不跳变。
+            double p = fadePercent(now);
+            long newDuration = (next == FadeDirection.FORWARDS ? DIM_MILLIS : BRIGHT_MILLIS)
+                    * 1_000_000L;
+            fadeStart = next == FadeDirection.FORWARDS
+                    ? now - (long) (p * newDuration)
+                    : now - (long) ((1.0 - p) * newDuration);
+            fadeDirection = next;
         }
-        translucent = want;
-        fadeTo(want ? DOCKED_OPACITY : 1.0, want ? DIM_MILLIS : BRIGHT_MILLIS);
+        // 注意：这里<b>不</b>像原来那样「状态相同就 return」。
+        // mod 的 field20873（MusicPlayer:275-278）是每帧无条件跑
+        // changeDirection + calcPercent 的，动画由自己的时间基准推进。
+        ensureFadeTimer();
+        // 立刻应用一次当前进度：否则从「展开态 alpha=1」切到「收起」时，
+        // 第一帧跑之前 alpha 还是旧值，视觉上就是「先亮一下再变暗」——
+        // mod 是同帧算完就画，没有这个闪。
+        applyFade(now);
     }
 
-    /** 线性淡入淡出；方向翻转时从当前值重新计时，不跳变（对应 CSS transition）。 */
-    private void fadeTo(double target, long millis) {
+    /** 当前方向的时长（纳秒），对应 mod 的 {@code Animation(80, 150, BACKWARDS)}。 */
+    private long fadeDurationNanos() {
+        return (fadeDirection == FadeDirection.FORWARDS ? DIM_MILLIS : BRIGHT_MILLIS)
+                * 1_000_000L;
+    }
+
+    /**
+     * 当前的动画进度 0..1，1:1 对应 mod 的 {@code Animation.calcPercent()}。
+     *
+     * <p>mod 的公式（{@code Animation.java:70-74}）：
+     * <pre>
+     *   BACKWARDS:  1 - min(1, (now - reverseStartTime) / reverseDuration)
+     *   FORWARDS:       min(1, (now - startTime)        / duration)
+     * </pre>
+     * 两支都是<b>线性</b>，差别只在从哪个时间点起算。
+     *
+     * <p>然后 mod 用它算整个面板的 alpha 系数（{@code MusicPlayer:278}）：
+     * <pre>
+     *   partialTicks *= 0.5F + (1.0F - calcPercent()) * 0.5F
+     * </pre>
+     * 也就是「收起时面板整体降到 50% alpha，展开时回到 100%」，
+     * 而不是我们原先那种「切状态就启动一段独立的淡入淡出」。
+     */
+    private double fadePercent(long now) {
+        double sinceStart = (now - fadeStart) / (double) fadeDurationNanos();
+        if (fadeDirection == FadeDirection.BACKWARDS) {
+            return Math.max(0.0, 1.0 - Math.min(1.0, sinceStart));
+        }
+        return Math.min(1.0, Math.max(0.0, sinceStart));
+    }
+
+    /**
+     * 按 mod 的公式把进度映射成面板 opacity。
+     *
+     * <p>{@code alpha系数 = 0.5 + (1 - p) * 0.5}，
+     * 其中 {@code p = calcPercent()}：p=1（完全展开）→ 系数 0.5？不对——
+     * 实际方向反了：展开完成时 {@code calcPercent()→1}（BACKWARDS 走完），
+     * 系数 = 0.5 + (1-1)*0.5 = 0.5。
+     *
+     * <p>这里要结合方向一起看才清楚：
+     * <ul>
+     *   <li><b>收起</b>（FORWARDS）：p 从 0 涨到 1，系数 1.0 → 0.5，面板变半透明</li>
+     *   <li><b>展开</b>（BACKWARDS）：p 从 1 降到 0，系数 0.5 → 1.0，面板恢复</li>
+     * </ul>
+     * 也就是「收起到半透明、展开到全不透明」，与 {@link #DOCKED_OPACITY} 一致。
+     */
+    /**
+     * 按 mod 的公式把进度映射成面板 opacity。
+     *
+     * <p>权威是 {@code MusicPlayer:278} 那一行：
+     * <pre>
+     *   partialTicks *= 0.5F + (1.0F - calcPercent()) * 0.5F
+     * </pre>
+     * 而 {@code partialTicks} 在面板展开时约等于 1.0，所以实际 alpha 就是
+     * {@code 0.5 + (1 - p) * 0.5}：
+     *
+     * <pre>
+     *   p = 1  -&gt; alpha = 0.5   半透明（收起完成）
+     *   p = 0  -&gt; alpha = 1.0   不透明（展开完成）
+     * </pre>
+     *
+     * <p><b>注意 p 与 alpha 的绑定跟方向无关</b>，只看 {@code calcPercent()}：
+     * 收起走 FORWARDS（p: 0→1）、展开走 BACKWARDS（p: 1→0），
+     * 但公式对两者是同一条。
+     *
+     * <p>mod 构造时初始方向是 BACKWARDS 且 elapsed=0，所以 {@code p=1}、
+     * alpha 起步就是 0.5——刚创建还没展开过时面板是半透明的。
+     */
+    private void applyFade(long now) {
+        if (opacityTarget == null) {
+            return;
+        }
+        double p = fadePercent(now);
+        opacityTarget.setOpacity(0.5 + (1.0 - p) * 0.5);
+        translucent = opacityTarget.getOpacity() < 0.99;
+    }
+
+    /**
+     * 启动（或复用）每帧推进的动画。
+     *
+     * <p>mod 是每帧在 {@code draw} 里重算进度（{@code MusicPlayer:275-278}），
+     * 这里是 {@link AnimationTimer}，语义一致。
+     */
+    private void ensureFadeTimer() {
         if (opacityTarget == null) {
             return;
         }
         if (fadeTimer != null) {
             fadeTimer.stop();
-        }
-        fadeFrom = opacityTarget.getOpacity();
-        fadeTo = target;
-        fadeDurationNanos = millis * 1_000_000L;
-        fadeStart = System.nanoTime();
-        if (Math.abs(fadeFrom - fadeTo) < 0.001) {
-            opacityTarget.setOpacity(fadeTo);
             fadeTimer = null;
-            return;
         }
         fadeTimer = new AnimationTimer() {
             @Override
             public void handle(long now) {
-                double t = Math.min(1.0, (now - fadeStart) / (double) fadeDurationNanos);
-                opacityTarget.setOpacity(fadeFrom + (fadeTo - fadeFrom) * t);
-                if (t >= 1.0) {
-                    fadeTimer.stop();
-                    fadeTimer = null;
-                    opacityTarget.setOpacity(fadeTo);
+                applyFade(now);
+                // 到达端点后停掉，下一帧若方向再变再重启
+                double p = fadePercent(now);
+                if (p <= 0.0 || p >= 1.0) {
+                    applyFade(now);
+                    stopSelf();
                 }
             }
         };
         fadeTimer.start();
+    }
+
+    /**
+     * 停掉当前的淡入淡出计时器。
+     *
+     * <p>写成独立方法而不是在匿名 {@code AnimationTimer} 里定义 {@code stop()}——
+     * 同名会「试图覆盖父类的 public 方法」，编译不过。
+     */
+    private void stopSelf() {
+        if (fadeTimer != null) {
+            fadeTimer.stop();
+            fadeTimer = null;
+        }
+    }
+
+    /** 淡入淡出的方向，对应 mod 的 {@code Animation.Direction}。 */
+    private enum FadeDirection {
+        /** 收起：越界且未请求滑出。 */
+        FORWARDS,
+        /** 展开。 */
+        BACKWARDS
     }
 }

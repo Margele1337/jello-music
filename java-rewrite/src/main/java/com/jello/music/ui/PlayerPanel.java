@@ -183,8 +183,10 @@ public final class PlayerPanel extends Pane {
         dockTrigger.setPrefSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
         dockTrigger.setMinSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
         dockTrigger.setMaxSize(Theme.EDGE_TRIGGER, Theme.PANEL_H);
-        // 展开时必须让鼠标穿透，否则这 41px 会挡住左栏歌单和频谱按钮
+        // 展开时必须让鼠标穿透，否则这 41px 会挡住左栏歌单和频谱按钮。
+        // 宽度另由 setDockTriggerWidth 按 mod 的越界判定每帧调整。
         dockTrigger.setMouseTransparent(true);
+        dockTrigger.setVisible(false);
         getChildren().add(dockTrigger);
 
         // 原版初始态就是「没有歌」：标题行显示 "Jello Music"（单行，y=562），
@@ -195,6 +197,32 @@ public final class PlayerPanel extends Pane {
     /** 收起态下点击 41px 触发条滑出。 */
     public void onDockTrigger(Runnable r) {
         dockTrigger.setOnMouseClicked(e -> r.run());
+    }
+
+    /**
+     * 按「面板右缘是否越过容器右界」设置触发条宽度，1:1 对应
+     * {@code MusicPlayer.draw:275}：
+     * <pre>
+     *   field20865.setWidthA(getXA() + getWidthA() <= parent.getWidthA() ? 0 : 41);
+     * </pre>
+     *
+     * <p><b>和「按吸附态开关」的区别</b>：吸附态是离散事件（用户点 RSHIFT
+     * 或拖到边才变），而越界是<b>每帧</b>连续判定。差在拖拽滑出的过程中——
+     * 面板还在往右移动、尚未「吸附」时，按吸附态的做法触发条还没出现，
+     * 但 mod 此时已经把它显示出来了。视觉上就是：拖出去的过程中
+     * 触发条会<b>跟着一起出现</b>，而不是等吸附完成才冒出来。
+     *
+     * @param overhanging 面板右缘是否已越过容器右界
+     */
+    public void setDockTriggerVisible(boolean overhanging) {
+        double w = overhanging ? Theme.EDGE_TRIGGER : 0;
+        dockTrigger.setPrefWidth(w);
+        dockTrigger.setMinWidth(w);
+        dockTrigger.setMaxWidth(w);
+        // 宽度为 0 时必须不可见，否则仍能吃到鼠标事件
+        dockTrigger.setVisible(overhanging);
+        // 宽度 0 时穿透，宽度 41 时要能点
+        dockTrigger.setMouseTransparent(!overhanging);
     }
 
     public SearchBox searchBox() {

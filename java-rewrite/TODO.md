@@ -79,6 +79,23 @@
 - [x] **dock 滑动曲线不一致** —— 原版是每帧 `0.25 × dt/18.10361` 插值（x 用 0.25、
       y 用 0.2）+ 120ms 触发节流 + 3s 卡死看门狗。之前是固定 450/125ms cubic ease-out，
       观感是「匀速起步再硬停」，与原版的指数逼近（滑到位才停）完全不同
+- [x] **淡入淡出改为与 mod 同源的进度连续动画** —— 对齐
+      `MusicPlayer:275-278` 的 `field20873`（`Animation(80, 150, BACKWARDS)`）：
+      - alpha 公式 `0.5 + (1 - p) * 0.5`，`p = calcPercent()`。
+        **alpha 与 p 的绑定跟方向无关**：p=1 → 0.5 半透明，p=0 → 1.0 不透明。
+        之前把方向也算进去了，公式反了，是靠 `DockMotionProbe` 实测看出来的
+      - `changeDirection` 用<b>当前进度反推新起点</b>（`Animation.java:50-58`），
+        来回连按 RSHIFT 时进度连续不跳变。之前是「切状态就重启动画」，
+        连按会重新从头播
+      - 实测：收起稳态 alpha=0.500，淡入 0.500→0.616→0.719→0.825→0.932→1.000
+        严格线性，162ms 到位（权威 150ms，差值是 30ms 采样粒度）；
+        x 从 1880 指数收敛到 1100，450ms 到位
+- [x] **触发条按「越界」而非「吸附态」显示** —— 对齐 `MusicPlayer:275`
+      `field20865.setWidthA(越界 ? 41 : 0)`。吸附态是用户操作触发的离散事件，
+      越界是每帧连续判定；差在拖拽滑出途中——那时还没吸附，
+      但 mod 此时已经把触发条显示出来了。见 `PlayerPanel.setDockTriggerVisible`
+- [x] 点击 41px 触发条恢复展开（`EdgeDock.expand()` 清 snapped +
+      `undockRequested=true` + 滑出）
 - [x] **右侧弹出 / 贴边收起与 sigmarebase 逐值核对一致** ——
       `updatePanelDimensions`（:199-257）的两个目标位置都已对齐：
       - 收起 `var8 = parentWidth - 40` → `Theme.DOCK_VISIBLE = 40`
