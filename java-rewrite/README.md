@@ -183,6 +183,42 @@ PCM 字节 → convertToPCMFloatArray (MathHelper:21-30)   sample / 32768.0f  �
   但 1152 = 128×9 不是 2 的幂，而 mod 的 `JavaFFT.transform` 同样是
   `blockSize <<= 1` 的 Cooley-Tukey——**那条路在 mod 里其实也跑不通**。
   这里取 1024（最接近的 2 的幂，与 Electron 版一致）。
+- **PCM 量纲差了 6 万倍，条高恒为 0**。这是频谱最隐蔽的坑：
+  mod 的 `MathHelper.convertToPCMFloatArray` 按 `audioFormat.getFrameSize()`
+  逐帧取字节，16bit 立体声的 frameSize = 4，即**一个「采样点」= L 的 2 字节 +
+  R 的 2 字节**，再经 `bytesToIntLE`（`:43-53`）以 `& 0xFF` 无符号累加。
+  于是：①负数变大正数，②**两个声道被塞进同一个 int32**（高 16 位 R、低 16 位 L）。
+
+  按「short 直接除 32768」的直觉写，1024 点满幅正弦的 `|X(1)|` 只有约 12，
+  而条高门槛是 `sqrt(a)/12-5 > 0` 即 `a > 3600` —— **所有条形恒为 0，
+  频谱窗一条都不显示**。按 mod 的打包方式做，`|X(1)|` 约 56 万，条高 53px，正常。
+  这条只有**真接音频跑一遍**才会暴露，公式断言全绿也照样是空的。
+
+### 量纲标定：`REFERENCE_HEIGHT` 为什么是 290
+
+mod 画在**整个游戏窗口**底部，1080p 下 `heightRatio = 1080/1080 = 1.0`，
+实测最满条约 220px，占全窗 20%。
+
+本项目频谱窗只有 420×130，扣掉信息块只剩约 108px 可用。沿用 1080 会让
+1.0x 直接顶满甚至溢出（实测 207px vs 108px = 192%），条形被窗口顶截断。
+
+所以标定成「1.0x 时最满条约占可用高度四成」= `REFERENCE_HEIGHT 290`，
+让 `spectrumScale` 的 0.2~3 正好覆盖「几乎贴地 ~ 顶满」。这个值来自
+实测（`SpectrumProbe`），不是拍脑袋。
+
+### `SpectrumProbe`：真实频谱实测
+
+`UiProbe` 只能验公式与参数落地，验不了「条形看起来对不对」。
+`tools/SpectrumProbe` 不 mock：真连 api、真拉直链、真解 60 帧、按公式平滑、
+渲染并截图，同时打印幅度统计与最高条形占可用高度的比例。
+
+```bash
+java --module-path ... -m com.jello.music/com.jello.music.tools.SpectrumProbe %TEMP%
+# 输出 spectrum-scale-1.0x.png / spectrum-scale-2.0x.png
+```
+
+也修了两件事：探针原先只认 `JELLO_*` 环境变量（现在回落读 `AppPrefs` 的登录态），
+以及没有 `JELLO_HASH` 时自动从「猜你喜欢」选一首 —— 让它开箱即用。
 
 ### 音画差补偿：为什么频谱流要能按时间跳
 

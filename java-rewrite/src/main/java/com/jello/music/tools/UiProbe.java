@@ -652,11 +652,23 @@ writeSnapshot(root, pngPath);
 
         double h1 = (SpectrumView.REFERENCE_HEIGHT / 1080.0) * 1.0;
         double h3 = (SpectrumView.REFERENCE_HEIGHT / 1080.0) * 3.0;
-        check("高度比 = 参考窗口高/1080",
-                Math.abs(h1 - 1009.0 / 1080.0) < 1e-12, "got=" + h1);
+        // mod 画在 1080p 全游戏窗口（heightRatio 恰好 1.0），但本项目的频谱窗
+        // 只有 420x130、扣掉信息块只剩约 108px 可用。沿用 1080 会让 1.0x
+        // 直接顶满甚至溢出（实测 207px vs 108px = 192%），所以标定成 290。
+        check("高度比基准 == 290（实测标定，见 SpectrumProbe）",
+                SpectrumView.REFERENCE_HEIGHT == 290,
+                "got=" + SpectrumView.REFERENCE_HEIGHT);
         check("3x 幅度正好是 1x 的三倍（线性）",
                 base * h1 > 0 && Math.abs(base * h3 - base * h1 * 3) < 1e-12,
                 "1x=" + base * h1 + " 3x=" + base * h3);
+
+        // 标定的实际意义：真实满量程幅度下，1.0x 不能顶满窗口也不能等于没画。
+        // 3852008 是 SpectrumProbe 用真实歌曲实测到的 max amplitude 量级。
+        double realFullScale = Math.max(0, Math.sqrt(3_852_008.0) / 12 - 5) * h1;
+        check("实测满量程下 1.0x 不顶满窗口",
+                realFullScale < 108, "got=" + String.format("%.1f", realFullScale) + "px");
+        check("实测满量程下 1.0x 至少占两成高度",
+                realFullScale > 108 * 0.2, "got=" + String.format("%.1f", realFullScale) + "px");
 
         // 小于阈值的幅度必须被压成 0
         double tiny = Math.max(0, Math.sqrt(36.0) / 12 - 5); // sqrt=6，/12=0.5，-5<0

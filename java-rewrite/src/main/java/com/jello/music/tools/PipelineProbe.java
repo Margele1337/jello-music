@@ -43,13 +43,20 @@ public final class PipelineProbe {
         // ---- 第 2 段：取直链 ----
         String hash = env("JELLO_HASH", "");
         if (hash.isBlank()) {
+            // 没指定 hash 就自己找一首：让探针「开箱即用」，
+            // 不用每次都去 App 里复制 hash 再设环境变量
+            hash = pickAnyHash(api);
+            if (hash.isBlank()) {
+                System.out.println();
+                System.out.println("[2] 跳过直链与频谱：未设置 JELLO_HASH，且推荐接口没返回歌曲");
+                System.out.println("    第 1 段已通过，说明 Java 调 api 的链路可用。");
+                return;
+            }
             System.out.println();
-            System.out.println("[2] 跳过直链与频谱：未设置 JELLO_HASH");
-            System.out.println("    第 1 段已通过，说明 Java 调 api 的链路可用。");
-            return;
+            System.out.println("[2] 未设 JELLO_HASH，自动选了一首: " + hash);
         }
         System.out.println();
-        System.out.println("[2] 调用 /song/url  hash=" + hash);
+        System.out.println("[2b] 调用 /song/url  hash=" + hash);
         String directUrl;
         try {
             // 直连当前设置里的那一档（不做协商），探针要的就是「这一档能不能出直链」。
@@ -111,6 +118,15 @@ public final class PipelineProbe {
         System.out.println("=== 链路探针结束 ===");
     }
 
+    /**
+     * 取凭据：环境变量优先，其次回落登录页持久化的登录态。
+ *
+     * <p><b>为什么要回落</b>：登录页会把登录态写进 {@code AppPrefs}
+     * （见 {@code MainApp.initCredentials}），所以正常使用时并不需要设
+     * {@code JELLO_*} 环境变量。探针只认环境变量的话，
+     * 「明明在 App 里能播歌、探针却报未登录」——这个不一致很容易让人以为
+     * 是 API 或凭据坏了。优先级与 {@code MainApp} 保持一致。
+     */
     private static KuGouCredentials credentialsFromEnv() {
         KuGouCredentials c = new KuGouCredentials();
         c.setToken(env("JELLO_TOKEN", ""));
@@ -119,7 +135,42 @@ public final class PipelineProbe {
         c.setT1(env("JELLO_T1", ""));
         c.setMid(env("JELLO_MID", ""));
         c.setGuid(env("JELLO_GUID", ""));
+        if (!c.getToken().isEmpty()) {
+            return c;
+        }
+        // 环境变量没有就回落登录页持久化的登录态
+        com.jello.music.model.UserInfo u = com.jello.music.AppPrefs.loadUser();
+        if (u != null && u.isAuthenticated()) {
+            KuGouCredentials saved = new KuGouCredentials();
+            saved.setToken(u.getToken());
+            saved.setUserid(u.getUserid());
+            saved.setT1(u.getT1());
+            saved.setDfid(c.getDfid());
+            return saved;
+        }
         return c;
+    }
+
+    /**
+     * 从「猜你喜欢」里随便挑一首的hash。
+ *
+     * <p>探针要的是「一条真实音频链路能跑通」，用哪首歌无所谓。
+     * {@code /top/card?card_id=1} 不需要额外参数也不会被搜索的关键词卡住，
+     * 比搜索稳。
+     *
+     * @return hash；取不到时返回空串
+     */
+    private static String pickAnyHash(com.jello.music.api.KuGouApiClient api) {
+        try {
+            for (com.jello.music.model.Song s : api.topCard(1)) {
+                if (s.getHash() != null && !s.getHash().isBlank()) {
+                    return s.getHash();
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("    自动选歌失败: " + e.getMessage());
+        }
+        return "";
     }
 
     private static String env(String k, String def) {

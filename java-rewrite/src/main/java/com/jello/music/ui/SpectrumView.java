@@ -38,14 +38,23 @@ public final class SpectrumView {
     /** {@code onRender2D} 的默认平滑系数 0.335F（60fps 下）。 */
     public static final double DEFAULT_SMOOTHING = 0.335;
 
-    /**
-     * 高度比的基准分辨率：{@code heightRatio = 窗口高 / 1080.0F}。
-     *
-     * <p>Java 侧的频谱窗固定 220x60，直接用 1080 会让条形几乎不可见，
-     * 所以这里保留原版的「按某个参考窗口高折算」语义，只是参考值改成
-     * 与 Electron 版一致的实测游戏窗口高（1920x1009）。
-     */
-    public static final double REFERENCE_HEIGHT = 1009;
+/**
+ * 高度比基准：{@code heightRatio = REFERENCE_HEIGHT / 1080}。
+ *
+ * <h2>为什么不是 1080（mod 的原始值）</h2>
+ * mod 画在<b>整个游戏窗口</b>底部（{@code mc.getMainWindow().getHeight()}），
+ * 1080p 下 {@code heightRatio} 恰好 = 1.0，实测最满条约 220px，
+ * 占全窗高度约 20%——看着舒服。
+ *
+ * <p>但本项目的频谱窗只有 420x130，扣掉信息块只剩约 108px 可用。
+ * 沿用 1080 会让 1.0x 直接顶满甚至溢出（实测 207px vs 108px 可用 = 192%），
+ * 条形被窗口顶截断、2.0x 更是完全看不见。
+ *
+ * <p>所以这里标定成「1.0x 时最满条约占可用高度的一半」，
+ * 让 {@code spectrumScale} 的 0.2~3 正好覆盖「几乎贴地 ~ 顶满并溢出」，
+ * 动态范围落在可用空间里。实测依据见 {@code SpectrumProbe}。
+ */
+    public static final double REFERENCE_HEIGHT = 290;
 
     /** {@code 2.256E7}：sigmarebase amplitudes 的钳位上限。 */
     public static final double MAX_AMPLITUDE = SpectrumFeed.MAX_AMPLITUDE;

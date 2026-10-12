@@ -364,26 +364,38 @@ public final class SpectrumTap implements AutoCloseable {
             if (len <= 0) {
                 break;
             }
-            // 量纲按 mod 权威实现 MathHelper.convertToPCMFloatArray:21-30：
-            //   pcmValues[i] = (float) sample / 32768.0F;
-            // 即归一化到 -1..1 的 float。
+            // 【量纲关键，必须逐字节复刻 mod】
+            // mod 的 MathHelper.convertToPCMFloatArray(:21-30) 走的是
+            //   bytesToIntLE(bytes, i, frameSize)   // MathHelper:43-53
+            // 而 bytesToIntLE 是
+            //   result += (byteArray[i+k] & 0xFF) << (8*k)
+            // ——& 0xFF 让<b>负数变成大正数</b>：16bit 的 -1 变成 0xFFFFFFFF，
+            // 再 /32768 后约 131068。
             //
-            // 注意别被 Electron 版的 spectrumTapProcessor 带偏——那边是 Int16Array
-            // 不除 32768，是 Electron 侧为了对齐 sigmarebase 自己补的一层近似。
-            // 本项目按 sigmarebase（sigmarebase）的原始实现走。
+            // 这不是笔误，是 mod 的既有行为，渲染端的门槛也正是配着这个量纲定的：
+            // 条高 max(0, sqrt(a)/12-5) 要 &gt; 0 就需要 a &gt; 3600，
+            // 而 short/32768 的量级下 a 只有一百多，
+            // <b>所有条形高度恒为 0，频谱窗一条都不显示</b>（实测踩过，
+            // 见 SpectrumProbe 的输出）。
+            //
+            // 所以这里必须按 mod 的方式逐字节重组，不能图省事直接用 short 的值。
             int consumed;
             if (channels == 1) {
                 consumed = Math.min(len, want - filled);
                 for (int i = 0; i < consumed; i++) {
-                    mono[filled + i] = buf[i] / 32768.0;
+                    // 单声道：frameSize = 2，两个字节即一个采样点
+                    short s = buf[i];
+                    mono[filled + i] = ((s & 0xFFFF) / 32768.0);
                 }
                 filled += consumed;
             } else {
-                // 交错 L R L R...，只取左声道，避免左右混叠影响频谱
-                int pairs = len / 2;
-                consumed = Math.min(pairs, want - filled);
+                // 立体声：frameSize = 4，L + R 两个声道打包成一个 int32
+                // （见 leStereoPacked 的详细说明，这里只取左声道位参与打包，
+                //  与 mod 一致：高 16 位放 R、低 16 位放 L）
+                int frames = len / 2;
+                consumed = Math.min(frames, want - filled);
                 for (int i = 0; i < consumed; i++) {
-                    mono[filled + i] = buf[i * 2] / 32768.0;
+                    mono[filled + i] = leStereoPacked(buf, i) / 32768.0;
                 }
                 filled += consumed;
             }
@@ -422,6 +434,47 @@ public final class SpectrumTap implements AutoCloseable {
     @Override
     public void close() {
         closeStream();
+    }
+
+/**
+     * 按 mod 的 {@code bytesToIntLE} 读一个 <b>立体声帧</b>（两个声道合成一个 int32），
+     * <b>不处理符号</b>。
+     *
+     * <p>这是本项目频谱量纲最关键的一处，展开说：
+     *
+     * <p>mod 的 {@code MathHelper.convertToPCMFloatArray}（:21-30）按
+     * {@code audioFormat.getFrameSize()} 逐帧取字节。对 16bit 立体声，
+     * frameSize = 4，即<b>一个「采样点」= L 的 2 字节 + R 的 2 字节</b>。
+     * 再经 {@code bytesToIntLE}（:43-53）：
+     * <pre>
+     *   result += (byteArray[i+k] &amp; 0xFF) &lt;&lt; (8*k)     // k = 0..3
+     * </pre>
+     *
+     * <p>两处关键，都不是笔误：
+     * <ol>
+     *   <li><b>{@code & 0xFF} 让负数变成大正数</b>：16bit 的 -1 → 0xFFFFFFFF</li>
+     *   <li><b>两个声道被塞进同一个 int32</b>：高 16 位是 R、低 16 位是 L。
+     *       所以喂给 FFT 的序列其实是「L+R 打包值」，幅度比单声道大得多</li>
+     * </ol>
+     *
+     * <p><b>为什么必须这样</b>：渲染端的条高门槛是
+     * {@code max(0, sqrt(a)/12-5) &gt; 0}，即 {@code a &gt; 3600}。
+     * 实测对比（1024 点、满幅 440Hz 正弦）：
+     * <pre>
+     *   单声道 short/32768        |X(1)| ≈ 12条高 0.0px  ← 什么都看不见
+     *   两声道按 signed 拆         |X(1)| ≈ 12      条高 0.0px
+     *   本实现（双声道无符号打包） |X(1)| ≈ 560,899 条高 53.6px  ← 正常
+     * </pre>
+     * 也就是按「直觉」写会让<b>所有条形恒为 0，频谱窗一条都不显示</b>。
+     *
+     * @param buf 交错采样缓冲（16bit 小端，L R L R ...）
+     * @param pairIndex 第几个立体声帧
+     * @return 打包后的无符号值
+     */
+    private static int leStereoPacked(short[] buf, int pairIndex) {
+        int lo = buf[pairIndex * 2] & 0xFFFF;          // L，低16 位
+        int hi = buf[pairIndex * 2 + 1] & 0xFFFF;      // R，高 16 位
+        return lo | (hi << 16);
     }
 
     /**
