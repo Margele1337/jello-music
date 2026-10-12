@@ -184,10 +184,14 @@ private EdgeDock dock;
             protocolUrl = launchProtocolUrl;
         }
 
-        // 内置 API：打包版自带 api/ 目录，这里在没人监听 6521 时拉起它。
+        // 内置 API：打包版自带 api/ 目录，这里在没人监听时拉起它。
         // 开发模式下 run.bat 通常已经起过一个，走的是「已监听 -> 不碰」那条分支。
-        // 必须放在 KuGouApiClient 之前，否则登录态/歌单加载会先撞一个连不上的端口。
-        apiReady = ApiSubprocess.ensureRunning();
+        //
+        // 顺序很要紧：① 先解析自定义 RPC 地址（决定要不要拉内置 API）
+        // ② 再拉 API ③ 最后建 KuGouApiClient ——
+        // 否则登录态/歌单加载会先撞一个连不上的端口。
+        String customBase = resolveApiBase();
+        apiReady = ApiSubprocess.ensureRunning(customApiPort(customBase));
         if (!apiReady) {
             System.err.println("[Jello] API 未就绪，播放与歌单会失败。"
                     + "可手动在仓库根目录执行 npm run api。");
@@ -225,7 +229,13 @@ private EdgeDock dock;
         wsApi.start();
 
         initCredentials();
-        api = new KuGouApiClient(credentials);
+        // customBase 在上面已解析好（内置 API 那段要用它决定端口）
+        api = customBase == null
+                ? new KuGouApiClient(credentials)
+                : new KuGouApiClient(customBase, credentials);
+        if (customBase != null) {
+            System.out.println("[Jello] 使用自定义 RPC 地址: " + customBase);
+        }
 
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setTitle("Jello Music");
@@ -840,6 +850,57 @@ dock = new EdgeDock(stage);
     private void syncRightTitleScroll() {
         if (rightTitleBar != null && playerPanel != null) {
             rightTitleBar.setScroll(playerPanel.searchBox().resultScroll());
+        }
+    }
+
+    /**
+ * 解析要连的 API 地址，对应原版 {@code apiBaseUrlMode} + {@code apiBaseUrl}。
+ *
+ * <p>原版语义（{@code settings.js:357-379}）：
+ * <ul>
+ *   <li>{@code apiBaseUrlMode} 默认 {@code default}，选 {@code custom} 才用自定义</li>
+ *   <li>{@code apiBaseUrl} 默认空串；为空时回落到 {@code http://127.0.0.1:6521}</li>
+ * </ul>
+ * 原版标着「刷新后生效」，因为 Electron 里 base url 在主进程启动时读一次——
+ * Java 侧同理，这里在 {@code start()} 里解析。
+ *
+ * @return 规范化后的 base（不带尾斜杠）
+ */
+private String resolveApiBase() {
+        String mode = AppPrefs.getSetting("apiBaseUrlMode", "default");
+        if (!"custom".equals(mode)) {
+            return null; // null = 用 KuGouApiClient 的默认
+        }
+        String custom = AppPrefs.getSetting("apiBaseUrl", "");
+        if (custom == null || custom.isBlank()) {
+            // 选了「自定义」却没填地址：回落默认，并提示一次
+            System.err.println("[Jello] 已选「自定义」RPC 地址但没填，回落到默认");
+            return null;
+        }
+        String base = custom.trim();
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return base.isEmpty() ? null : base;
+    }
+
+    /**
+ * 从自定义 base 里取出端口，取不出返回 0。
+ *
+ * <p>用来告诉 {@link ApiSubprocess}「用户把 API 指到别处了，别拉内置的」。
+ * 解析不了（域名、IPv6、缺端口）一律返回 0 —— 宁可多起一个用不上的进程，
+ * 也不要因为解析失误而让该拉的没拉。
+ */
+private static int customApiPort(String base) {
+        if (base == null || base.isBlank()) {
+            return 0;
+        }
+        try {
+            java.net.URI u = java.net.URI.create(base);
+            int p = u.getPort();
+            return p > 0 ? p : 0;
+        } catch (RuntimeException e) {
+            return 0;
         }
     }
 

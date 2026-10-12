@@ -288,10 +288,16 @@ Java 版跟的是 **Electron 版**（`appServices.js:679-709`，明确是拖拽�
       但「收进托盘」是 `Stage.hide()`。从托盘点「显示」会去操作一个已经隐藏的窗口：
       既唤不回来，贴边状态也被弄乱。现在按 `sigmaStage.isShowing()` 分流，
       并记住收进托盘前频谱窗的状态以便一并恢复
+- [x] **自定义 API 地址** —— 原版 `settings.js:357-379` 的
+      `apiBaseUrlMode`（默认/自定义二选一）+ `apiBaseUrl`（hidden 的文本项）。
+      两项成对实现：只做模式没地方填地址，只做地址没有开关语义。
+      - `Settings` 新增 `TEXT` 类型 + `SettingsView.buildTextField`
+      - 回车或失焦才提交——边打边存会把半截地址写进配置
+      - `MainApp.resolveApiBase()` 解析，尾斜杠去掉，空串回落默认
+      - `ApiSubprocess` 感知自定义端口：用户把 API 指到别处就不拉内置的
+      - 原版标「刷新后生效」，Java 侧同理（`start()` 里解析一次）
 - [ ] **自定义托盘菜单** —— 原版 `customTrayMenuService.js` 377 行可自定义项；
       当前 Java 是固定 6 项原生菜单
-- [ ] **自定义 API 地址** —— `apiBaseUrl` / `apiBaseUrlMode`；
-      `KuGouApiClient` 已有 `base` 构造参数，只差设置项与接线
 - [ ] **任务栏缩略图工具条** —— 原版 `appServices.js:1433` `setThumbarButtons`
       （上一首 / 播放暂停 / 下一首，播放中切换 play-pause 图标）。
       走 Win32 `ITaskbarList3` COM，JNA 要手工排布 vtable 且跨 Windows 版本不稳定，

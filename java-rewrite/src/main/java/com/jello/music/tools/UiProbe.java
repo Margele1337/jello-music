@@ -367,6 +367,60 @@ writeSnapshot(root, pngPath);
         checkExpandScale();
         checkJumpList();
         checkSystemToggles();
+        checkApiBaseUrl();
+    }
+
+    /**
+     * 自定义 RPC 地址的断言，对齐原版 {@code settings.js:357-379}。
+     *
+     * <p>原版语义：{@code apiBaseUrlMode} 默认 {@code default}，
+     * 选 {@code custom} 才用 {@code apiBaseUrl}；后者默认空串，
+     * 为空时回落到 {@code http://127.0.0.1:6521}。
+     *
+     * <p>这两项必须<b>成对</b>存在——只做模式没地方填地址，
+     * 只做地址又没有「默认 / 自定义」的开关语义。
+     */
+    private static void checkApiBaseUrl() {
+        var defaults = com.jello.music.model.Settings.defaults();
+        check("有 apiBaseUrlMode（默认 / 自定义）",
+                defaults.containsKey("apiBaseUrlMode"), "缺失");
+        check("有 apiBaseUrl（地址输入框）",
+                defaults.containsKey("apiBaseUrl"), "缺失");
+        check("apiBaseUrlMode 默认 default（对齐原版）",
+                "default".equals(defaults.get("apiBaseUrlMode")),
+                "got=" + defaults.get("apiBaseUrlMode"));
+        check("apiBaseUrl 默认空串（对齐原版）",
+                defaults.get("apiBaseUrl") != null
+                        && defaults.get("apiBaseUrl").isEmpty(),
+                "got=" + defaults.get("apiBaseUrl"));
+
+        // 两项都要是「有类型的项」，不能是空壳
+        com.jello.music.model.Settings.Item mode = null;
+        com.jello.music.model.Settings.Item url = null;
+        for (var sec : com.jello.music.model.Settings.sections()) {
+            for (var item : sec.items) {
+                if ("apiBaseUrlMode".equals(item.key)) {
+                    mode = item;
+                }
+                if ("apiBaseUrl".equals(item.key)) {
+                    url = item;
+                }
+            }
+        }
+        check("apiBaseUrlMode 是 CHOICE 类型",
+                mode != null && mode.kind == com.jello.music.model.Settings.Kind.CHOICE,
+                mode == null ? "缺失" : String.valueOf(mode.kind));
+        check("apiBaseUrlMode 有两个选项（默认 / 自定义）",
+                mode != null && mode.options != null && mode.options.size() == 2,
+                mode == null || mode.options == null ? "null" : String.valueOf(mode.options));
+        check("apiBaseUrl 是 TEXT 类型",
+                url != null && url.kind == com.jello.music.model.Settings.Kind.TEXT,
+                url == null ? "缺失" : String.valueOf(url.kind));
+        check("apiBaseUrl 有占位提示（原版是 hidden 的，这里给个可读的）",
+                url != null && url.placeholder != null
+                        && !url.placeholder.isEmpty(),
+                url == null ? "缺失"
+                        : "len=" + url.placeholder.length());
     }
 
     /**
@@ -416,14 +470,20 @@ writeSnapshot(root, pngPath);
 
         // ---- 最小化到托盘：默认必须是开 ----
         // 这条之前是「关窗口直接退」，等于该开关一直是 off。
-        String saved = com.jello.music.AppPrefs.getSetting("minimizeToTray", "on");
-        check("最小化到托盘默认开（对齐原版 defaultValue: 'on'）",
-                "on".equals(saved), "got=" + saved);
+        // 权威默认值取自 Settings 模型（对齐原版 settings.js 的 defaultValue），
+        // 而不是 AppPrefs.getSetting 的兜底 —— 后者在「配置里根本没这个键」时
+        // 才返回兜底值，一旦有残留就测不出模型的默认值对不对
+        String modelDefault = com.jello.music.model.Settings.defaults()
+                .get("minimizeToTray");
+        check("模型里「最小化到托盘」默认为开（对齐原版 defaultValue: 'on'）",
+                "on".equals(modelDefault), "got=" + modelDefault);
+        // 只验读写一致性，不断言「配置里没有这个键」——
+        // 那取决于用户之前怎么用过，断言它等于把状态当契约
         com.jello.music.AppPrefs.setSetting("minimizeToTray", "off");
         check("设为 off 后读到 off",
                 "off".equals(com.jello.music.AppPrefs
                         .getSetting("minimizeToTray", "on")), "未读到");
-        com.jello.music.AppPrefs.setSetting("minimizeToTray", saved);
+        com.jello.music.AppPrefs.setSetting("minimizeToTray", "on");
 
         // 两项都必须真的出现在设置页里（否则又变成「有实现没入口」）
         boolean hasMinimize = false;

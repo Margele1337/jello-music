@@ -6,6 +6,7 @@ import com.jello.music.model.Settings;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.Border;
 import javafx.scene.layout.BorderStroke;
@@ -210,8 +211,43 @@ public final class SettingsView extends Pane {
             case CHOICE -> buildChoice(item);
             case SLIDER -> buildSlider(item);
             case ACTION -> buildActionButton(item);
+            case TEXT -> buildTextField(item);
             default -> new Region();
         };
+    }
+
+    /**
+     * 自由文本输入，对应原版 {@code apiBaseUrl} 那种 hidden 的文本项。
+     *
+     * <p>用 {@link TextField} 而不是原版的 {@code SigmaTextField}：设置页是
+     * 原生 JavaFX 面板，不走字形图集那套 1:1 渲染，够用即可。
+     *
+     * <p><b>回车才提交</b>：边打边存会在用户输到一半时把半截地址
+     * 写进配置（重启后直接连不上）。失焦也提交，符合桌面应用习惯。
+     */
+    private Region buildTextField(Settings.Item item) {
+        TextField tf = new TextField(valueOf(item));
+        tf.setPrefWidth(210);
+        tf.setPromptText(item.placeholder == null ? "" : item.placeholder);
+        tf.setStyle("-fx-background-color: rgba(255,255,255,0.06);"
+                + "-fx-text-fill: #e6e3ee;"
+                + "-fx-prompt-text-fill: #6b6675;"
+                + "-fx-background-radius: 6;");
+        Runnable commit = () -> {
+            String v = tf.getText() == null ? "" : tf.getText().trim();
+            if (!v.equals(valueOf(item))) {
+                setValue(item.key, v);
+                // 立即刷新这一行（可能切换了依赖关系）
+                refreshValue(item);
+            }
+        };
+        tf.setOnAction(e -> commit.run());
+        tf.focusedProperty().addListener((o, was, now) -> {
+            if (was && !now) {
+                commit.run();
+            }
+        });
+        return tf;
     }
 
     private Region buildToggle(Settings.Item item) {

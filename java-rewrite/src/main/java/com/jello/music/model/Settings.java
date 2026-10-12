@@ -41,6 +41,8 @@ public final class Settings {
         SLIDER,
         /** 触发一个动作（如「重新观看教程」）。 */
         ACTION,
+        /** 自由文本输入（如自定义 API 地址）。 */
+        TEXT,
         /** 占位，暂不可用。 */
         DISABLED
     }
@@ -60,10 +62,19 @@ public final class Settings {
         public final double max;
         /** ACTION / DISABLED 的按钮文字。 */
         public final String buttonText;
+        /** TEXT 的占位提示（为空串表示不显示）。 */
+        public final String placeholder;
 
         Item(String key, String label, Kind kind, String defaultValue,
              List<String> options, String defaultDisplay,
              double min, double max, String buttonText) {
+            this(key, label, kind, defaultValue, options, defaultDisplay,
+                    min, max, buttonText, "");
+        }
+
+        Item(String key, String label, Kind kind, String defaultValue,
+             List<String> options, String defaultDisplay,
+             double min, double max, String buttonText, String placeholder) {
             this.key = key;
             this.label = label;
             this.kind = kind;
@@ -73,6 +84,7 @@ public final class Settings {
             this.min = min;
             this.max = max;
             this.buttonText = buttonText;
+            this.placeholder = placeholder;
         }
     }
 
@@ -110,6 +122,13 @@ public final class Settings {
                         toggle("autoStart", "开机自启", "off"),
                         toggle("minimizeToTray", "最小化到托盘", "on"),
                         toggle("preventAppSuspension", "阻止休眠", "off"),
+                        // 对应原版 apiBaseUrlMode + apiBaseUrl（settings.js:357-379）：
+                        // 「默认 / 自定义」二选一，选自定义后隐藏的 apiBaseUrl 才生效。
+                        // 两者都要有——只做模式没地方填地址，只做地址没有开关语义。
+                        choice("apiBaseUrlMode", "RPC地址",
+                                List.of("default", "custom"), "默认"),
+                        text("apiBaseUrl", "自定义地址", "",
+                                "http://127.0.0.1:6521"),
                         action("shortcuts", "全局快捷键", "自定义")
                 )));
     }
@@ -152,6 +171,11 @@ public final class Settings {
 
     private static Item action(String key, String label, String text) {
         return new Item(key, label, Kind.ACTION, "", null, null, 0, 0, text);
+    }
+
+    /** 自由文本项。 */
+    private static Item text(String key, String label, String def, String placeholder) {
+        return new Item(key, label, Kind.TEXT, def, null, null, 0, 0, null, placeholder);
     }
 
     static String trim(double v) {

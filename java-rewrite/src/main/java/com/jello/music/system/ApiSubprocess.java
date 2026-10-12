@@ -74,7 +74,22 @@ private static final String[] CANDIDATE_SUBDIRS = {
      *
      * @return true 表示 API 可用（本来就在跑，或我们成功拉起了）
      */
-    public static boolean ensureRunning() {
+    /**
+     * 确保 API 在跑。
+     *
+     * @param customPort 设置里 {@code apiBaseUrl} 指定的端口；null 或 0 表示用默认 6521。
+     *                   自定义地址指向别处时就不该拉起内置 API（否则白起一个没人连）
+     * @return true 表示 API 可用（本来就在跑，或我们成功拉起了）
+     */
+    public static boolean ensureRunning(int customPort) {
+        if (customPort > 0 && customPort != PORT) {
+            // 用户把 API 指到别的端口/地址去了，内置这份不会被用到
+            if (!isAlive()) {
+                System.out.println("[ApiSubprocess] 已配置自定义 RPC 地址（端口 "
+                        + customPort + "），不拉起内置 API");
+            }
+            return isAlive();
+        }
         if (isAlive()) {
             // 端口已有人监听——多半是 run.bat 起的，或用户自己起的。不碰。
             return true;
