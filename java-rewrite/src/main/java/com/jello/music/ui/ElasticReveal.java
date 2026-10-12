@@ -94,18 +94,86 @@ public final class ElasticReveal {
     }
 
     private void applyFrame(double progress) {
-        double a = easeOutElastic(progress * 4.0, PERIOD);   // 原版按 p*4 传入
-        if (animateScale) {
-            double scale = 1.5 - a * 0.5;                     // a 起于 0.5，故起始 scale = 1.25
-            target.setScaleX(scale);
-            target.setScaleY(scale);
-            target.setOpacity(0.5 + 0.5 * a);                 // 淡入 0.5 -> 1
-        } else {
-            // 收起：只淡出，缩放保持 1
+        if (!animateScale) {
+            // 收起：只淡出，缩放保持 1（对应原版 .sigma-shell--docked { animation: none }）
             target.setScaleX(1);
             target.setScaleY(1);
             target.setOpacity(1 - progress);
+            return;
         }
+        // 展开：走权威的 alphaFactor（展开完成中 = easeOutElastic(·,0.8)*0.5+0.5）
+        double factor = alphaFactor(true, false, progress, false);
+        double scale = 1.5 - factor * 0.5;
+        target.setScaleX(scale);
+        target.setScaleY(scale);
+        target.setOpacity(0.5 + 0.5 * factor);
+    }
+
+    /**
+     * 权威的 {@code alphaFactor}，1:1 对应 {@code ClickGuiScreen.draw:255-257}。
+     *
+     * <pre>
+     *   float alphaFactor = animationCompleted &amp;&amp; !animationStarted
+     *       ? method13317(animationProgress.calcPercent(), 0.8F) * 0.5F + 0.5F
+     *       : (!animationCompleted ? 1.0F : method13317(animationProgress.calcPercent(), 1.0F));
+     * </pre>
+     *
+     * <p>三个分支分别对应：
+     * <ul>
+     *   <li><b>展开完成中</b>（点开但动画还没走完）：用 period=0.8 的 elastic
+     *       压缩到 0.5~1.0 —— 这是「弹进来」那一段</li>
+     *   <li><b>未完成</b>（第一次进游戏，动画没跑过）：恒为 1.0</li>
+     *   <li><b>收起中</b>：period=1.0 的 elastic</li>
+     * </ul>
+     *
+     * <p>Java 版之前只有单一的 elastic 公式，缺了「展开完成中」的分支，
+     * 所以展开时的手感与原版不同。
+     */
+    public static double alphaFactor(boolean animationCompleted, boolean animationStarted,
+                              double percent, boolean backwards) {
+        if (animationCompleted && !animationStarted) {
+            return ease13317(percent, 0.8) * 0.5 + 0.5;
+        }
+        if (!animationCompleted) {
+            return 1.0;
+        }
+        return ease13317(percent, 1.0);
+    }
+
+    /**
+     * {@code ClickGuiScreen.method13317}（:247-251）：
+     * <pre>
+     *   return direction != BACKWARDS
+     *       ? 2^(-10p) * sin((p - period/4) * 2PI / period) + 1     // easeOutElastic
+     *       : QuadraticEasing.easeOutQuad(p, 0, 1, 1);           // easeOutQuad
+     * </pre>
+     *
+     * <p><b>方向决定用哪个缓动</b>：BACKWARDS（反向，即展开）走 easeOutQuad，
+     * FORWARDS（收起）才走 easeOutElastic。之前的实现无条件用 elastic，
+     * 展开时曲线就错了。
+     */
+    public static double ease13317(double p, double period, boolean elastic) {
+        return elastic ? easeOutElastic(p, period) : easeOutQuad(p);
+    }
+
+    public static double ease13317(double p, double period) {
+        // 默认按 elastic 处理（收起分支）
+        return easeOutElastic(p, period);
+    }
+
+    /**
+     * QuadraticEasing.easeOutQuad(p, 0, 1, 1)，
+     * 即 {@code 1 - (1 - p)^2}。
+     */
+    public static double easeOutQuad(double p) {
+        if (p <= 0) {
+            return 0;
+        }
+        if (p >= 1) {
+            return 1;
+        }
+        double inv = 1 - p;
+        return 1 - inv * inv;
     }
 
     private void finish() {
@@ -133,7 +201,7 @@ public final class ElasticReveal {
      * Minecraft 的 easeOutElastic：
      * {@code 2^(-10p) * sin((p - period/4) * (2*PI) / period) + 1}
      */
-    static double easeOutElastic(double p, double period) {
+    public static double easeOutElastic(double p, double period) {
         if (p <= 0) {
             return 0;
         }

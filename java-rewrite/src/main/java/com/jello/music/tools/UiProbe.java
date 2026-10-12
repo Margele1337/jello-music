@@ -8,6 +8,7 @@ import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
 import com.jello.music.ui.DragGate;
 import com.jello.music.ui.EdgeDock;
+import com.jello.music.ui.ElasticReveal;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.RightTitleBar;
@@ -363,6 +364,80 @@ writeSnapshot(root, pngPath);
         checkJelloProtocol();
         checkMediaKeys();
         checkDockFadeCurve();
+        checkExpandScale();
+    }
+
+    /**
+     * 展开缩放的断言，对齐 sigmarebase {@code ClickGuiScreen.draw:255-257, 292}。
+     *
+     * <p>权威是：
+     * <pre>
+     *   alphaFactor = animationCompleted &amp;&amp; !animationStarted
+     *       ? method13317(p, 0.8) * 0.5 + 0.5
+     *       : (!animationCompleted ? 1.0 : method13317(p, 1.0))
+     *   scale = 1.5 - alphaFactor * 0.5
+     * </pre>
+     * 关键是 {@code method13317} 按方向选缓动（:247-251）：
+     * BACKWARDS 用 easeOutQuad，FORWARDS 才用 easeOutElastic。
+     * 之前 Java 版无条件用 elastic，展开时曲线就错了。
+     */
+    private static void checkExpandScale() {
+        // 三分支
+        check("未完成时 alphaFactor 恒为 1.0（scale=1.0）",
+                Math.abs(ElasticReveal.alphaFactor(false, true, 0.5, false) - 1.0) < 1e-9,
+                "");
+        check("收起中用 period=1.0 的 elastic",
+                Math.abs(ElasticReveal.alphaFactor(true, true, 0.5, false)
+                        - ElasticReveal.ease13317(0.5, 1.0)) < 1e-9,
+                "");
+        // 展开完成中：elastic(p,0.8)*0.5 + 0.5
+        double f0 = ElasticReveal.alphaFactor(true, false, 0.0, false);
+        double f1 = ElasticReveal.alphaFactor(true, false, 1.0, false);
+        check("展开起点 alphaFactor == 0.5（scale=1.25）",
+                Math.abs(f0 - 0.5) < 1e-6, "got=" + f0);
+        check("展开终点 alphaFactor == 1.0（scale=1.0）",
+                Math.abs(f1 - 1.0) < 1e-6, "got=" + f1);
+
+        // scale = 1.5 - factor*0.5
+        check("展开起点 scale == 1.25（a 起始 0.5）",
+                Math.abs(1.5 - f0 * 0.5 - 1.25) < 1e-6,
+                "got=" + (1.5 - f0 * 0.5));
+        check("展开终点 scale == 1.0",
+                Math.abs(1.5 - f1 * 0.5 - 1.0) < 1e-6,
+                "got=" + (1.5 - f1 * 0.5));
+
+        // 中途必须有过冲（"弹进来"），这是与 easeOutQuad 的关键区别
+        double maxFactor = 0;
+        for (int i = 0; i <= 100; i++) {
+            double p = i / 100.0;
+            maxFactor = Math.max(maxFactor,
+                    ElasticReveal.alphaFactor(true, false, p, false));
+        }
+        check("展开中途有过冲（弹性回弹，非单调）", maxFactor > 1.01,
+                "max=" + String.format("%.4f", maxFactor));
+        // 且最小值不低于起点 0.5
+        double minFactor = 1;
+        for (int i = 0; i <= 100; i++) {
+            double p = i / 100.0;
+            minFactor = Math.min(minFactor,
+                    ElasticReveal.alphaFactor(true, false, p, false));
+        }
+        check("alphaFactor 不低于起点 0.5", minFactor >= 0.5 - 1e-9,
+                "min=" + String.format("%.4f", minFactor));
+
+        // method13317 的双缓动
+        check("BACKWARDS 走 easeOutQuad（不是 elastic）",
+                Math.abs(ElasticReveal.ease13317(0.5, 0.8, false) - 0.75) < 1e-6,
+                "got=" + ElasticReveal.ease13317(0.5, 0.8, false));
+        check("easeOutQuad(0.5) == 0.75",
+                Math.abs(ElasticReveal.easeOutQuad(0.5) - 0.75) < 1e-9, "");
+        check("FORWARDS 走 easeOutElastic",
+                Math.abs(ElasticReveal.ease13317(0.5, 0.8, true)
+                        - ElasticReveal.easeOutElastic(0.5, 0.8)) < 1e-9, "");
+        check("elastic 与 quad 在 0.5 处不同（两种缓动确实分开了）",
+                Math.abs(ElasticReveal.easeOutElastic(0.5, 0.8)
+                        - ElasticReveal.easeOutQuad(0.5)) > 1e-3,
+                "两者相同");
     }
 
     /**
