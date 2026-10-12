@@ -20,6 +20,7 @@ import com.jello.music.ui.OnboardingView;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.RepeatButton;
+import com.jello.music.ui.RightTitleBar;
 import com.jello.music.ui.SettingsView;
 import com.jello.music.ui.SpectrumInfoBlock;
 import com.jello.music.ui.SpectrumView;
@@ -96,6 +97,7 @@ public class MainApp extends Application {
     private SpectrumView spectrumView;
     private PlayerPanel playerPanel;
     private PlaylistPanel playlistPanel;
+    private RightTitleBar rightTitleBar;
 private EdgeDock dock;
     private ElasticReveal reveal;
     private RightShiftPoller rshift;
@@ -196,6 +198,35 @@ private EdgeDock dock;
         });
         // 点歌单卡：下钻到该歌单的曲目列表
         playerPanel.searchBox().onOpenPlaylist(this::showPlaylistTracks);
+
+        // ---- 右栏顶部模糊标题栏（sigmarebase MusicPlayer.method13196:474-533）----
+        // 随右栏滚动淡入，标题用两套字交叉淡入。之前完全没有这块。
+        rightTitleBar = new RightTitleBar();
+        rightTitleBar.setPrefSize(Theme.RIGHT_PANEL_W, RightTitleBar.BAR_H);
+        rightTitleBar.setLayoutX(Theme.LEFT_PANEL_W);
+        rightTitleBar.setLayoutY(0);
+        // 刷新淡入：右栏滚动位置只有它自己知道，所以在已有的状态刷新里同步
+        rightTitleBar.setScroll(0);
+        root.getChildren().add(rightTitleBar);
+
+        // 标题淡入跟着右栏滚动走。权威是在 render 每帧读 getScrollBarOffset()，
+        // 这里用 AnimationTimer 每帧同步，且只在滚动值变化时才重绘——
+        // setScroll 内部会重画模糊底，不去重会白白吃掉 CPU。
+        new AnimationTimer() {
+            private double lastScroll = -1;
+
+            @Override
+            public void handle(long now) {
+                if (rightTitleBar == null || playerPanel == null) {
+                    return;
+                }
+                double s = playerPanel.searchBox().resultScroll();
+                if (Math.abs(s - lastScroll) > 0.01) {
+                    lastScroll = s;
+                    rightTitleBar.setScroll(s);
+                }
+            }
+        }.start();
 
         // ---- 状态 ----
         // 原版右栏除搜索框外没有任何文字，之前挂过一个 Label 当状态提示，
@@ -510,6 +541,8 @@ dock = new EdgeDock(stage);
         } else if (tab.isDaily()) {
             loadDailyRecommend();
         } else if (tab.gid() != null) {
+            // 标题用歌单名（权威 method13189 取的是标签页文本）
+            setRightTitle(tab.name());
             showPlaylistTracks(tab.gid());
         }
     }
@@ -597,6 +630,7 @@ dock = new EdgeDock(stage);
                 List<Song> result = collected;
                 Platform.runLater(() -> {
                     playerPanel.searchBox().showResults(toCards(result));
+                    setRightTitle("每日推荐");
                     status("每日推荐 " + result.size() + " 首");
                 });
             } catch (Exception e) {
@@ -613,12 +647,43 @@ dock = new EdgeDock(stage);
                 List<Song> songs = api.playlistTracks(gid, 1, 500);
                 Platform.runLater(() -> {
                     playerPanel.searchBox().showResults(toCards(songs));
+                    // 上面可能已经设过歌单名，这里不要覆盖成通用的「歌单」
+                    if (rightTitleBar == null || rightTitleBarTitle().isBlank()
+                            || "歌单".equals(rightTitleBarTitle())) {
+                        setRightTitle("歌单");
+                    }
                     status("歌单 " + songs.size() + " 首");
                 });
             } catch (Exception e) {
                 Platform.runLater(() -> status("加载歌曲失败 -> " + describe(e)));
             }
         });
+    }
+
+    /**
+     * 设置右栏标题并同步滚动淡入。
+     *
+     * <p>权威的标题是当前标签页的名字（{@code method13189} 里从
+     * {@code var1.getText()} 取），Java 侧左栏是 PlaylistPanel，
+     * 这里直接传字符串。
+     */
+    private void setRightTitle(String title) {
+        if (rightTitleBar == null) {
+            return;
+        }
+        rightTitleBar.setTitle(title);
+        syncRightTitleScroll();
+    }
+
+    /** 右栏滚动变了就刷新标题淡入（权威：offset &lt; 50 时 alpha = offset/50）。 */
+    private void syncRightTitleScroll() {
+        if (rightTitleBar != null && playerPanel != null) {
+            rightTitleBar.setScroll(playerPanel.searchBox().resultScroll());
+        }
+    }
+
+    private String rightTitleBarTitle() {
+        return rightTitleBar == null ? "" : rightTitleBar.titleText();
     }
 
     private static List<ResultCard> toCards(List<Song> songs) {
@@ -655,6 +720,7 @@ dock = new EdgeDock(stage);
                 cards.addAll(toCards(res.songs()));
                 Platform.runLater(() -> {
                     playerPanel.searchBox().showResults(cards);
+                    setRightTitle("搜索");
                     status(cards.isEmpty() ? "没有找到结果"
                             : "找到 " + res.playlists().size() + " 个歌单 / "
                             + res.songs().size() + " 首");

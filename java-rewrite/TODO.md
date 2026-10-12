@@ -56,15 +56,30 @@
       `x = clampedX + (int)((desired-clampedX-200)*0.5)`；半透明判据
       `越界 && !已请求滑出`（MusicPlayer.java:360-361），淡到 50% 用 80ms、
       淡回 100% 用 150ms。吸附只发生在松手
-- [x] 贴边收起的半透明态 + 越界橡皮筋 —— 原版拖拽越过右缘时面板**先半透明**、
-      松手才吸附。拖拽分两步（appServices.js:679-709）：先精确夹取不留余量，
-      只有 `x+w > right+200`(var14) 且 `movedX > 70` 才进橡皮筋，
-      `x = clampedX + (int)((desired-clampedX-200)*0.5)`；半透明判据
-      `越界 && !已请求滑出`（MusicPlayer.java:360-361），淡到 50% 用 80ms、
-      淡回 100% 用 150ms。吸附只发生在松手
 - [x] **dock 滑动曲线不一致** —— 原版是每帧 `0.25 × dt/18.10361` 插值（x 用 0.25、
       y 用 0.2）+ 120ms 触发节流 + 3s 卡死看门狗。之前是固定 450/125ms cubic ease-out，
       观感是「匀速起步再硬停」，与原版的指数逼近（滑到位才停）完全不同
+- [x] **右侧弹出 / 贴边收起与 sigmarebase 逐值核对一致** ——
+      `updatePanelDimensions`（:199-257）的两个目标位置都已对齐：
+      - 收起 `var8 = parentWidth - 40` → `Theme.DOCK_VISIBLE = 40`
+      - 展开 `var11 = parentWidth - 20 - width` → `Theme.RESTORE_MARGIN = 20`
+      - 收敛判据 `|x-target| < 2.0F` → `EdgeDock` 的 `ANIM_EPSILON`
+      - 橡皮筋 `x += (var12 - x - 200) * 0.5F` → `RUBBER_BAND_ALLOWANCE = 200`
+      本轮核对**无需改动**，原有实现已经是对的
+- [x] **左右底板分色与 sigmarebase 逐值核对一致** ——
+      `draw`（:287-300）两块底板：
+      - 左栏 `-16777216`（纯黑）× alpha `partialTicks*0.95`
+      - 右栏 `-14277082`（= `#262626`）× alpha `partialTicks*0.8`
+      现有 `Theme.LEFT_PANEL` / `RIGHT_PANEL` 就是这两个值，本轮核对**无需改动**
+- [x] **右栏顶部模糊标题栏** —— `method13196`（:474-533），之前完全没有：
+      - 高度 64（`field20847`）
+      - 模糊底：`glReadPixels` 截屏 → 10×10 降采样 → 补 10px DEEP_TEAL 边 →
+        `applyBlur(·, 10)`。Java 拿不到屏幕缓冲区，**保留处理链**（降采样 → 补边 →
+        模糊），像素来源换成右栏底色，见 `ui/RightTitleBar.blurredBackdrop`
+      - 滚动淡入：`offset < 50 ? offset/50 : 1`（线性）
+      - 叠 20% 浅色
+      - 标题两层交叉淡入，y = `16 + (1-v)*14`（淡入时从 30 滑到 16）
+      - 底部 20px 阴影（mod 用 `shadowBottomPNG`，Java 用线性渐变等价表达）
 - [x] **频谱参数接线** —— 之前是「死开关」：`Settings` 里定义了
       `spectrumScale` / `spectrumSigmaSmoothing` / `spectrumAvDelay` / `spectrumLocked`，
       但 `SpectrumView` 一个都不读，HUD 尺寸 220×60、48 频段、FFT 2048 写死。

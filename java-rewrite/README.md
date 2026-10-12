@@ -286,6 +286,7 @@ com.jello.music
 ├── ui/SigmaScrollablePanel.java 滚动容器（SigmaScrollablePanel.vue 1:1）
 ├── ui/SpectrumView.java       频谱条绘制（renderSpectrum 1:1）
 ├── ui/SpectrumInfoBlock.java  频谱窗左下角信息块（封面 + 歌名 + 低频缩放）
+├── ui/RightTitleBar.java      右栏顶部模糊标题栏（滚动淡入 + 双字体交叉）
 ├── ui/                         JavaFX 界面，坐标全部取自 Theme
 ├── tools/PipelineProbe.java    端到端链路探针（无窗口）
 ├── tools/UiProbe.java          静默 UI 校验（不弹窗，65 项断言）

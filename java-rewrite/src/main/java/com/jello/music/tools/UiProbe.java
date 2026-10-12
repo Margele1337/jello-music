@@ -10,6 +10,7 @@ import com.jello.music.ui.DragGate;
 import com.jello.music.ui.EdgeDock;
 import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.RepeatButton;
+import com.jello.music.ui.RightTitleBar;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.SigmaScrollablePanel;
 import com.jello.music.ui.SpectrumInfoBlock;
@@ -356,6 +357,57 @@ writeSnapshot(root, pngPath);
         checkShuffleQueue();
         checkStripBlur();
         checkSpectrumParams();
+        checkRightTitleBar();
+    }
+
+    /**
+     * 右栏模糊标题栏的断言，对齐 sigmarebase {@code method13196}（:474-533）。
+     *
+     * <p>这条链路最容易错的是三处：
+     * <li><b>淡入曲线</b>是 {@code offset/50}（线性，50px 内淡入完），不是缓动</li>
+     * <li><b>标题 y</b>是 {@code 16 + (1-v)*14}，即淡入时从 30 滑到 16——
+     *     少了这个滑入，标题会「淡」进来而不是「滑」进来</li>
+     * <li><b>两层文字交叉</b>：v=0 时只有 medium 层可见，v=1 时只有 light 层可见</li>
+     * </p>
+     */
+    private static void checkRightTitleBar() {
+        RightTitleBar bar = new RightTitleBar();
+        bar.setPrefSize(Theme.RIGHT_PANEL_W, RightTitleBar.BAR_H);
+        bar.resize(Theme.RIGHT_PANEL_W, RightTitleBar.BAR_H);
+
+        check("标题栏高度 == 64（field20847）",
+                RightTitleBar.BAR_H == 64, "got=" + RightTitleBar.BAR_H);
+        check("淡入距离 == 50px（权威 v = offset/50）",
+                RightTitleBar.FADE_IN_PX == 50, "got=" + RightTitleBar.FADE_IN_PX);
+
+        // 淡入曲线：offset=0 -> 0，offset=25 -> 0.5，offset=50 -> 1，offset>50 -> 1
+        bar.setScroll(0);
+        check("滚动 0 时完全透明",
+                Math.abs(bar.fadeAlpha()) < 1e-9, "got=" + bar.fadeAlpha());
+        bar.setScroll(25);
+        check("滚动 25 时正好半透明",
+                Math.abs(bar.fadeAlpha() - 0.5) < 1e-9, "got=" + bar.fadeAlpha());
+        bar.setScroll(50);
+        check("滚动 50 时完全淡入",
+                Math.abs(bar.fadeAlpha() - 1.0) < 1e-9, "got=" + bar.fadeAlpha());
+        bar.setScroll(500);
+        check("滚动远超 50 后仍为 1（不越界）",
+                Math.abs(bar.fadeAlpha() - 1.0) < 1e-9, "got=" + bar.fadeAlpha());
+
+        // 标题基线 y：权威 16 + (1-v)*14
+        check("淡入完成时标题 y == 16",
+                Math.abs(bar.titleBaselineY(1.0) - 16) < 1e-9,
+                "got=" + bar.titleBaselineY(1.0));
+        check("未淡入时标题 y == 30（滑入 14px）",
+                Math.abs(bar.titleBaselineY(0.0) - 30) < 1e-9,
+                "got=" + bar.titleBaselineY(0.0));
+
+        bar.setTitle("每日推荐");
+        check("标题文本已写入",
+                "每日推荐".equals(bar.titleText()), "got=" + bar.titleText());
+        // 标题栏不能吃掉鼠标，否则会挡住右栏卡片点击
+        check("标题栏不吃鼠标",
+                bar.isMouseTransparent(), "mouseTransparent=false");
     }
 
     /**

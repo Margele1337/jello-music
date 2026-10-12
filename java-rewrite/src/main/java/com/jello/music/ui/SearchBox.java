@@ -297,4 +297,14 @@ long phase = elapsed % CARET_PERIOD_MS;
         }
         results.setContentHeight(bottom);
     }
+
+    /** 右栏当前滚动偏移（px）。对应 mod 的 {@code field20852.getScrollBarOffset()}。 */
+    public double resultScroll() {
+        return results.scroll();
+    }
+
+    /** 右栏滚动上限（px）；内容不满一屏时为 0。 */
+    public double resultMaxScroll() {
+        return results.maxScroll();
+    }
 }

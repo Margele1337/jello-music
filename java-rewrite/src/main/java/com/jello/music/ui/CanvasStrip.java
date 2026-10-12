@@ -249,8 +249,10 @@ public final class CanvasStrip extends Pane {
      * {@code package.ps1} 去重时会把非 {@code -win} 的 javafx jar 全丢掉
      * （否则 javafx.graphics 模块会被注册两次，jpackage 直接报 FileAlreadyExistsException），
      * 结果就是「编译得过、打包后 ClassNotFound」。自己搬像素只多一次循环。
+     *
+     * <p>public 是因为 {@link RightTitleBar} 的模糊底图也要用同一条转换路径。
      */
-    private static WritableImage toFxImage(BufferedImage img) {
+    public static WritableImage toFxImage(BufferedImage img) {
         int w = img.getWidth();
         int h = img.getHeight();
         int[] argb = img.getRGB(0, 0, w, h, null, 0, w);
