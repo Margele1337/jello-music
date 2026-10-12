@@ -258,11 +258,27 @@ JavaFX 21 **没有公开的鼠标穿透 API**——`Scene` 上不存在 `setMous
 powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
 ```
 
-产出 `pkgout\JelloMusic\JelloMusic.exe`（约 104 MB，含裁剪过的私有 runtime）。
-装不了 WiX，所以只出 app-image，不出 `.msi` / `.exe` 安装包。
+产出 `pkgout\JelloMusic\JelloMusic.exe`（约 137 MB，含裁剪过的私有 runtime
+**与内置的 KuGou API**）。装不了 WiX，所以只出 app-image，不出 `.msi` / `.exe` 安装包。
 
-**exe 需要先起 API**：它不像 `run.bat` 那样会自动拉起 KuGou API，
-所以先在仓库根目录 `npm run api`（端口 6521），再双击 exe。
+**exe 自带 API**：打包时会把 `api\bin\app_win.exe`（32.6 MB，pkg 单文件版、
+自带 node 运行时）拷进 `app\api\`。启动时 `ApiSubprocess` 发现 6521 没人监听
+就把它拉起来，退出时只收自己拉起的那个。所以**不需要再手动 `npm run api`**。
+
+> 为什么不拷整个 `api\`（123 MB）：其中 `node_modules` 占 88 MB。
+> `api\package.json` 自带 `pkgwin` 脚本，产物就是那个单文件 exe。
+> 找不到单文件时退回源码 `api\app.js`（需要机器上有 node），再退回开发场景。
+
+### 关于 Jump List
+
+原版 `electron/main.js:85-99` 只有两件事：`setAppUserModelId('cn.jello.music')`
+和一条「设置」任务。Java 侧实现了前者（`shell32` 的
+`SetCurrentProcessExplicitAppUserModelID`，纯 Win32 函数、无需 COM）。
+
+那条「设置」任务**没做运行时注册**——`setUserTasks` 内部是
+`ITaskbarList3::SetUserTasks`（COM 接口），JNA 要手工排布 vtable
+且跨 Windows 版本不稳定，代价远大于「只有一条任务」的收益。
+`--settings` 参数本身是通的：从 Jump List 或命令行带 `--settings` 启动会直接进设置页。
 
 ### 为什么这个脚本长这样
 

@@ -173,6 +173,27 @@ $mp = $jars -join ';'
     'java-options=--module=com.jello.music/com.jello.music.MainApp'
 ))
 
+# ------------------------------------------------------------- 4.5 api
+# Ship the KuGou API inside the image so the exe works on a machine that has
+# nothing but Java.
+#
+# We copy api\bin\app_win.exe (the pkg single-file build, node runtime included,
+# ~34 MB) rather than the whole api\ directory (123 MB, of which node_modules is
+# 88 MB). MainApp's ApiSubprocess looks for app\api\app_win.exe first and only
+# falls back to the source tree + a system node.
+$apiExe = Join-Path (Split-Path -Parent $root) 'api\bin\app_win.exe'
+$apiDest = Join-Path $Dest 'JelloMusic\app\api'
+if (Test-Path $apiExe) {
+    New-Item -ItemType Directory -Path $apiDest -Force | Out-Null
+    Copy-Item $apiExe (Join-Path $apiDest 'app_win.exe')
+    $apiMb = [math]::Round((Get-Item $apiExe).Length / 1MB, 1)
+    Write-Host "  bundled API: app\api\app_win.exe ($apiMb MB)" -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: api\bin\app_win.exe not found." -ForegroundColor Yellow
+    Write-Host "           The packaged app will need Node.js + the api\ source tree." -ForegroundColor Yellow
+    Write-Host "           Build it with:  cd api && npm run pkgwin" -ForegroundColor Yellow
+}
+
 # -------------------------------------------------------------- 5. report
 $exe = Join-Path $Dest 'JelloMusic\JelloMusic.exe'
 Write-Host "[5/5] done"
@@ -182,8 +203,12 @@ if (Test-Path $exe) {
     Write-Host "  $exe  ($sizeMb MB total)" -ForegroundColor Green
     Write-Host "  run it with: $exe"
     Write-Host ""
-    Write-Host "  NOTE: the app expects the KuGou API on 127.0.0.1:6521."
-    Write-Host "  Start it from the repo root with:  npm run api"
+    if (Test-Path $apiExe) {
+        Write-Host "  The KuGou API is bundled; the app starts it on its own."
+    } else {
+        Write-Host "  NOTE: no bundled API. Start it from the repo root with:"
+        Write-Host "        npm run api"
+    }
     Write-Host ""
 
     # ---- desktop shortcut ----

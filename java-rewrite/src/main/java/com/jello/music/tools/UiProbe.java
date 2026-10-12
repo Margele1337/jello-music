@@ -365,6 +365,36 @@ writeSnapshot(root, pngPath);
         checkMediaKeys();
         checkDockFadeCurve();
         checkExpandScale();
+        checkJumpList();
+    }
+
+    /**
+     * Jump List 的断言，对齐原版 {@code electron/main.js:85-99, 49}。
+     *
+     * <p><b>纠正一处此前的误记</b>：TODO 里写「任务栏缩略图工具条」，
+     * 但原版<b>没有</b>这个功能——我把搜索结果的 {@code SigmaThumbnailButton}
+     * 误认成了它。原版实际只有 {@code setupJumpList}，且只有一条「设置」任务。
+     */
+    private static void checkJumpList() {
+        check("AppUserModelID == cn.jello.music（原版 main.js:89）",
+                "cn.jello.music".equals(com.jello.music.system.JumpList.APP_USER_MODEL_ID),
+                com.jello.music.system.JumpList.APP_USER_MODEL_ID);
+        check("设置参数 == --settings（原版 main.js:49）",
+                "--settings".equals(com.jello.music.system.JumpList.SETTINGS_ARG),
+                com.jello.music.system.JumpList.SETTINGS_ARG);
+        check("任务标题为「设置」",
+                "设置".equals(com.jello.music.system.JumpList.SETTINGS_TITLE),
+                com.jello.music.system.JumpList.SETTINGS_TITLE);
+
+        // 参数识别
+        check("能认出 --settings",
+                com.jello.music.system.JumpList.hasSettingsArg(
+                        new String[]{"app.exe", "--settings"}), "未认出");
+        check("没带时不误判",
+                !com.jello.music.system.JumpList.hasSettingsArg(
+                        new String[]{"app.exe", "jello://x?hash=1"}), "误判");
+        check("null 参数不炸",
+                !com.jello.music.system.JumpList.hasSettingsArg(null), "抛异常?");
     }
 
     /**

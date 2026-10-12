@@ -263,7 +263,20 @@ Java 版跟的是 **Electron 版**（`appServices.js:679-709`，明确是拖拽�
       不主动创建；这里在 `package.ps1` 打包后自动创建带图标的快捷方式
 - [ ] 自动更新（需要发布服务器与签名，本项目没有）
 - [ ] 内置 api 子进程（当前靠 `run.bat` / `npm run api`）
-- [ ] 任务栏缩略图工具条（上一首/播放暂停/下一首）、Jump List
+- [x] **Jump List** —— 对应 `electron/main.js:85-99` 的 `setupJumpList`：
+      - `AppUserModelID = cn.jello.music`（通过 `shell32` 的
+        `SetCurrentProcessExplicitAppUserModelID`，必须在建窗口之前调，
+        否则任务栏会用 `java.exe` 的身份，分组与 Jump List 全乱）
+      - `--settings` 启动参数 → 直接进设置页（教程期间会挂起，
+        教程完成后补上，因为此时 Sigma 窗口才刚显示）
+      - **那条「设置」任务没做成运行时注册**：Electron 的
+        `setUserTasks` 内部是 `ITaskbarList3::SetUserTasks`（COM 接口），
+        JNA 要手工排布 vtable 且跨 Windows 版本不稳定，
+        代价远大于「只有一条任务」的收益。见 `system/JumpList.java`
+- ~~任务栏缩略图工具条~~ —— **此前记错了，原版没有这个功能。**
+      当时把搜索结果的 `SigmaThumbnailButton` 误认成了任务栏缩略图。
+      全仓 grep `ThumbnailToolbar` / `ITaskbarList` 均无命中，
+      原版只有 `setupJumpList` 一处
 - [ ] 桌面歌词窗、KeyStrokes HUD（WASD + 鼠标键覆盖层）
 - [x] **单实例锁** —— 对应 `electron/main.js:105-133` 的
       `requestSingleInstanceLock` + `second-instance`。见 `system/SingleInstance.java`：

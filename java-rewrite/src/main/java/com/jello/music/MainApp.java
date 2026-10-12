@@ -9,8 +9,10 @@ import com.jello.music.model.ResultCard;
 import com.jello.music.model.Song;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
+import com.jello.music.system.ApiSubprocess;
 import com.jello.music.system.AutoStart;
 import com.jello.music.system.JelloProtocol;
+import com.jello.music.system.JumpList;
 import com.jello.music.system.MediaKeyPoller;
 import com.jello.music.system.MousePassthrough;
 import com.jello.music.system.SingleInstance;
@@ -114,8 +116,12 @@ private EdgeDock dock;
     private MediaKeyPoller mediaKeys;
     /** 本次启动带来的 jello:// URL（浏览器点分享链接进来时才有）。 */
     private String protocolUrl;
+    /** 启动参数带 --settings：直接进设置页（对应原版 main.js:101）。 */
+    private boolean openSettingsOnStart;
     /** 对外控制服务（ws://127.0.0.1:6520）。 */
     private WsApiServer wsApi;
+    /** 内置 API 是否就绪；false 时登录态与歌单都会加载失败。 */
+    private boolean apiReady;
 
     /** 视图容器：原版 SigmaUI.vue 的 sigma-shell，按 view 切换子视图。 */
     private final StackPane stageHolder = new StackPane();
@@ -170,6 +176,15 @@ private EdgeDock dock;
         JelloProtocol.register(null);
         if (protocolUrl == null && launchProtocolUrl != null) {
             protocolUrl = launchProtocolUrl;
+        }
+
+        // 内置 API：打包版自带 api/ 目录，这里在没人监听 6521 时拉起它。
+        // 开发模式下 run.bat 通常已经起过一个，走的是「已监听 -> 不碰」那条分支。
+        // 必须放在 KuGouApiClient 之前，否则登录态/歌单加载会先撞一个连不上的端口。
+        apiReady = ApiSubprocess.ensureRunning();
+        if (!apiReady) {
+            System.err.println("[Jello] API 未就绪，播放与歌单会失败。"
+                    + "可手动在仓库根目录执行 npm run api。");
         }
 
         // 对外控制服务，对应原版 apiService.js（ws://127.0.0.1:6520）。
@@ -392,6 +407,11 @@ dock = new EdgeDock(stage);
             protocolUrl = null;
             Platform.runLater(() -> handleProtocolUrl(url));
         }
+        // --settings（Jump List 的「设置」任务）：延到设置页可用后再切
+        if (launchSettingsArg) {
+            launchSettingsArg = false;
+            openSettingsOnStart = true;
+        }
 
         // 教程开着的话，Sigma 窗口先不显示；等用户点「完成」再显示。
         if (onboardingStage != null) {
@@ -401,6 +421,12 @@ dock = new EdgeDock(stage);
             onboarding.layout(onboardingStage.getWidth(), onboardingStage.getHeight());
         } else {
             showSigmaStage();
+            // --settings：面板就绪后直接切设置页。
+            // 教程期间不切——此时 Sigma 窗口还没显示，切过去会看到空白。
+            if (openSettingsOnStart) {
+                openSettingsOnStart = false;
+                switchToSettings();
+            }
         }
 
         // listener 由 PlayQueue.fire() 同步触发，而 fire() 可能发生在任意线程。
@@ -453,6 +479,11 @@ dock = new EdgeDock(stage);
         AppPrefs.setOnboardingDone();
         closeOnboardingStage();
         showSigmaStage();
+        // --settings 在教程期间被挂起了（见 start 里的分支），这里补上
+        if (openSettingsOnStart) {
+            openSettingsOnStart = false;
+            switchToSettings();
+        }
     }
 
     private void closeOnboardingStage() {
@@ -1539,6 +1570,8 @@ public void stop() {
         if (wsApi != null) {
             wsApi.close();
         }
+        // 只收我们自己拉起的那个；用户自己起的 API 不碰（与 run.bat 的 api_started_by_us 同理）
+        ApiSubprocess.stopIfStartedByUs();
         disposePlayer();
     }
 
@@ -1553,8 +1586,15 @@ public void stop() {
      */
     private static String launchProtocolUrl;
 
+    /** 启动参数是否带 {@code --settings}（Jump List 的那条任务）。 */
+    private static boolean launchSettingsArg;
+
     public static void main(String[] args) {
         launchProtocolUrl = JelloProtocol.findUrlIn(args);
+        launchSettingsArg = JumpList.hasSettingsArg(args);
+        // AppUserModelID 必须在任何窗口创建之前设好，否则任务栏会用 java.exe
+        // 的身份，Jump List 与任务栏分组全乱（对应原版 setupJumpList）
+        JumpList.registerAppUserModelId();
         // 对应原版 electron/main.js:105-109：
         //   if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
         // 必须在 launch() 之前判断——一旦 launch 就会建窗口，退出时可能闪一下
