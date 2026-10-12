@@ -12,6 +12,7 @@ import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.SearchBox;
 import com.jello.music.ui.SigmaScrollablePanel;
+import com.jello.music.ui.SpectrumInfoBlock;
 import com.jello.music.ui.SpectrumToggleButton;
 import com.jello.music.ui.SpectrumView;
 import com.jello.music.ui.ThinProgressBar;
@@ -374,21 +375,26 @@ writeSnapshot(root, pngPath);
      * </ol>
      */
     private static void checkSpectrumParams() {
-        check("频谱条数 == 原版 114（不是自取的 48）",
+        // ---- 内核常量，对齐 sigmarebase 的权威定义 ----
+        check("频谱条数 == 114（renderSpectrum maxWidth）",
                 SpectrumFeed.BAR_COUNT == 114, "got=" + SpectrumFeed.BAR_COUNT);
-        check("FFT 长度 == 原版 1024（不是自取的 2048）",
-                SpectrumFeed.FFT_SIZE == 1024, "got=" + SpectrumFeed.FFT_SIZE);
-        check("幅度上限 == 原版 2.256e7",
+        check("FFT 长度 == 1152（一个 MP3 帧的采样数）",
+                SpectrumFeed.FFT_SIZE == 1152, "got=" + SpectrumFeed.FFT_SIZE);
+        check("幅度上限 == 2.256e7（onRender2D 钳位）",
                 Math.abs(SpectrumFeed.MAX_AMPLITUDE - 2.256e7) < 1,
                 String.valueOf(SpectrumFeed.MAX_AMPLITUDE));
-        check("游戏窗口高常量 == 1009（原版实测 1920x1009）",
-                SpectrumView.GAME_FRAMEBUFFER_HEIGHT == 1009,
-                String.valueOf(SpectrumView.GAME_FRAMEBUFFER_HEIGHT));
+        check("队列上限 == 18（visualizerData.size() > 18）",
+                SpectrumFeed.queueMax() == 18, "got=" + SpectrumFeed.queueMax());
+        check("amplitudes 长度上限 == 1024",
+                SpectrumFeed.AMPLITUDE_MAX == 1024, "got=" + SpectrumFeed.AMPLITUDE_MAX);
+        check("默认平滑系数 == 0.335F",
+                Math.abs(SpectrumView.DEFAULT_SMOOTHING - 0.335) < 1e-12,
+                String.valueOf(SpectrumView.DEFAULT_SMOOTHING));
 
         // 参数能穿过 SpectrumView（无直链的 feed，足够验证设置层）
         SpectrumFeed feed = new SpectrumFeed(null, SpectrumFeed.FFT_SIZE,
                 SpectrumFeed.BAR_COUNT, 60);
-        SpectrumView view = new SpectrumView(feed, SpectrumFeed.BAR_COUNT, 220, 60);
+        SpectrumView view = new SpectrumView(feed, SpectrumFeed.BAR_COUNT, 420, 130);
         view.setSpectrumScale(2.5);
         view.setSpectrumSmoothing(0.8);
         check("spectrumScale 已落到 SpectrumView",
@@ -416,25 +422,86 @@ writeSnapshot(root, pngPath);
         check("默认 590ms 已生效", Math.abs(feed.leadSeconds() - 0.59) < 1e-9,
                 "got=" + feed.leadSeconds());
 
-        // 条高公式：与 SpectrumView 内部同一套算法，验证 scale 是线性因子
-        // 要让基准高度 = 3，需 sqrt(levels)/12-5 = 3 -> sqrt(levels) = 96 -> levels = 9216
-        double levels = 9216.0;
-        double base = Math.max(0, Math.sqrt(levels) / 12 - 5);
-        double sigmaAmp1 = (SpectrumView.GAME_FRAMEBUFFER_HEIGHT / 1080) * 1.0;
-        double sigmaAmp3 = (SpectrumView.GAME_FRAMEBUFFER_HEIGHT / 1080) * 3.0;
-        check("条高基准值 = sqrt(levels)/12-5",
-                Math.abs(base - 3.0) < 1e-9, "got=" + base);
-        check("sigmaAmp 1x = 游戏窗口高/1080",
-                Math.abs(sigmaAmp1 - 1009.0 / 1080.0) < 1e-12,
-                "got=" + sigmaAmp1);
-        check("3x 幅度正好是 1x 的三倍（线性）",
-                base * sigmaAmp1 > 0
-                        && Math.abs(base * sigmaAmp3 - base * sigmaAmp1 * 3) < 1e-12,
-                "1x=" + base * sigmaAmp1 + " 3x=" + base * sigmaAmp3);
+        // ---- 平滑插值公式，对齐 onRender2D:144-151 ----
+        // alpha = min(smoothing * (60/实际FPS), 1)
+        // amplitudes -= (amplitudes - target) * alpha
+        // 60fps 下 fps补偿=1，alpha 就是 smoothing 本身
+        double smoothing = SpectrumView.DEFAULT_SMOOTHING;
+        double start = 1000.0;
+        double target = 2000.0;
+        double alpha60 = Math.min(1.0, smoothing * (60.0 / 60.0));
+        double afterOneFrame = start - (start - target) * alpha60;
+        check("60fps 下 alpha == smoothing",
+                Math.abs(alpha60 - smoothing) < 1e-12, "got=" + alpha60);
+        check("插值向目标逼近（start<after<target）",
+                afterOneFrame > start && afterOneFrame < target,
+                String.format("%.4f", afterOneFrame));
+        // 手算校验：1000 + 1000*0.335 = 1335
+        check("单帧插值手算一致（1000→1335）",
+                Math.abs(afterOneFrame - 1335.0) < 1e-9,
+                String.format("%.6f", afterOneFrame));
+        // 帧率补偿：高帧率下 alpha 变小，单帧步进更细
+        double alpha300 = Math.min(1.0, smoothing * (60.0 / 300.0));
+        check("300fps 下 alpha 变小（帧率补偿反向）",
+                alpha300 < alpha60, String.format("300fps=%.4f 60fps=%.4f", alpha300, alpha60));
+        // alpha 不会超过 1
+        check("alpha 上限夹到 1",
+                Math.min(1.0, smoothing * (60.0 / 1.0)) == 1.0, "got=1.0");
 
-        // 小于阈值的幅度必须被压成 0（sqrt(levels)/12-5 <= 0）
+        // ---- 条高公式，对齐 renderSpectrum:181 ----
+        // height = max(0, sqrt(amplitudes)/12 - 5) * (窗口高/1080)
+        // 要让基准高度 = 3，需 sqrt(a)/12-5 = 3 -> sqrt(a) = 96 -> a = 9216
+        double amps = 9216.0;
+        double base = Math.max(0, Math.sqrt(amps) / 12 - 5);
+        check("条高基准值 = sqrt(amplitudes)/12-5",
+                Math.abs(base - 3.0) < 1e-9, "got=" + base);
+
+        double h1 = (SpectrumView.REFERENCE_HEIGHT / 1080.0) * 1.0;
+        double h3 = (SpectrumView.REFERENCE_HEIGHT / 1080.0) * 3.0;
+        check("高度比 = 参考窗口高/1080",
+                Math.abs(h1 - 1009.0 / 1080.0) < 1e-12, "got=" + h1);
+        check("3x 幅度正好是 1x 的三倍（线性）",
+                base * h1 > 0 && Math.abs(base * h3 - base * h1 * 3) < 1e-12,
+                "1x=" + base * h1 + " 3x=" + base * h3);
+
+        // 小于阈值的幅度必须被压成 0
         double tiny = Math.max(0, Math.sqrt(36.0) / 12 - 5); // sqrt=6，/12=0.5，-5<0
-        check("低幅度被压成 0（原版 max(0,·) 分支）", tiny == 0.0, "got=" + tiny);
+        check("低幅度被压成 0（renderSpectrum 的 max(0,·) 分支）", tiny == 0.0, "got=" + tiny);
+
+        // ---- 封面低频缩放，对齐 renderSpectrum:207-213 ----
+        // scale = 1 + round(peak / 3750 * 0.14 * 75) / 75，钳到 1.14
+        check("无低频时封面不缩放",
+                SpectrumView.coverScale(new double[114]) == 1.0,
+                "got=" + SpectrumView.coverScale(new double[114]));
+        // peak = sqrt(a[0])-1000 = 1000 -> sqrt(a[0]) = 2000 -> a[0] = 4e6
+        double[] beat = new double[114];
+        beat[0] = 4_000_000.0;
+        double sc = SpectrumView.coverScale(beat);
+        // 1 + round(1000/3750*0.14*75)/75 = 1 + round(2.8)/75 = 1 + 3/75
+        check("低频 1000 时封面缩放到 1+3/75",
+                Math.abs(sc - (1.0 + 3.0 / 75.0)) < 1e-12, "got=" + sc);
+        // 极端低频应钳在上限 1.14
+        double[] loud = new double[114];
+        loud[0] = 1e14;
+        check("极端低频钳在上限 1.14",
+                Math.abs(SpectrumView.coverScale(loud) - 1.14) < 1e-12,
+                "got=" + SpectrumView.coverScale(loud));
+
+        // ---- 信息块（MusicManager:215-240）----
+        SpectrumInfoBlock info = new SpectrumInfoBlock();
+        info.setTitle("歌手名 - 歌名");
+        info.setPrefSize(420, 130);
+        info.resize(420, 130);
+        info.applyCss();
+        info.layout();
+        check("信息块歌名已写入",
+                info.titleText() != null && info.titleText().contains("歌名"),
+                "got=" + info.titleText());
+        info.applyScale(1.14);
+        check("信息块缩放后仍在窗内",
+                info.coverBoundsInParent().getMaxX() <= 420.5
+                        && info.coverBoundsInParent().getMinY() >= -0.5,
+                "bounds=" + info.coverBoundsInParent());
 
         view.stop();
         feed.close();

@@ -21,6 +21,7 @@ import com.jello.music.ui.PlayerPanel;
 import com.jello.music.ui.PlaylistPanel;
 import com.jello.music.ui.RepeatButton;
 import com.jello.music.ui.SettingsView;
+import com.jello.music.ui.SpectrumInfoBlock;
 import com.jello.music.ui.SpectrumView;
 import com.jello.music.ui.Theme;
 import javafx.animation.AnimationTimer;
@@ -65,26 +66,26 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MainApp extends Application {
 
     /**
-     * 频谱常量全部取原版 {@code PlayerEngine.vue} 的定义，不再自行取值。
+     * 频谱常量取 sigmarebase {@code MusicManager.renderSpectrum}（:171-240）的定义。
      *
-     * <p>之前用的是 FFT 2048 / 48 个对数频段，是「人耳感知通用做法」而不是原版做法：
-     * 原版是 FFT 1024 / 114 根条，每根<b>直接对应一个 FFT bin</b>，不分箱。
+     * <p>关键点：<b>条高是绝对像素</b>，公式
+     * {@code (sqrt(amplitudes)/12 - 5) * (窗口高/1080)}，
+     * 与频谱窗自身高度无关——窗口只决定可见范围与余量。
      */
     private static final int FFT_SIZE = com.jello.music.player.SpectrumFeed.FFT_SIZE;
     private static final int BAND_COUNT = com.jello.music.player.SpectrumFeed.BAR_COUNT;
 
-    /** 原版 {@code SPECTRUM_AV_DELAY_DEFAULT_MS}：频谱领先声音的量。 */
+    /** 音画差补偿默认值，对应 Electron 侧 {@code SPECTRUM_AV_DELAY_DEFAULT_MS}。 */
     private static final double SPECTRUM_AV_DELAY_DEFAULT_MS = 590;
 
     /**
      * 频谱悬浮窗尺寸。
      *
-     * <p>原版的条高是<b>绝对像素</b>（见 {@code SpectrumHUD} 的 sigmaAmp），
-     * 与窗口高度无关——窗口只决定可见范围与余量。
-     * 220x60 是原版 Electron 侧的默认悬浮窗尺寸。
+     * <p>必须容得下左下角的信息块（100x100 封面 + 右侧歌名），
+     * 否则封面会被裁掉。宽度取 114 条 × 3px = 342 再留信息块的余量。
      */
-    private static final double SPECTRUM_W = 220;
-    private static final double SPECTRUM_H = 60;
+    private static final double SPECTRUM_W = 420;
+    private static final double SPECTRUM_H = 130;
 
     /** 原版 SigmaSearchBox 的 DAILY_TARGET_COUNT：每日推荐目标首数。 */
     private static final int DAILY_TARGET_COUNT = 60;
@@ -707,6 +708,8 @@ dock = new EdgeDock(stage);
         if (song != null) {
             playerPanel.setSong(song.getTitle(), song.getArtist(), song.getCoverUrl());
             playerPanel.setCover(song.getCoverUrl());
+            // 频谱窗信息块同步（对应 renderSpectrum 的 cover/title）
+            updateSpectrumInfo(song.getTitle(), song.getCoverUrl());
         }
     }
 
@@ -751,6 +754,12 @@ private void startPlayback(String url) {
         new AnimationTimer() {
             @Override
             public void handle(long now) {
+                // 信息块随低频缩放封面（对应 renderSpectrum 的 glScalef 那段）
+                if (spectrumInfo != null && spectrumView != null) {
+                    double[] amps = feed == null ? null : feed.levels();
+                    spectrumInfo.applyScale(amps == null
+                            ? 1.0 : SpectrumView.coverScale(amps));
+                }
                 if (feed == null || player == null) {
                     return;
                 }
@@ -764,6 +773,30 @@ private void startPlayback(String url) {
                 }
             }
         }.start();
+    }
+
+    /** 更新频谱窗的信息块（封面 + 歌名），对应 renderSpectrum :217-240。 */
+    private void updateSpectrumInfo(String songTitle, String coverUrl) {
+        if (spectrumInfo == null) {
+            return;
+        }
+        spectrumInfo.setTitle(songTitle);
+        if (coverUrl != null && !coverUrl.isBlank()) {
+            // 后台加载：构造函数返回时宽高还是 0，必须等 progress 到 1 再挂上去。
+            // 这条坑在 CanvasStrip.setCover 里踩过一次——加载不完就 setImage，
+            // 结果缩放比是 NaN，整张封面画不出来。
+            javafx.scene.image.Image img = new javafx.scene.image.Image(coverUrl, true);
+            if (img.getProgress() < 1.0) {
+                img.progressProperty().addListener((o, was, now) -> {
+                    if (now.doubleValue() >= 1.0) {
+                        javafx.application.Platform.runLater(
+                                () -> spectrumInfo.setCover(img));
+                    }
+                });
+            } else {
+                spectrumInfo.setCover(img);
+            }
+        }
     }
 
     /**
@@ -851,6 +884,7 @@ private void startPlayback(String url) {
 
     private Stage spectrumStage;
     private Rectangle spectrumOutline;
+    private SpectrumInfoBlock spectrumInfo;
 
     /**
      * 建一个透明、无边框、置顶的频谱悬浮窗，贴在主面板左下外侧。
@@ -867,6 +901,13 @@ private void startPlayback(String url) {
 
         Pane holder = new Pane();
         holder.getChildren().add(spectrumView.canvas());
+
+        // 左下角信息块（封面 + 歌名），对应 MusicManager.renderSpectrum :215-240
+        spectrumInfo = new SpectrumInfoBlock();
+        spectrumInfo.setPrefSize(SPECTRUM_W, SPECTRUM_H);
+        spectrumInfo.setLayoutX(0);
+        spectrumInfo.setLayoutY(0);
+        holder.getChildren().add(spectrumInfo);
 
         // 解锁态提示：原版 .spectrum-hud.hud-editing 的 2px 虚线 + 圆角 6
         spectrumOutline = new Rectangle(SPECTRUM_W, SPECTRUM_H);

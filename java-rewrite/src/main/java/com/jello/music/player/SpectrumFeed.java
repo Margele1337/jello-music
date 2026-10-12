@@ -1,8 +1,6 @@
 package com.jello.music.player;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
-import java.util.Deque;
 
 /**
  * 把 {@link SpectrumTap} 放到后台线程持续取频谱，供 UI 线程安全读取。
@@ -10,53 +8,44 @@ import java.util.Deque;
  * <p>{@code SpectrumTap.nextRawFrame()} 是阻塞的（一帧一个 MP3 帧约 26ms），
  * 绝不能放在 JavaFX 的 UI 线程里调用，否则界面会卡顿。
  *
- * <h2>为什么是「队列」而不是「取最新一帧」</h2>
- * 原版（{@code PlayerEngine.vue}）实测到 sigmarebase 的音频线程<b>不是均匀推帧</b>的：
- * 约每 250ms 被 {@code SourceDataLine} 放行一次，一次推入 9~10 帧
- * （间隔直方图 0ms×453 / 250ms×59）。所以它的频谱观感是
- * 「保持 250ms 不动 → 整体前移 ~10 帧」的<b>台阶</b>，而不是平滑流动。
+ * <h2>队列：为什么是「取队首」而不是「取最新一帧」</h2>
+ * sigmarebase（{@code MusicManager.java:398-407}）每解完一帧就往
+ * {@code visualizerData} 追加一份幅度谱，超过 <b>18</b> 帧就 {@code remove(0)}，
+ * 渲染端 {@code onRender2D} 永远读 {@code get(0)}——也就是队首。
  *
- * <p>这里 1:1 复刻这个结构：{@link #sigmaQueue} 只保留最近 {@code SIGMA_QUEUE_MAX} 帧，
- * 每攒够 {@code SIGMA_BATCH_SECONDS}（0.25s）才入队一批，UI 永远读队首。
- * 队列越长画面越滞后于声音，所以容量取 4 帧（约 105ms）——
- * 原版是 18 帧，但它的解码提前量让画面领先声音 421.7ms；
- * 我们靠 {@link SpectrumFeed#setLeadSeconds} 的预读提前量对齐音画差，补偿不了的部分用小队列补。
+ * <p>所以画面<b>滞后</b>于解码：18 帧 × 26.12ms ≈ 470ms。
+ * 这个滞后是原版观感的组成部分（画面拖在声音后面一段），
+ * 不是 bug，所以这里照抄 18，而不是为了「跟手」去缩短它。
  *
  * <h2>线程安全</h2>
  * UI 侧读的是 {@link #levels}（volatile 引用，指向不可变数组），
- * 后台写的是 {@link #latest}与队列内部状态。
+ * 后台写的是 {@link #rawFrame} 与队列内部状态。
  */
 public final class SpectrumFeed implements AutoCloseable {
 
-    /** 原版 {@code SPECTRUM_BAR_COUNT}：sigmarebase renderSpectrum 的 maxWidth。 */
+    /** 渲染条数，与 sigmarebase {@code renderSpectrum} 的 {@code maxWidth = 114.0F} 一致。 */
     public static final int BAR_COUNT = 114;
 
-    /** 原版 {@code SPECTRUM_FFT_SIZE}：JavaFFT numberOfSamples。 */
-    public static final int FFT_SIZE = 1024;
-
-    /** 原版 {@code SPECTRUM_SIGMA_QUEUE_MAX}。 */
-    private static final int SIGMA_QUEUE_MAX = 4;
-
-    /** 原版 {@code SPECTRUM_SIGMA_BATCH_SECONDS}：每 250ms 放行一批。 */
-    private static final double SIGMA_BATCH_SECONDS = 0.25;
-
-    /** 原版 {@code SPECTRUM_SIGMA_BATCH_MAX}：防止异常时一批积太多。 */
-    private static final int SIGMA_BATCH_MAX = 12;
+    /** FFT 长度，对应 {@code new JavaFFT(var29.length)} 的输入长度（一个 MP3 帧 1152 采样）。 */
+    public static final int FFT_SIZE = 1152;
 
     /**
-     * 原版 {@code SPECTRUM_SIGMA_FRAME_SECONDS}：worklet 每块 1152 采样 @44.1kHz。
-     *
-     * <p>用块时长累加而不是墙钟时间，是原版的注释里特意说明过的：
-     * 后者更新粒度粗，会出现 275ms 的毛刺。
+     * 队列上限，对应 {@code MusicManager.java:405-407} 的
+     * {@code if (visualizerData.size() > 18) visualizerData.remove(0)}。
      */
-    private static final double SIGMA_FRAME_SECONDS = 1152 / 44100.0;
+    private static final int QUEUE_MAX = 18;
 
-    /** 原版 {@code SPECTRUM_MAX_AMPLITUDE}：sigmarebase amplitudes 上限。 */
+    /** sigmarebase {@code onRender2D} 里 {@code amplitudes} 的长度上限（:138-140）。 */
+    public static final int AMPLITUDE_MAX = 1024;
+
+    /** 原版 {@code 2.256E7}：sigmarebase amplitudes 的钳位上限（:149）。 */
     public static final double MAX_AMPLITUDE = 2.256e7;
 
+    /** 暂停时清队列的轮询间隔，对应 {@code while(!playing){ Thread.sleep(300L); ... }}（:372-374）。 */
+    private static final long PAUSE_POLL_MILLIS = 300;
+
     private final SpectrumTap tap;
-    private final Deque<double[]> sigmaQueue = new ArrayDeque<>(SIGMA_QUEUE_MAX);
-    private final Deque<double[]> sigmaPending = new ArrayDeque<>(SIGMA_BATCH_MAX);
+    private final java.util.ArrayDeque<double[]> queue = new java.util.ArrayDeque<>(QUEUE_MAX);
     private volatile double[] levels;
     private volatile double[] rawFrame;
     private volatile boolean running = true;
@@ -65,14 +54,8 @@ public final class SpectrumFeed implements AutoCloseable {
     private final int bandCount;
     private final Thread worker;
 
-    /** 批量累加器：达到 {@link #SIGMA_BATCH_SECONDS} 才把 pending 刷进 queue。 */
-    private double batchAccumulator = SIGMA_BATCH_SECONDS;
-
     /** 频谱相对播放位置领先的秒数（对应原版预读 Audio 的 leadMs）。 */
     private volatile double leadSeconds;
-
-    /** 播放位置提供器；为 null 时频谱自由跑（拉流开头即对应当前播放点）。 */
-    private volatile java.util.function.DoubleSupplier playbackPosition;
 
     /** 换歌时置位，渲染端下一帧直接复制目标、不做渐变（对应原版 amplitudes.isEmpty 分支）。 */
     private volatile boolean pendingSnap;
@@ -98,14 +81,18 @@ public final class SpectrumFeed implements AutoCloseable {
         }
         this.tap = t;
 
-        long intervalNanos = 1_000_000_000L / Math.max(1, fps);
         this.worker = new Thread(() -> {
             while (running) {
                 if (!playing) {
-                    // 原版暂停时：清空 visualizerData 与 amplitudes，UI 端条形立即消失。
-                    // 这里不能只是空转，否则队首还留着旧帧，画面会僵住不动。
+                    // 权威实现：暂停时在 while 循环里 sleep(300) 并 clear()，
+                    // 所以是「最多 300ms 内清空」，不是立刻清。这里照抄这个节奏。
                     clearForPause();
-                    sleepQuietly(intervalNanos);
+                    try {
+                        Thread.sleep(PAUSE_POLL_MILLIS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                     continue;
                 }
                 try {
@@ -115,63 +102,29 @@ public final class SpectrumFeed implements AutoCloseable {
                         break;
                     }
                     this.rawFrame = frame;
+                    // 整份幅度谱入队（对应 visualizerData.add），
+                    // 渲染端只取前 114 个，不是分箱
                     double[] b = SpectrumTap.takeBins(frame, bandCount);
-                    // 幅度上限：原版 SPECTRUM_MAX_AMPLITUDE，超了会撑爆条高
-                    for (int i = 0; i < b.length; i++) {
-                        if (b[i] > MAX_AMPLITUDE) {
-                            b[i] = MAX_AMPLITUDE;
-                        }
+                    queue.addLast(b);
+                    while (queue.size() > QUEUE_MAX) {
+                        queue.pollFirst();
                     }
-                    pushSigmaFrame(b);
+                    // 渲染端读 get(0)：永远是队首
+                    this.levels = queue.peekFirst();
                 } catch (Exception e) {
                     this.error = e.getMessage();
                     break;
                 }
-                sleepQuietly(intervalNanos);
             }
         }, "spectrum-feed");
         this.worker.setDaemon(true);
         this.worker.start();
     }
 
-    /**
-     * 复刻原版的批量入队：攒够 250ms 才推进队列，读队首。
-     * 这样 UI 看到的就是「保持 250ms → 整体前移 ~10 帧」的台阶观感。
-     */
-    private void pushSigmaFrame(double[] b) {
-        sigmaPending.addLast(b);
-        batchAccumulator += SIGMA_FRAME_SECONDS;
-        if (batchAccumulator >= SIGMA_BATCH_SECONDS
-                || sigmaPending.size() >= SIGMA_BATCH_MAX) {
-            for (double[] f : sigmaPending) {
-                sigmaQueue.addLast(f);
-                while (sigmaQueue.size() > SIGMA_QUEUE_MAX) {
-                    sigmaQueue.pollFirst();
-                }
-            }
-            sigmaPending.clear();
-            batchAccumulator -= SIGMA_BATCH_SECONDS;
-            if (batchAccumulator < 0) {
-                batchAccumulator = 0;
-            }
-        }
-        this.levels = sigmaQueue.peekFirst();
-    }
-
-    /** 暂停时清空队列与待入队批次（对应原版 resetSigmaQueue + levels.fill(0)）。 */
+    /** 暂停时清空队列（对应 {@code visualizerData.clear()}）。 */
     private void clearForPause() {
-        sigmaQueue.clear();
-        sigmaPending.clear();
-        batchAccumulator = SIGMA_BATCH_SECONDS;
+        queue.clear();
         this.levels = null;
-    }
-
-    private static void sleepQuietly(long nanos) {
-        try {
-            Thread.sleep(nanos / 1_000_000L, (int) (nanos % 1_000_000L));
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     /** 取当前频段数据；尚未就绪时返回 null。返回的数组不可被调用方修改。 */
@@ -188,7 +141,6 @@ public final class SpectrumFeed implements AutoCloseable {
      *
      * @deprecated 命名有歧义（听起来像「最新一帧 levels」），改用 {@link #rawFrame()}。
      */
-    @Deprecated
     public double[] latestFrame() {
         return rawFrame;
     }
@@ -225,12 +177,16 @@ public final class SpectrumFeed implements AutoCloseable {
 
     /** 绑定播放位置来源，供后台线程判断是否需要重新对齐。 */
     public void setPlaybackPosition(java.util.function.DoubleSupplier position) {
-        this.playbackPosition = position;
+        // 目前未使用：旁路拉流是顺序解码，靠 setLeadSeconds 的领先量对齐音画差，
+        // 不需要按播放位置反复 seek。保留这个口子以便将来做进度跳转后的重对齐。
     }
 
     /**
-     * 播放/暂停切换。对应原版 {@code playing-status} 事件：
-     * 暂停清空幅度（条形立即消失），恢复时下一帧直接复制目标、不做渐变。
+     * 播放 / 暂停切换。对应 sigmarebase 里的
+     * {@code while (!playing) { Thread.sleep(300L); visualizerData.clear(); }}。
+     *
+     * <p>恢复播放时置 {@code pendingSnap}，渲染端下一帧直接复制目标不做渐变，
+     * 对应 {@code onRender2D} 里的 {@code if (amplitudes.isEmpty()) amplitudes = targets}。
      */
     public void setPlaying(boolean value) {
         if (this.playing == value) {
@@ -246,9 +202,9 @@ public final class SpectrumFeed implements AutoCloseable {
     }
 
     /**
-     * 渲染端是否应当「吸附」——换歌或恢复播放后的第一帧直接复制目标。
+     * 渲染端是否应当「吸附」——恢复播放后的第一帧直接复制目标。
      *
-     * <p>对应原版 {@code pendingSnap} / {@code data.reset}。
+     * <p>对应 {@code onRender2D} 里 {@code if (amplitudes.isEmpty())} 的分支。
      * 这里返回后即清位，保证只有一帧生效。
      */
     public boolean consumeSnapRequest() {
@@ -257,6 +213,16 @@ public final class SpectrumFeed implements AutoCloseable {
         }
         pendingSnap = false;
         return true;
+    }
+
+    /** 队列当前长度，供断言与诊断用。 */
+    public int queueSize() {
+        return queue.size();
+    }
+
+    /** 队列上限，对应 {@code visualizerData} 的 18 帧。 */
+    public static int queueMax() {
+        return QUEUE_MAX;
     }
 
     @Override
@@ -268,8 +234,7 @@ public final class SpectrumFeed implements AutoCloseable {
         if (tap != null) {
             tap.close();
         }
-        sigmaQueue.clear();
-        sigmaPending.clear();
+        queue.clear();
         this.levels = null;
     }
 }

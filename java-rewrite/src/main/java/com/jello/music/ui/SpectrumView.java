@@ -9,67 +9,80 @@ import javafx.scene.paint.Color;
 import java.util.Arrays;
 
 /**
- * 频谱悬浮窗的绘制部分，1:1 复刻原版 {@code src/views/SpectrumHUD.vue}。
+ * 频谱悬浮窗的绘制部分，1:1 复刻 sigmarebase {@code MusicManager.renderSpectrum()}（:171-240）。
  *
- * <h2>关键：条高是绝对像素，不是 0..1 归一化</h2>
- * 原版的公式链是：
+ * <h2>条高是绝对像素，不是 0..1 归一化</h2>
+ * 权威公式（{@code MusicManager.java:181}）：
  * <pre>
- *   上游 FFT:  levels[i] = sqrt(re*re + im*im)          // Int16 原始量纲，未归一化
- *   平滑:     levels += (targets - levels) * alpha
- *   换算:     refHeight = sqrt(levels[i]) / 12 - 5      // 注意是 sqrt(levels)，二次根
- *   幅度:     height = max(0, refHeight) * sigmaAmp
+ *   height = (float)(Math.sqrt(amplitudes.get(i)) / 12.0) - 5.0F) * heightRatio
+ *   heightRatio = 游戏窗口高 / 1080.0F
  * </pre>
- * 所以 {@code levels} 的量纲极大（上限 {@code SPECTRUM_MAX_AMPLITUDE = 2.256e7}），
- * 一次 sqrt 才落回可显示的像素范围。Java 版之前把上游归一化到 0..1 再按比例画彩色柱状图，
- * 完全是另一套东西 —— 这里整体重做。
+ * 幅度上限 {@code 2.256E7}，所以要先开方才落回像素范围。
+ * <b>上游任何归一化 / 分箱 / 加窗都会让条高整体不对。</b>
  *
- * <h2>sigmaAmp 为什么是常量 × scale</h2>
- * 原版注释写明：条形像素高 = refH × (游戏窗口高 / 1080)，
- * 且<b>与频谱窗自身高度无关</b>（窗口只决定可见范围）。
- * 实测游戏窗口 1920x1009，所以 {@code GAME_FRAMEBUFFER_HEIGHT = 1009}，
- * 1.0x 时绝对像素高度与原版一致。
+ * <h2>平滑是插值，不是指数</h2>
+ * {@code onRender2D}（:144-151）：
+ * <pre>
+ *   float fps = 60.0F / Minecraft.getFps();
+ *   alpha = min(0.335F * fps, 1.0F);
+ *   amplitudes[i] = min(2.256e7, max(0, amplitudes[i] - (amplitudes[i]-target)*alpha));
+ * </pre>
+ * 系数随实际帧率反向补偿：游戏跑得越快，alpha 越小，单帧步进越细。
+ * Java 侧没有 {@code Minecraft.getFps()}，用画布实测帧率代替（见 {@link #fps}）。
  */
 public final class SpectrumView {
 
-    /** 原版 {@code SPECTRUM_BAR_COUNT}：sigmarebase renderSpectrum 的 maxWidth。 */
+    /** 渲染条数，对应 {@code renderSpectrum} 的 {@code maxWidth = 114.0F}。 */
     public static final int BAR_COUNT = SpectrumFeed.BAR_COUNT;
 
-    /** 原版 {@code SPECTRUM_SMOOTHING}：sigmarebase 60fps 平滑系数，默认 0.335。 */
+    /** {@code onRender2D} 的默认平滑系数 0.335F（60fps 下）。 */
     public static final double DEFAULT_SMOOTHING = 0.335;
 
     /**
-     * 原版 {@code GAME_FRAMEBUFFER_HEIGHT}：实测游戏窗口高 1920x1009。
+     * 高度比的基准分辨率：{@code heightRatio = 窗口高 / 1080.0F}。
      *
-     * <p>条形绝对像素高 = refH × (该值 / 1080)，与频谱窗高度无关。
+     * <p>Java 侧的频谱窗固定 220x60，直接用 1080 会让条形几乎不可见，
+     * 所以这里保留原版的「按某个参考窗口高折算」语义，只是参考值改成
+     * 与 Electron 版一致的实测游戏窗口高（1920x1009）。
      */
-    public static final double GAME_FRAMEBUFFER_HEIGHT = 1009;
+    public static final double REFERENCE_HEIGHT = 1009;
 
-    /** 原版底条色 {@code MID_GREY #999999}，alpha = 0.2 × (1 - (i+1)/BAR_COUNT) 渐隐。 */
+    /** {@code 2.256E7}：sigmarebase amplitudes 的钳位上限。 */
+    public static final double MAX_AMPLITUDE = SpectrumFeed.MAX_AMPLITUDE;
+
+    /** 底条颜色 {@code ClientColors.MID_GREY}，alpha = {@code 0.2F * alphaValue}。 */
     private static final Color MID_GREY = Color.web("#999999");
 
     private final Canvas canvas;
     private final SpectrumFeed feed;
 
     /** 当前显示值（平滑后的），条高由此算出。 */
-    private final double[] levels;
+    private final double[] amplitudes;
     /** 生产者发来的目标幅度。 */
     private final double[] targets;
     /** 预烘的灰条样式，左→右渐隐，避免每帧 new 对象。 */
     private final Color[] barStyles;
 
-    private double lastDrawTime;
     private AnimationTimer timer;
 
     private volatile double spectrumScale = 1.0;
     private volatile double spectrumSmoothing = DEFAULT_SMOOTHING;
 
+    /** 实测帧率，供 alpha 的帧率补偿用（对应 {@code Minecraft.getFps()}）。 */
+    private double fps = 60.0;
+    private long lastFrameNanos;
+
+    /** 封面叠加图（模糊后取底部 20%，对应 {@code songThumbnail}）。 */
+    private volatile javafx.scene.image.Image overlayImage;
+    private volatile javafx.scene.image.Image coverImage;
+
     public SpectrumView(SpectrumFeed feed, int bands, double width, double height) {
         this.feed = feed;
-        this.levels = new double[bands];
+        this.amplitudes = new double[bands];
         this.targets = new double[bands];
         this.barStyles = new Color[bands];
         for (int i = 0; i < bands; i++) {
-            // 原版：rgba(153,153,153, 0.2 * (1 - (i+1)/BAR_COUNT))
+            // 权威：alphaValue = 1 - (i+1)/maxWidth，底条 alpha = 0.2 * alphaValue
             double alpha = 0.2 * (1 - (double) (i + 1) / bands);
             barStyles[i] = new Color(MID_GREY.getRed(), MID_GREY.getGreen(),
                     MID_GREY.getBlue(), alpha);
@@ -82,9 +95,9 @@ public final class SpectrumView {
     }
 
     /**
-     * 设置频谱幅度（对应原版设置 {@code spectrumScale}，范围 0.2~3）。
+     * 设置频谱幅度缩放（用户设置 {@code spectrumScale}，范围 0.2~3）。
      *
-     * <p>即时生效，下一帧就用新值，不必重启。
+     * <p>原版没有这个开关，它是 Electron 版加的乘数，这里保留。
      */
     public void setSpectrumScale(double scale) {
         this.spectrumScale = Double.isFinite(scale) ? scale : 1.0;
@@ -94,11 +107,7 @@ public final class SpectrumView {
         return spectrumScale;
     }
 
-    /**
-     * 设置平滑系数（对应原版设置 {@code spectrumSigmaSmoothing}，范围 0.001~1）。
-     *
-     * <p>原版会夹到 {@code [0.001, 1]}，这里同样处理。
-     */
+    /** 设置平滑系数（用户设置 {@code spectrumSigmaSmoothing}），覆盖默认 0.335。 */
     public void setSpectrumSmoothing(double smoothing) {
         if (!Double.isFinite(smoothing)) {
             return;
@@ -108,6 +117,16 @@ public final class SpectrumView {
 
     public double spectrumSmoothing() {
         return spectrumSmoothing;
+    }
+
+    /** 设置封面，驱动信息块与条形叠加层。 */
+    public void setCover(javafx.scene.image.Image cover, javafx.scene.image.Image blurredStrip) {
+        this.coverImage = cover;
+        this.overlayImage = blurredStrip;
+    }
+
+    public javafx.scene.image.Image coverImage() {
+        return coverImage;
     }
 
     public void start() {
@@ -130,9 +149,9 @@ public final class SpectrumView {
         }
     }
 
-    /** 立刻把条形清零并重绘一帧空白（关闭频谱窗 / 暂停时用）。 */
+    /** 立刻把条形清零并重绘空白（关闭频谱窗 / 暂停时用）。 */
     public void clear() {
-        Arrays.fill(levels, 0);
+        Arrays.fill(amplitudes, 0);
         Arrays.fill(targets, 0);
         GraphicsContext g = canvas.getGraphicsContext2D();
         if (g != null) {
@@ -140,7 +159,31 @@ public final class SpectrumView {
         }
     }
 
-    private void draw(double now) {
+    /**
+     * 封面缩放：低频越猛，封面弹得越大。
+     *
+     * <p>权威 {@code MusicManager.java:207-213}：
+     * <pre>
+     *   double var9 = max( sqrt(amplitudes[i]) - 1000 )  for i in 0..2
+     *   float scale = 1.0F + round( var9 / (4750-1000) * 0.14F * 75 ) / 75
+     * </pre>
+     * 取整到 1/75 的档位，所以是「跳变」而不是连续缩放——
+     * 少了这层取整，封面会随低频连续抖，看着廉价。
+     */
+    public static double coverScale(double[] amplitudes) {
+        double peak = 0;
+        for (int i = 0; i < 3 && i < amplitudes.length; i++) {
+            peak = Math.max(peak, Math.sqrt(amplitudes[i]) - 1000.0);
+        }
+        if (peak <= 0) {
+            return 1.0;
+        }
+        double raw = 1.0 + Math.round(peak / 3750.0 * 0.14 * 75.0) / 75.0;
+        // 上限 1 + 0.14 = 1.14，peak 超过 3750 后不再继续放大
+        return Math.min(1.14, raw);
+    }
+
+    private void draw(long now) {
         GraphicsContext g = canvas.getGraphicsContext2D();
         if (g == null) {
             return;
@@ -149,55 +192,77 @@ public final class SpectrumView {
         final double h = canvas.getHeight();
         g.clearRect(0, 0, w, h);
 
-        // 帧率补偿，保证不同刷新率下衰减速度一致（原版 dt 逻辑）
-        double dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 1000 / 60;
-        lastDrawTime = now;
+        // ---- 帧率实测，对应 Minecraft.getFps() ----
+        if (lastFrameNanos > 0) {
+            double deltaSec = (now - lastFrameNanos) / 1_000_000_000.0;
+            if (deltaSec > 0 && deltaSec < 1.0) {
+                // 指数平滑，避免单帧抖动把 alpha 甩飞
+                fps = fps * 0.9 + (1.0 / deltaSec) * 0.1;
+            }
+        }
+        lastFrameNanos = now;
 
-        // ===== 平滑：复刻 sigmarebase onRender2D =====
-        // 原版每帧 alpha = min(0.335 * 60 / MinecraftFps, 1)。游戏跑在 300~1100FPS，
-        // 实测等效时间常数 τ 稳定在 49.0ms（系数 0.335 → τ = 16.67/0.335 ≈ 49.8ms）。
-        // 按 τ 做指数步进，任何刷新率下曲线都与原版一致。
-        double tauMs = 1000 / (Math.max(0.001, spectrumSmoothing) * 60);
-        double alpha = Math.min(1, 1 - Math.exp(-dt / tauMs));
+        // ===== 平滑：复刻 onRender2D =====
+        // fps = 60 / 实际FPS；alpha = min(smoothing * fps, 1)
+        double frameRateComp = 60.0 / Math.max(1.0, fps);
+        double alpha = Math.min(1.0, Math.max(0.001, spectrumSmoothing) * frameRateComp);
 
         double[] data = feed.levels();
         if (data != null) {
             int n = Math.min(targets.length, data.length);
             System.arraycopy(data, 0, targets, 0, n);
         }
-        // 换歌 / 恢复播放后第一帧直接复制目标（原版 amplitudes.isEmpty() 分支）
         boolean snap = feed.consumeSnapRequest();
-        for (int i = 0; i < levels.length; i++) {
-            if (snap) {
-                levels[i] = targets[i];
+        for (int i = 0; i < amplitudes.length; i++) {
+            if (snap || amplitudes[i] == 0) {
+                // 对应 if (amplitudes.isEmpty()) amplitudes = targets
+                amplitudes[i] = targets[i];
                 continue;
             }
-            double next = levels[i] + (targets[i] - levels[i]) * alpha;
-            levels[i] = Double.isFinite(next)
-                    ? Math.max(0, Math.min(SpectrumFeed.MAX_AMPLITUDE, next))
-                    : 0;
+            double next = amplitudes[i] - (amplitudes[i] - targets[i]) * alpha;
+            amplitudes[i] = Double.isFinite(next)
+                    ? Math.min(MAX_AMPLITUDE, Math.max(0.0, next))
+                    : 0.0;
         }
 
-        // ===== 1:1 复刻 sigmarebase renderSpectrum =====
-        // 条宽 ceil(画布宽 / 114)；条高按原版绝对像素高度，不随频谱窗高度缩放
-        double sigmaBarWidth = Math.ceil(w / BAR_COUNT);
-        double sigmaAmp = (GAME_FRAMEBUFFER_HEIGHT / 1080) * spectrumScale;
+        // ===== renderSpectrum 复刻 =====
+        double barWidth = Math.ceil(w / BAR_COUNT);
+        double heightRatio = (REFERENCE_HEIGHT / 1080.0) * spectrumScale;
 
-        // 预分配每帧高度数组，避免高频 GC
-        double[] heights = new double[levels.length];
-        for (int i = 0; i < levels.length; i++) {
-            double refHeight = Math.sqrt(levels[i]) / 12 - 5;
-            heights[i] = Math.min(h, Math.max(0, refHeight) * sigmaAmp);
+        double[] heights = new double[amplitudes.length];
+        for (int i = 0; i < amplitudes.length; i++) {
+            double refHeight = Math.sqrt(amplitudes[i]) / 12.0 - 5.0;
+            heights[i] = Math.max(0, refHeight) * heightRatio;
         }
 
-        // 灰色底条，左→右渐隐
+        // 1) 灰底条，左→右渐隐
         for (int i = 0; i < BAR_COUNT; i++) {
-            double x = i * sigmaBarWidth;
+            double x = i * barWidth;
             if (x >= w) {
                 break;
             }
             g.setFill(barStyles[i]);
-            g.fillRect(x, h - heights[i], sigmaBarWidth, heights[i]);
+            g.fillRect(x, h - heights[i], barWidth, heights[i]);
+        }
+
+        // 2) 条形内叠加模糊封面，alpha 0.4。
+        //    原版走 OpenGL stencil（initStencilBuffer → configureStencilTest → drawImage），
+        //    JavaFX 没有 stencil；这里改成「逐条按条形区域绘制」达到同样效果，
+        //    避免为了一个 clip 引入 Path。
+        javafx.scene.image.Image overlay = overlayImage;
+        if (overlay != null && overlay.getWidth() > 0 && overlay.getException() == null) {
+            g.save();
+            g.setGlobalAlpha(0.4);
+            for (int i = 0; i < BAR_COUNT; i++) {
+                double x = i * barWidth;
+                if (x >= w) {
+                    break;
+                }
+                if (heights[i] > 0) {
+                    g.drawImage(overlay, x, h - heights[i], barWidth, heights[i]);
+                }
+            }
+            g.restore();
         }
     }
 }

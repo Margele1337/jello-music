@@ -68,34 +68,45 @@
 - [x] **频谱参数接线** —— 之前是「死开关」：`Settings` 里定义了
       `spectrumScale` / `spectrumSigmaSmoothing` / `spectrumAvDelay` / `spectrumLocked`，
       但 `SpectrumView` 一个都不读，HUD 尺寸 220×60、48 频段、FFT 2048 写死。
-      按 `src/views/SpectrumHUD.vue` + `PlayerEngine.vue` 整体重做后发现
-      **原先的内核也是错的**，一并修掉：
+      整体重做后发现**原先的内核也是错的**，一并修掉。
 
-  | 项 | 原先（错） | 现在（对齐原版） |
-  |---|---|---|
-  | FFT 长度 | 2048 | **1024**（`SPECTRUM_FFT_SIZE`） |
-  | 频段数 | 48 个对数分箱 | **114** 直通 FFT bin（`SPECTRUM_BAR_COUNT`） |
-  | 窗函数 | 加 Hann 窗 | **不加**（原版 `createSpectrumFft` 直接搬数组） |
-  | PCM 量纲 | 除 32768 归一化到 -1..1 | **保留 Int16 原始量纲** |
-  | 幅度 | 归一化到 0..1 | **不归一化**，上限 `2.256e7` |
-  | 消费方式 | `toLogBands` 对数分箱 | `takeBins` 直取前 114 个 bin |
+      > **对齐基准（2026-09-12 确认）**：以 `C:\Users\xu171\IdeaProjects\sigmarebase`
+      > 的 `MusicManager.renderSpectrum()` 为权威，**不是** Electron 版。
+      > 两者参数不同（PCM 量纲 / 平滑公式 / 队列长度），下次动内核前先确认对齐哪边。
 
-      - [x] `spectrumSigmaSmoothing` —— `tauMs = 1000/(smoothing*60)`，
-            `alpha = 1-exp(-dt/tau)`，按 dt 步进所以任何刷新率下曲线一致
-      - [x] `spectrumScale` —— `sigmaAmp = (1009/1080) * scale`，
-            条高 `max(0, sqrt(levels)/12-5) * sigmaAmp`（原版实测游戏窗口 1920x1009）
+  | 项 | 原先（错） | 现在（对齐 sigmarebase） | 出处 |
+  |---|---|---|---|
+  | FFT 长度 | 2048 | **1152**（一个 MP3 帧的采样数） | `MusicManager:398` |
+  | 频段数 | 48 个对数分箱 | **114** 直通 bin | `renderSpectrum:172` |
+  | 窗函数 | 加 Hann 窗 | **不加** | `JavaFFT:48-53` |
+  | PCM 量纲 | 保留 Int16 | **除 32768 → -1..1** | `MathHelper:21-30` |
+  | 幅度 | 归一化到 0..1 | **不归一化**，上限 `2.256e7` | `onRender2D:149` |
+  | 队列上限 | 4（Electron 值） | **18** | `MusicManager:405` |
+  | 平滑 | τ 指数步进 | `alpha = 0.335*(60/实际FPS)` 插值 | `onRender2D:144-151` |
+  | 消费方式 | `toLogBands` 分箱 | `takeBins` 直取 | `calculateAmplitudes:32-41` |
+
+      - [x] `spectrumSigmaSmoothing` —— `alpha = min(smoothing * (60/实际FPS), 1)`。
+            Java 侧没有 `Minecraft.getFps()`，用画布实测帧率代替
+      - [x] `spectrumScale` —— `(参考窗口高/1080) * scale`，
+            条高 `max(0, sqrt(a)/12-5) * heightRatio`
       - [x] `spectrumAvDelay` —— 预读领先量，夹到 [0, 2000]，默认 590ms
       - [x] `spectrumLocked` —— 对应原版 `setIgnoreMouseEvents`。
             JavaFX 21 没有公开的鼠标穿透 API（`Scene` 上无 `setMouseTransparent`，
             `com.sun.javafx.tk.quantum.WindowUtils` 在 21 已移除），
             改用 JNA + Win32 `WS_EX_TRANSPARENT`（`system/MousePassthrough.java`）；
             双击切换解锁态，锁定时可拖窗口并记住位置
-      - [x] sigmaQueue 爆发队列 —— 原版实测音频线程每 ~250ms 放行一批、
-            一次推 9~10 帧（间隔直方图 0ms×453 / 250ms×59），
-            所以观感是「保持 250ms → 整体前移 ~10 帧」的台阶。
-            队列容量 4 帧（`SPECTRUM_SIGMA_QUEUE_MAX`）
-      - [x] 暂停语义 —— 暂停清空队列 + 条形立即消失，恢复时首帧直接吸附不做渐变
+      - [x] 暂停语义 —— 对应 `while(!playing){ sleep(300); visualizerData.clear(); }`，
+            是「最多 300ms 内清空」而非立即清；恢复播放时首帧吸附不做渐变
       - [x] 频谱窗位置持久化（对应 `electron/appServices.js:165`、`main.js:459`）
+      - [x] **条形内叠加模糊封面** —— 原版走 OpenGL stencil
+            （`initStencilBuffer` → `configureStencilTest` → `drawImage(..., 0.4)`），
+            JavaFX 无 stencil，改成「逐条按条形区域绘制」
+      - [x] **左下角信息块** —— 100x100 圆角封面（圆角 14、描边 alpha 0.3）+ 歌名，
+            歌名两层叠出描边（深青 0.5 + 浅色 0.7）。
+            封面随低频缩放：`1 + round(peak/3750 * 0.14 * 75)/75`，取前 3 个频段，
+            钳在 1.14；锚点 (60, H-55) 而非封面中心。
+            见 `ui/SpectrumInfoBlock.java` 与 `SpectrumView.coverScale`
+      - [x] 频谱窗尺寸 220×60 → **420×130** —— 220x60 装不下 100x100 的信息块
       - [ ] **待验证**：真实播放时条高观感。离屏探针只能验公式与参数落地，
             实际条形高度要真机听一遍（`run.bat probe-play` 只验解码，不画频谱）
 - [x] 播放模式持久化 —— 原版 `localStorage['player_playback_mode']`（`AppPrefs`，默认 1）

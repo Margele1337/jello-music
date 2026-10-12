@@ -133,35 +133,52 @@ sigmarebase 是 Minecraft 客户端模组，它的音乐播放器 UI 依赖 `glS
 
 原 Electron 版里这些推导过程记录在 `electron/appServices.js` 的注释里，可作为实现依据。
 
-## 频谱：为什么条高不能用「归一化柱状图」
+## 频谱：以 sigmarebase 为准，不是以 Electron 版为准
 
-频谱是本项目里最容易写错的一块，因为**上游量和下游公式的量纲必须严格对齐**。
-原版（`PlayerEngine.vue` + `SpectrumHUD.vue`）的整条链路是：
+频谱是本项目里最容易写错的一块，因为它有**两份互相打架的参考实现**：
 
-```
-FFT(1024) → levels[i] = sqrt(re*re+im*im)      // Int16 原始量纲，不归一化、不加窗
-          → levels += (targets-levels)*alpha  // alpha 按 τ 指数步进，与帧率无关
-          → height = max(0, sqrt(levels)/12 - 5) * sigmaAmp
-            其中 sigmaAmp = (1009/1080) * spectrumScale
-```
-
-`levels` 的上限是 `2.256e7`，所以**上游任何一次归一化 / 分箱 / 加窗都会让条高整体不对**。
-之前 Java 版用的是「FFT 2048 + 48 个对数频段 + 归一化到 0..1 + 彩色柱状图」，
-是「人耳感知的通用做法」，跟原版的 Sigma 形态完全是两回事。
-
-| 项 | 原版取值 | 备注 |
+| 参考 | 位置 | 本项目怎么用 |
 |---|---|---|
-| `SPECTRUM_FFT_SIZE` | 1024 | JavaFX `MediaPlayer` 不吐 PCM，只能旁路解码 |
-| `SPECTRUM_BAR_COUNT` | 114 | 每根条**直接对应一个 FFT bin**，不分箱 |
-| `SPECTRUM_MAX_AMPLITUDE` | 2.256e7 | sigmarebase amplitudes 上限 |
-| `GAME_FRAMEBUFFER_HEIGHT` | 1009 | 实测游戏窗口 1920x1009；条高按**绝对像素**算，与频谱窗高度无关 |
+| **sigmarebase（权威）** | `C:\Users\xu171\IdeaProjects\sigmarebase` → `MusicManager.renderSpectrum()` | **内核按它做** |
+| Electron 版 | `src/views/SpectrumHUD.vue` + `PlayerEngine.vue` | 面板布局、设置项沿用它 |
 
-### 台阶感是刻意的
+两者参数**不一样**：PCM 量纲、平滑公式、队列长度都不同。
+既然目标是移植 Electron 版，本该以 Electron 版为准；但用户明确要求「按 sigmarebase 改」，
+所以内核改成了 sigmarebase 的定义。**下次再动频谱内核前，先确认对齐哪一边。**
 
-原版的音频线程**不是均匀推帧**的：约每 250ms 被 `SourceDataLine` 放行一次，
-一次推入 9~10 帧（间隔直方图 0ms×453 / 250ms×59）。
-所以正确的观感是「保持 250ms 不动 → 整体前移 ~10 帧」，不是平滑流动。
-`SpectrumFeed` 用 `sigmaQueue`（容量 4 帧）+ 250ms 批量入队复刻这个结构。
+sigmarebase 的权威链路（`MusicManager.java` 行号）：
+
+```
+PCM 字节 → convertToPCMFloatArray (MathHelper:21-30)   sample / 32768.0f  → -1..1
+        → new JavaFFT(len).transform() (JavaFFT:48-53)  不加窗
+        → calculateAmplitudes (MathHelper:32-41)        sqrt(re²+im²)，长度 len/2
+        → visualizerData 队列 (MusicManager:398-407)    上限 18，超了 remove(0)
+        → onRender2D (MusicManager:144-151) 平滑
+             fps = 60 / Minecraft.getFps()
+             alpha = min(smoothing * fps, 1)            // smoothing 默认 0.335F
+             a[i] = clamp(a[i] - (a[i]-target)*alpha, 0, 2.256e7)
+        → renderSpectrum (MusicManager:171-240) 绘制
+             height = max(0, sqrt(a[i])/12 - 5) * (窗口高/1080)   绝对像素
+             底条 alpha = 0.2 * (1 - (i+1)/114)
+             再 stencil 叠加 songThumbnail，alpha 0.4
+             左下角信息块：100x100 圆角封面 + 歌名
+               封面缩放 = 1 + round(peak/3750 * 0.14 * 75)/75，peak 取前 3 个频段
+               缩放锚点 (60, H-55)，不是封面中心
+```
+
+### 踩过的坑
+
+- **PCM 量纲**：sigmarebase 除 32768，Electron 的 `spectrumTapProcessor` 不除（Int16Array）。
+  别被 Electron 版带偏——那是它为对齐 sigmarebase 自己补的一层近似。
+- **平滑公式**：sigmarebase 是 `alpha = 0.335 * (60/实际FPS)` 的插值；
+  Electron 版换算成 `τ = 1/(smoothing*60)` 的指数步进。两者在不同帧率下曲线接近，
+  但不是同一个表达式。
+- **坐标方向**：sigmarebase 的 y 是 `H - 偏移`（原点在左上、y 向下）；
+  JavaFX 原点在左下、y 向上，所以 `H - offset` **直接就是** JavaFX 的 y，
+  **不能再取负**。写成 `-offset` 会把封面甩到窗口外——这个 bug 是被 `probe-ui`
+  的「缩放后仍在窗内」断言抓到的，肉眼看截图只会觉得「封面不见了」。
+- **`Parent.layout()` 和 `Region.layoutChildren()` 都是 final**，不能覆写。
+  要按自定义规则摆子节点，只能监听 `width/heightProperty` 后手动 `resizeRelocate`。
 
 ### 鼠标穿透：JavaFX 没有这个开关
 
@@ -173,7 +190,6 @@ JavaFX 21 **没有公开的鼠标穿透 API**——`Scene` 上不存在 `setMous
 所以 `system/MousePassthrough.java` 反射取原生句柄，再用 JNA 设
 `WS_EX_TRANSPARENT`——这正是 Electron 内部做的事，语义一致（点击落到下层窗口）。
 取不到句柄时不抛异常，退化成「不穿透」，不影响播放与绘制。
-
 ## 改完 UI 自己看一眼
 
 `probe-ui` 会额外把**新手教程页按全屏尺寸**渲染成
@@ -259,15 +275,17 @@ com.jello.music
 ├── model/KuGouCredentials.java 登录态与 Authorization 拼装
 ├── model/Song.java             歌曲
 ├── model/ResultCard.java       右栏卡片：歌曲卡 / 歌单卡
-├── player/Fft.java             radix-2 FFT（不加窗，与原版 JavaFFT 一致）
-├── player/SpectrumTap.java     旁路拉流解码取 PCM
-├── player/SpectrumFeed.java    sigmaQueue 爆发队列 + 后台供给
+├── player/Fft.java             radix-2 FFT（不加窗，对齐 sigmarebase JavaFFT）
+├── player/SpectrumTap.java     旁路拉流解码取 PCM（/32768 归一化）
+├── player/SpectrumFeed.java    visualizerData 队列（上限 18）+ 后台供给
 ├── player/PlayQueue.java       播放队列与循环模式
 ├── system/RightShiftPoller.java 全局右 Shift（Win32 GetAsyncKeyState 轮询）
 ├── system/MousePassthrough.java 频谱窗鼠标穿透（Win32 WS_EX_TRANSPARENT）
 ├── ui/SigmaAtlas.java          字形图集载入与度量
 ├── ui/SigmaTextView.java       canvas 文字节点（SigmaText.vue 1:1）
 ├── ui/SigmaScrollablePanel.java 滚动容器（SigmaScrollablePanel.vue 1:1）
+├── ui/SpectrumView.java       频谱条绘制（renderSpectrum 1:1）
+├── ui/SpectrumInfoBlock.java  频谱窗左下角信息块（封面 + 歌名 + 低频缩放）
 ├── ui/                         JavaFX 界面，坐标全部取自 Theme
 ├── tools/PipelineProbe.java    端到端链路探针（无窗口）
 ├── tools/UiProbe.java          静默 UI 校验（不弹窗，65 项断言）

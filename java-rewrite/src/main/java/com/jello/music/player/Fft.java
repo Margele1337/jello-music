@@ -81,30 +81,28 @@ public final class Fft {
         }
     }
 
-    /**
-     * 实数信号 → <b>原始</b>幅度谱（不加窗、不归一化）。频谱渲染链路的唯一入口。
-     *
-     * <p>1:1 对应原版 {@code PlayerEngine.vue}：
-     * <pre>
-     *   for (let i = 0; i&lt;SPECTRUM_FFT_SIZE; i++) spectrumSamples[i] = block[i];
-     *   spectrumFft(spectrumSamples, spectrumReal, spectrumImag);
-     *   for (let i = 0; i&lt;SPECTRUM_BAR_COUNT; i++)
-     *       spectrumRaw[i] = Math.sqrt(re*re + im*im);
-     * </pre>
-     *
-     * <p>两个容易踩空的点：
-     * <ul>
-     *   <li><b>不加窗</b>：原版的 {@code createSpectrumFft} 直接把输入搬进输出，
-     *       没有 Hann 窗。窗函数会让量纲偏小，与原版对不上，所以这里也刻意不加。</li>
-     *   <li><b>输入是 Int16 原始量纲</b>（±32768），不是 -1..1 归一化值。
-     *       渲染端 {@code SpectrumHUD.vue} 用 {@code sqrt(levels)/12 - 5}
-     *       这种绝对公式，上游一旦缩放，条高就整体不对了。</li>
-     * </ul>
-     *
-     * @param samples 实数采样，长度须为 size
-     * @return 长度 size/2 的原始幅度谱
-     */
-    public double[] rawMagnitudes(double[] samples) {
+/**
+ * 实数信号 → <b>原始</b>幅度谱（不加窗、不归一化）。频谱渲染链路的唯一入口。
+ *
+ * <p>1:1 对应 sigmarebase {@code MathHelper.calculateAmplitudes}（:32-41）：
+ * <pre>
+ *   double[] amplitudes = new double[realPart.length / 2];
+ *   for (int i = 0; i&lt;amplitudes.length; i++)
+ *       amplitudes[i] = Math.sqrt(realPart[i]*realPart[i] + imaginaryPart[i]*imaginaryPart[i]);
+ * </pre>
+ *
+ * <p>配合 {@code JavaFFT.transform}（:48-53）——那一版<b>没有窗函数</b>，
+ * 直接把输入搬进输出。所以这里也不加窗：加了量纲就偏小，与原版对不上。
+ *
+ * <p><b>输入量纲</b>是 {@code MathHelper.convertToPCMFloatArray} 产出的 -1..1，
+ * 即调用方负责除 32768；本方法不再做缩放，也<b>不归一化</b>——
+ * 渲染端用的是 {@code sqrt(amplitudes)/12 - 5} 这种绝对公式，
+ * 上游一旦归一化，条高就整体不对了。
+ *
+ * @param samples 实数采样，长度须为 size
+ * @return 长度 size/2 的原始幅度谱
+ */
+public double[] rawMagnitudes(double[] samples) {
         if (samples.length != size) {
             throw new IllegalArgumentException("采样长度必须为 " + size + "，收到 " + samples.length);
         }

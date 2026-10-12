@@ -163,13 +163,18 @@ public final class SpectrumTap implements AutoCloseable {
             if (len <= 0) {
                 break;
             }
-            // 保留 Int16 原始量纲（±32768），与原版 spectrumTapProcessor 的 Int16Array 一致。
-            // 不要除 32768：渲染端 sqrt(levels)/12-5 是绝对公式，上游缩放条高就整体不对了。
+            // 量纲按 mod 权威实现 MathHelper.convertToPCMFloatArray:21-30：
+            //   pcmValues[i] = (float) sample / 32768.0F;
+            // 即归一化到 -1..1 的 float。
+            //
+            // 注意别被 Electron 版的 spectrumTapProcessor 带偏——那边是 Int16Array
+            // 不除 32768，是 Electron 侧为了对齐 sigmarebase 自己补的一层近似。
+            // 本项目按 sigmarebase（sigmarebase）的原始实现走。
             int consumed;
             if (channels == 1) {
                 consumed = Math.min(len, want - filled);
                 for (int i = 0; i < consumed; i++) {
-                    mono[filled + i] = buf[i];
+                    mono[filled + i] = buf[i] / 32768.0;
                 }
                 filled += consumed;
             } else {
@@ -177,7 +182,7 @@ public final class SpectrumTap implements AutoCloseable {
                 int pairs = len / 2;
                 consumed = Math.min(pairs, want - filled);
                 for (int i = 0; i < consumed; i++) {
-                    mono[filled + i] = buf[i * 2];
+                    mono[filled + i] = buf[i * 2] / 32768.0;
                 }
                 filled += consumed;
             }
