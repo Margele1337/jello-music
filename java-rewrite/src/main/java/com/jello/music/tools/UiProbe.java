@@ -359,6 +359,49 @@ writeSnapshot(root, pngPath);
         checkSpectrumParams();
         checkRightTitleBar();
         checkDeadSwitches();
+        checkSingleInstance();
+    }
+
+    /**
+     * 单实例锁的断言。
+     *
+     * <p><b>只测同 JVM 内重入这一种情况</b>：跨进程行为（第二个 exe 能否被挡、
+     * 唤醒信号能否送达）需要同时起两个进程，离屏探针里做不到；
+     * 那部分靠手工跑两个进程验证过。
+     *
+     * <p>同 JVM 内重复 {@code tryLock()} 抛的是
+     * {@link java.nio.channels.OverlappingFileLockException} 而非返回 null——
+     * 这个分支不处理的话，探针自己就会把锁吃掉。
+     */
+    private static void checkSingleInstance() {
+        check("单实例锁在 Windows 上应可用",
+                com.jello.music.system.SingleInstance.isSupported()
+                        || !System.getProperty("os.name", "").toLowerCase().contains("win"),
+                "os=" + System.getProperty("os.name"));
+
+        var first = com.jello.music.system.SingleInstance.tryAcquire();
+        check("首次能拿到单实例锁", first != null, "got null");
+        if (first == null) {
+            return;
+        }
+        check("持锁者能报出自己的 pid",
+                first.holderPid() != null && !first.holderPid().isBlank(),
+                "pid=" + first.holderPid());
+
+        var second = com.jello.music.system.SingleInstance.tryAcquire();
+        check("同进程重入拿不到锁（应为 null）", second == null,
+                second == null ? "null" : "拿到了锁");
+
+        // 没有别的进程时不会有唤醒信号，take 应返回 false
+        check("无信号时 takePendingCommand 为 false",
+                !first.takePendingCommand(), "unexpected signal");
+
+        first.close();
+        var third = com.jello.music.system.SingleInstance.tryAcquire();
+        check("close 后可以再次获取", third != null, "got null");
+        if (third != null) {
+            third.close();
+        }
     }
 
     /**

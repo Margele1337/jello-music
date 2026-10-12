@@ -11,6 +11,7 @@ import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
 import com.jello.music.system.AutoStart;
 import com.jello.music.system.MousePassthrough;
+import com.jello.music.system.SingleInstance;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.system.TrayIconHelper;
 import com.jello.music.system.UiScale;
@@ -299,6 +300,9 @@ dock = new EdgeDock(stage);
         installDragHandlers(root);
         dock.expand();
         reveal.expand(null);
+
+        // 二次启动唤醒：拿到锁的那个实例负责响应
+        watchSecondInstance();
 
         // 教程开着的话，Sigma 窗口先不显示；等用户点「完成」再显示。
         if (onboardingStage != null) {
@@ -1231,6 +1235,44 @@ private void installDragHandlers(javafx.scene.Node overlay) {
         playerPanel.setDockTriggerActive(false);
     }
 
+    /**
+     * 轮询二次启动信号，把已有窗口提到最前。
+     *
+     * <p>对应原版 {@code second-instance}（electron/main.js:111-133）：
+     * 窗口最小化了就 restore，否则把 Sigma 窗口拉到最前——
+     * 贴边收起时会顺带滑出，这就是「再点一次图标就能唤回来」的体验。
+     *
+     * <p>Java 侧没有 OS 级「二次启动回调」，只能靠 {@link SingleInstance} 的
+     * 请求文件轮询。500ms 间隔足够（人感知不到），也够省。
+     */
+    private void watchSecondInstance() {
+        if (instance == null) {
+            return;
+        }
+        new AnimationTimer() {
+            @Override
+            public void handle(long now) {
+                if (!instance.takePendingCommand()) {
+                    return;
+                }
+                if (sigmaStage == null) {
+                    return;
+                }
+                if (dock != null && dock.isDocked()) {
+                    expandDock();
+                }
+                // 面板是 TRANSPARENT 无边框窗，JavaFX 不允许最小化，
+                // 所以原版的 isMinimized → restore 这一支在这里没有对应物，
+                // 只需 toFront + requestFocus 把它拉到最前。
+                sigmaStage.toFront();
+                sigmaStage.requestFocus();
+                if (spectrumStage != null && spectrumStage.isShowing()) {
+                    spectrumStage.toFront();
+                }
+            }
+        }.start();
+    }
+
 /**
      * 初始化登录态与凭据。
      *
@@ -1302,7 +1344,26 @@ public void stop() {
         disposePlayer();
     }
 
+    /** 单实例锁：抢不到就是二次启动，通知已有实例唤醒后立刻退出。 */
+    private static SingleInstance instance;
+
     public static void main(String[] args) {
+        // 对应原版 electron/main.js:105-109：
+        //   if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
+        // 必须在 launch() 之前判断——一旦 launch 就会建窗口，退出时可能闪一下
+        if (SingleInstance.isSupported()) {
+            instance = SingleInstance.tryAcquire();
+            if (instance == null) {
+                // tryAcquire 已经给已有实例写过唤醒信号，这里直接退
+                System.out.println("[Jello] 已在运行，唤醒已有实例");
+                return;
+            }
+        }
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (instance != null) {
+                instance.close();
+            }
+        }));
         launch(args);
     }
 

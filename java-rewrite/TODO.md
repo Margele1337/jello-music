@@ -157,7 +157,17 @@
 - [ ] 其余 11 个全局快捷键（目前只有 RSHIFT）
 - [ ] 任务栏缩略图工具条（上一首/播放暂停/下一首）、Jump List
 - [ ] 桌面歌词窗、KeyStrokes HUD（WASD + 鼠标键覆盖层）
-- [ ] 自动更新、单实例锁、`jello://` 协议、内置 api 子进程、WebSocket API 服务（6520）
+- [x] **单实例锁** —— 对应 `electron/main.js:105-133` 的
+      `requestSingleInstanceLock` + `second-instance`。见 `system/SingleInstance.java`：
+      - Java 没有互斥体 API，用 `FileLock`（OS 文件句柄支撑，进程退出自动释放，
+        不像 pid 文件那样崩溃后留僵尸锁）
+      - 拿不到锁 → 给已有实例写唤醒信号后退出（`MainApp.main` 里在 `launch()` **之前**判断，
+        否则窗口会闪一下）
+      - 唤醒动作：贴边收起时先 `expandDock()` 再 `toFront`，
+        对应原版「restore 后把 Sigma 窗口提到最前」
+      - 坑：同一 JVM 内重复 `tryLock()` 抛 `OverlappingFileLockException` 而非返回 null；
+        Windows 上持有 `FileLock` 的文件不允许另一个通道读，所以 pid 要记在内存里
+- [ ] 自动更新、`jello://` 协议、内置 api 子进程、WebSocket API 服务（6520）
 - [x] 设置持久化：教程标记、登录态、播放模式、9 项设置、频谱窗位置
       （原版还有歌词窗位置大小与频谱窗尺寸，后者随窗口固定 220×60 未做）
 
