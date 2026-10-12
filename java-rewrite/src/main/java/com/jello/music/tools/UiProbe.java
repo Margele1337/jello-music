@@ -544,64 +544,101 @@ writeSnapshot(root, pngPath);
      * 之前 Java 版无条件用 elastic，展开时曲线就错了。
      */
     /**
- * 验证 {@link ElasticReveal} 不碰 opacity。
+ * 验证两层 alpha 的分工与合成。
  *
- * <p>这是本轮修掉的 bug 的回归防线：{@code overlay} 是 {@code root} 的父容器，
- * 父子节点的 opacity 会<b>相乘</b>。之前 {@code EdgeDock} 设 0.5（收起半透明）、
- * {@code ElasticReveal} 又设 0.5，叠成 0.25 —— 视觉上就是「收起后比原版暗得多」。
+ * <p><b>mod 的 alpha 是逐层相乘的</b>（这里曾走过一次弯路）：
+ * <pre>
+ *   ClickGuiScreen.draw:295  super.draw(partialTicks * Math.min(1.0F, alphaFactor) * fadeAmount);
+ *   CustomGuiScreen.draw:219 drawChildren(partialTicks);       // 逐层往下传
+ *   MusicPlayer.draw:278     partialTicks *= 0.5F + (1.0F - field20873.calcPercent()) * 0.5F;
+ * </pre>
+ * 子面板收到的 {@code partialTicks} 已经含了父层的 alphaFactor，再乘一次自己那层。
+ * 所以最终 alpha = {@code min(1, alphaFactor) * (0.5 + (1-p)*0.5)}。
  *
- * <p>做法：造一个真的 Pane 当 target，先设成某个非 1 的 opacity（模拟 EdgeDock
- * 已设的半透明），然后跑一遍 expand / collapse / reset / resetScale，
- * 每次都检查 opacity 没变。
+ * <p>中途曾把 ElasticReveal 的 opacity 整个删掉，理由是「别相乘」——那是错的。
+ * mod 就是相乘的，删掉后展开起始会偏亮（0.5 而非 0.5×0.5）。
+ *
+ * <p>JavaFX 父子 {@code opacity} 恰好也相乘，所以用 overlay/root 的分层
+ * 正好同构。这里钉住三件事：
+ * <ol>
+ *   <li>展开/收起两态都写 opacity，且夹到 1（elastic 会过冲到 1.03）</li>
+ *   <li>终值复位成 1</li>
+ *   <li>scale 与 alpha 的公式仍分别对</li>
+ * </ol>
  */
 private static void checkElasticRevealKeepsOpacity() {
         javafx.scene.layout.Pane target = new javafx.scene.layout.Pane();
-        // 模拟 EdgeDock 已把 opacity 设成收起态的 0.5
-        target.setOpacity(0.5);
         ElasticReveal reveal = new ElasticReveal(target);
-
-        check("构造后不改动既有 opacity",
-                Math.abs(target.getOpacity() - 0.5) < 1e-9,
-                "got=" + target.getOpacity());
-
-        // expand 会启动 AnimationTimer，这里不进 FX 循环，
-        // 靠反射直接调 applyFrame 验证它不写 opacity
-        boolean writesOpacity = false;
+        // 反射的受检异常统一包成 RuntimeException：
+        // 这里只在探针里跑，方法名写错就是测试代码坏了，不该静默放过
+        java.lang.reflect.Method m;
+        java.lang.reflect.Field fAnimate;
         try {
-            var m = ElasticReveal.class.getDeclaredMethod("applyFrame", double.class);
+            m = ElasticReveal.class.getDeclaredMethod("applyFrame", double.class);
             m.setAccessible(true);
-            // 分别以「展开」和「收起」两种模式各跑一帧
-            var fAnimate = ElasticReveal.class.getDeclaredField("animateScale");
+            fAnimate = ElasticReveal.class.getDeclaredField("animateScale");
             fAnimate.setAccessible(true);
-            for (boolean animate : new boolean[]{true, false}) {
-                fAnimate.setBoolean(reveal, animate);
-                target.setOpacity(0.5);
-                m.invoke(reveal, 0.5);
-                if (Math.abs(target.getOpacity() - 0.5) > 1e-9) {
-                    writesOpacity = true;
-                }
-            }
-            // finish / reset / resetScale 同样不能写
-            for (String name : new String[]{"finish", "reset", "resetScale"}) {
-                var mm = ElasticReveal.class.getDeclaredMethod(name);
-                mm.setAccessible(true);
-                target.setOpacity(0.5);
-                mm.invoke(reveal);
-                if (Math.abs(target.getOpacity() - 0.5) > 1e-9) {
-                    writesOpacity = true;
-                }
-            }
         } catch (ReflectiveOperationException e) {
-            check("反射调用 ElasticReveal 私有方法", false, String.valueOf(e));
+            check("反射拿到 ElasticReveal 的 applyFrame / animateScale", false,
+                    String.valueOf(e));
             return;
         }
-        check("ElasticReveal 全程不写 opacity（否则与 EdgeDock 相乘）",
-                !writesOpacity, "发现它改了 opacity");
-        check("跑完仍保持 EdgeDock 设的 0.5",
-                Math.abs(target.getOpacity() - 0.5) < 1e-9,
-                "got=" + target.getOpacity());
-        // 最后复位，别把 0.5 留给后面的断言
-        target.setOpacity(1);
+
+        // 展开：alphaFactor = elastic(p,0.8)*0.5+0.5，起点 0.5
+        try {
+            fAnimate.setBoolean(reveal, true);
+            m.invoke(reveal, 0.0);
+            check("展开态写 opacity（mod 的 alphaFactor 是两层相乘的一层）",
+                    Math.abs(target.getOpacity() - 0.5) < 1e-6,
+                    "got=" + target.getOpacity());
+            check("展开起点 scale == 1.25",
+                    Math.abs(target.getScaleX() - 1.25) < 1e-6,
+                    "got=" + target.getScaleX());
+
+            // 展开中段会过冲到 1.03，必须被 Math.min 夹到 1
+            for (double p = 0.1; p < 1.0; p += 0.02) {
+                m.invoke(reveal, p);
+                if (target.getOpacity() > 1.0 + 1e-9) {
+                    break;
+                }
+            }
+            check("展开中 opacity 不超过 1.0（elastic 过冲被 min 夹住）",
+                    target.getOpacity() <= 1.0 + 1e-9,
+                    "got=" + target.getOpacity());
+
+            // 收起：alphaFactor = elastic(p,1.0)，同样要夹到 1
+            fAnimate.setBoolean(reveal, false);
+            m.invoke(reveal, 0.5);
+            check("收起态也写 opacity（走 period=1.0 的 elastic）",
+                    Math.abs(target.getOpacity() - 1.0) < 1e-6,
+                    "got=" + target.getOpacity());
+            check("收起态 scale 恒为 1",
+                    Math.abs(target.getScaleX() - 1.0) < 1e-9,
+                    "got=" + target.getScaleX());
+
+            // 终值复位：finish / reset 都要把 overlay 层回到 1.0
+            for (String name : new String[]{"finish", "reset"}) {
+                java.lang.reflect.Method mm =
+                        ElasticReveal.class.getDeclaredMethod(name);
+                mm.setAccessible(true);
+                target.setOpacity(0.37);
+                mm.invoke(reveal);
+                check(name + " 把 overlay 层复位到 1.0",
+                        Math.abs(target.getOpacity() - 1.0) < 1e-9,
+                        "got=" + target.getOpacity());
+            }
+
+            // 两层相乘的合成值：展开起点 = 0.5(展开层) * 0.5(贴边层) = 0.25
+            fAnimate.setBoolean(reveal, true);
+            m.invoke(reveal, 0.0);
+            double overlayLayer = target.getOpacity();
+            double dockLayer = 0.5; // EdgeDock 收起稳态
+            check("展开起点两层合成 alpha == 0.25（对齐 mod 的逐层相乘）",
+                    Math.abs(overlayLayer * dockLayer - 0.25) < 1e-6,
+                    "got=" + (overlayLayer * dockLayer));
+        } catch (ReflectiveOperationException e) {
+            check("反射调用 ElasticReveal 私有成员", false, String.valueOf(e));
+        }
     }
 
     private static void checkExpandScale() {

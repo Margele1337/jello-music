@@ -107,7 +107,7 @@ public final class DockMotionProbe {
                     + " -> " + (stage.getX() + stage.getWidth() > area.getMaxX()
                     ? "越界，触发条应宽 41" : "未越界，触发条应宽 0"));
             System.out.println();
-            System.out.printf("%-8s %-10s %-8s %-8s%n", "t(ms)", "x", "alpha", "scale");
+            System.out.printf("%-8s %-10s %-8s %-8s %-8s %-8s%n", "t(ms)", "x", "alpha", "ovlAlpha", "composed", "scale");
             System.out.println("-".repeat(28));
 
             long t0 = System.nanoTime();
@@ -179,15 +179,17 @@ public final class DockMotionProbe {
             double x = stage.getX();
             double alpha = node.getOpacity();
             // overlay 上是缩放，root 上是透明度 —— 两者叠起来才是最终观感
-            double scale = overlay.getScaleX();
+            double scale = overlay.getScaleX();  // scale 单独一列
             if (firstX == 0) {
                 firstX = x;
             }
             if (ms - last >= 30) {
                 last = ms;
                 samples.add(new double[]{ms, x, alpha});
-                System.out.printf("%-8d %-10.1f %-8.3f %-8.4f%n",
-                        ms, x, alpha, scale);
+                // 两层相乘才是最终观感 —— mod 里 partialTicks 就是逐层往下乘的
+                double composed = alpha * overlay.getOpacity();
+                System.out.printf("%-8d %-10.1f %-8.3f %-8.4f %-8.4f%n",
+                        ms, x, alpha, overlay.getOpacity(), composed);
             }
             if (!printedArrive && Math.abs(x - targetX) < 1.0) {
                 printedArrive = true;

@@ -102,36 +102,44 @@
       - 关键在 `method13317`（`:247-251`）**按方向选缓动**：BACKWARDS（展开）走
         `easeOutQuad`，FORWARDS（收起）才走 `easeOutElastic`。
         之前 Java 版无条件用 elastic，展开时曲线是错的
-- [x] **两套透明度不能相乘** —— 这是「收起后明显比原版暗」的根因：
-      `overlay` 是 `root` 的**父容器**，父子 opacity 会相乘。
-      `EdgeDock` 设 0.5（收起半透明）、`ElasticReveal` 又设 0.5 → 实际渲染 **0.25**。
-      按 mod 的分层理清：`ClickGuiScreen.alphaFactor` 管**缩放**，
-      `MusicPlayer.partialTicks *= …` 管**透明度**，Java 侧也照此拆开：
-      `ElasticReveal` 从此**只动 scale，绝不碰 opacity**，
-      透明度统一由 `EdgeDock` 负责（`finish`/`reset` 里原先也有 `setOpacity(1)`，同样删掉）
-- [x] **收起时位置滑动与半透明同时进行** —— 之前是
+- [x] **透明度必须与 mod 一样：两层相乘** —— 这是本条最关键的地方，
+      上一轮曾改反过一次。mod 的 alpha 是**逐层往下乘**的：
+      ```
+      ClickGuiScreen.draw:295  super.draw(partialTicks * Math.min(1.0F, alphaFactor) * fadeAmount);
+      CustomGuiScreen.draw:219 drawChildren(partialTicks);      // 逐层传递
+      MusicPlayer.draw:278     partialTicks *= 0.5F + (1.0F - field20873.calcPercent()) * 0.5F;
+      ```
+      子面板收到的 `partialTicks` 已经含了父层的 `alphaFactor`，再乘自己那层。
+      最终 = `min(1, alphaFactor) × (0.5 + (1-p)×0.5)`。
+      JavaFX 父子 `opacity` 恰好也相乘，所以用 overlay/root 分层正好同构：
+      - `overlay.opacity` = `min(1, alphaFactor)`（展开层，`ElasticReveal` 负责）
+      - `root.opacity` = `0.5 + (1-p)×0.5`（贴边层，`EdgeDock` 负责）
+      - `scale` = `1.5 - alphaFactor×0.5`（`ClickGuiScreen:292`）
+      **必须用 `Math.min(1, ·)` 夹住**：elastic 会过冲到 1.03，
+      不夹的话展开中途会「亮过 100%」再暗回来（mod 里就是有 `Math.min`）
+- [x] 收起也走 `alphaFactor` 的第二个分支（`elastic(p, 1.0)`，**同样有过冲**），
+      不是一条单调淡出曲线；缩放保持 1（对应 `.sigma-shell--docked { animation: none }`）
+- [x] 收起时位置滑动与两层 alpha **同时**进行 —— 之前是
       `reveal.collapse(() -> dock.collapse())`，先原地淡 125ms 才开始滑出去，
-      比原版多一个顿挫。mod 里 `updatePanelDimensions` 插值位置的同时
-      `draw` 里的 `field20873` 也在降 alpha，是并行的。
-      现在直接 `dock.collapse()` + `reveal.resetScale()`
+      比原版多一个顿挫。mod 里三者并行
 - [x] `run.bat probe-dock` / `probe-spectrum` 两个子命令，
       改动画或频谱时能随手验
 
 ### 展开动画的实测数据（`run.bat probe-dock`）
 
-采样 overlay 的 scale 与 root 的 opacity，看**最终合成观感**：
+探针同时采样两层 alpha 与 scale，并算出**最终合成值**：
 
-| t(ms) | x | alpha | scale |
-|---|---|---|---|
-| 起始 | 1880 | 0.500 | 1.179 |
-| 99 | 1466 | 0.720 | 1.037 |
-| 195 | 1182 | 1.000 | **0.980**（回弹过冲） |
-| 482 | 1100 | 1.000 | 1.000 |
+| t(ms) | x | root.alpha | overlay.alpha | **composed** | scale |
+|---|---|---|---|---|---|
+| 起始 | 1880 | 0.500 | 0.650 | **0.367** | 1.179 |
+| 99 | 1475 | 0.719 | 0.925 | **0.665** | 1.037 |
+| 195 | 1184 | 1.000 | 1.000 | **1.000** | 0.980 |
+| 482 | 1100 | 1.000 | 1.000 | 1.000 | 1.000 |
 
-三个维度同时动：位置指数收敛、alpha 由 0.5 回到 1.0、scale 从 1.18 回弹过冲后落回 1.0。
-探针已扩展为同时采样 scale 与 alpha，避免只验其中一个而漏掉相乘问题。
+两层各自独立变化、最终相乘合成。起点 0.367 低于单层的 0.5 ——
+这正是 mod 逐层相乘的效果，删掉任何一层都会偏亮。
 
-> 关于 alpha 到 1.0 用了 195ms 而权威是 150ms：探针 30ms 的采样粒度
+> alpha 到 1.0 用了 195ms 而权威 150ms：探针 30ms 的采样粒度
 > + 首帧要等 `AnimationTimer` 起播，实测稳定在 195~210ms。
 
 ### 拖拽机制：有意与 mod 不同

@@ -1597,15 +1597,16 @@ private void installDragHandlers(javafx.scene.Node overlay) {
         if (dock.isDocked()) {
             expandDock();
         } else {
-            // 收起：位置滑动与半透明<b>同时</b>进行（对应 mod —— updatePanelDimensions
-            // 插值位置的同时 draw 里的 field20873 也在降 alpha）。
-            // 之前是先等 ElasticReveal 跑完 125ms 再 dock.collapse()，
-            // 于是「面板先原地淡一下、然后才开始滑出去」，比原版多一个顿挫。
+            // 收起：位置滑动、两层 alpha、缩放复位<b>同时</b>进行。
+            // mod 里 updatePanelDimensions 插值位置的同时，
+            // draw 里的 field20873（贴边层）与 animationProgress（展开层）
+            // 都在动，三者是并行的。
+            //
+            // 之前是 reveal.collapse(() -> dock.collapse()) —— 先在原地淡 125ms
+            // 才开始滑出去，比原版多一个顿挫。
+            reveal.collapse(null);
             dock.collapse();
             playerPanel.setDockTriggerActive(true);
-            // 缩放复位交给 reveal：收起态原版没有缩放动画，
-            // 但上一次展开可能留下未走完的 1.25 缩放
-            reveal.resetScale();
         }
     }
 

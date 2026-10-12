@@ -14,26 +14,39 @@ import javafx.scene.Node;
  *       : (!animationCompleted ? 1.0F : method13317(animationProgress.calcPercent(), 1.0F));
  * </pre>
  *
- * <h2>只管缩放，不管透明度</h2>
- * mod 里这是<b>两层独立</b>的：
+ * <h2>透明度：<b>要乘</b>，不是「各管各的」</h2>
+ * mod 里 alpha 是<b>两层相乘</b>的：
+ * <pre>
+ *   ClickGuiScreen.draw:295  super.draw(partialTicks * Math.min(1.0F, alphaFactor) * fadeAmount);
+ *   CustomGuiScreen.draw:219 drawChildren(partialTicks);       // 逐层往下传
+ *   MusicPlayer.draw:278     partialTicks *= 0.5F + (1.0F - field20873.calcPercent()) * 0.5F;
+ * </pre>
+ * 也就是子面板收到的 {@code partialTicks} <b>已经含了父层的 alphaFactor</b>，
+ * 再乘一次自己那层。所以两层的最终效果是<b>相乘</b>：
+ *
+ * <pre>
+ *   最终 alpha = min(1, alphaFactor) * (0.5 + (1 - p) * 0.5)
+ * </pre>
+ *
+ * <p>JavaFX 的父子 {@code opacity} 恰好也是相乘的（{@code overlay} 是 {@code root}
+ * 的父容器），所以<b>正好可以用同构的结构实现</b>：
  * <ul>
- *   <li>{@code ClickGuiScreen} 的 {@code alphaFactor} → 整个 GUI 的缩放
- *       （展开时从 1.25 回弹到 1.0）</li>
- *   <li>{@code MusicPlayer} 的 {@code partialTicks *= 0.5 + (1-p)*0.5}
- *       → <b>只影响面板内部绘制</b>（底板、Logo、文字的 alpha）</li>
+ *   <li>{@code overlay.opacity} = {@code min(1, alphaFactor)} —— 本类负责</li>
+ *   <li>{@code root.opacity} = {@code 0.5 + (1 - p) * 0.5} —— {@link EdgeDock} 负责</li>
  * </ul>
  *
- * <p>之前 Java 版把两者都压到同一个节点的 {@code setOpacity} 上，
- * 而 {@code overlay} 是 {@code root} 的<b>父容器</b>——父子 opacity 会<b>相乘</b>：
- * EdgeDock 设 0.5、这里再设 0.5，实际渲染成 0.25。
- * 这就是「收起后比原版暗得多、展开后也不对」的根因。
+ * <p><b>这里踩过一次弯</b>：中途曾把本类的 opacity 整个删掉，理由是
+ * 「两个组件各管各的、别相乘」。那是错的——mod 就是相乘的，
+ * 删掉之后展开起始会变成 0.5×1.0 而非 mod 的 0.5×0.5，观感偏亮。
+ * 真正的 bug 不在相乘，而在 {@code finish()}/{@code reset()} 里
+ * 强行 {@code setOpacity(1)} 会把 {@link EdgeDock} 设的半透明抹掉。
  *
- * <p>所以这里<b>只操作缩放</b>，透明度一律交给 {@link EdgeDock} 统一管理。
- * 缩放锚点固定在窗口中心（JavaFX {@code setScaleX} 的默认行为），
+ * <p>缩放锚点固定在窗口中心（JavaFX {@code setScaleX} 的默认行为），
  * 与 mod 的 {@code method13279} 一致——它也是围绕面板中心缩放。
  *
- * <p>收起态<b>不做缩放</b>（对应原版 {@code .sigma-shell--docked { animation: none }}）：
- * 面板只是滑出屏幕右侧并把大部分移出视野，不应该再有缩放动画。
+ * <p>收起态<b>只淡出、不缩放</b>（对应原版
+ * {@code .sigma-shell--docked { animation: none }}）：
+ * 面板只是滑出屏幕右侧，不该再有缩放动画。
  */
 public final class ElasticReveal {
 
@@ -68,27 +81,17 @@ public final class ElasticReveal {
         start(CLOSE_NANOS, false, onFinished);
     }
 
-    /**
-     * 只把缩放复位到 1，不碰其它任何属性。
-     *
-     * <p>收起时用：原版收起态没有缩放动画（{@code .sigma-shell--docked
-     * { animation: none }}），但上一次展开可能留下没走完的 1.25 缩放，
-     * 得立刻归位。刻意做成「只动缩放」而不是调 {@link #reset()}——
-     * 后者会连带清掉 {@link EdgeDock} 设的透明度。
-     */
-    public void resetScale() {
-        stop();
-        target.setScaleX(1);
-        target.setScaleY(1);
-    }
-
-    /** 静止态：scale 恒为 1，展开动画不再残留。 */
+    /** 静止态：scale 恒为 1，alpha 回到 1，展开动画不再残留。 */
     public void reset() {
         stop();
         target.setScaleX(1);
         target.setScaleY(1);
-        // opacity 归 EdgeDock 管，这里不动（构造时的初值本来就是 1，
-        //  但显式写一次会把 EdgeDock 已设的半透明抹掉）
+        // opacity 也复位成 1：mod 的 alphaFactor 在静止态是 1
+        //（animationCompleted && !animationStarted 走 elastic(p,0.8)*0.5+0.5，
+        //  p=1 时正好 1.0）。
+        // 注意这不冲突 EdgeDock 的半透明——两层是相乘的，
+        // 这里复位的是 overlay 这一层，root 那层归 EdgeDock。
+        target.setOpacity(1.0);
         target.setMouseTransparent(false);
         target.setVisible(true);
     }
@@ -118,19 +121,31 @@ public final class ElasticReveal {
 
     private void applyFrame(double progress) {
         if (!animateScale) {
-            // 收起：不动缩放（对应原版 .sigma-shell--docked { animation: none }）。
-            // 位置滑出交给 EdgeDock，透明度也由 EdgeDock 统一管，
-            // 这里<b>不能</b>再碰 opacity —— overlay 是 root 的父容器，
-            // 父子 opacity 相乘会叠成 0.25。
+            // 收起（ClickGuiScreen:255-257 的第二个分支）：
+            //   alphaFactor = method13317(percent, 1.0F)
+            // 走 period=1.0 的 easeOutElastic —— 同样会过冲，
+            // 不是一条单调的淡出曲线。mod 里靠 Math.min(1, ·) 夹住上限。
+            //
+            // 缩放不动：对应原版 .sigma-shell--docked { animation: none }，
+            // 收起态的视觉变化全部来自「滑出屏幕右侧」。
+            double factor = alphaFactor(true, true, progress, false);
             target.setScaleX(1);
             target.setScaleY(1);
+            target.setOpacity(Math.min(1.0, factor));
             return;
         }
-        // 展开：走权威的 alphaFactor（展开完成中 = easeOutElastic(·,0.8)*0.5+0.5）
+        // 展开（第一个分支）：alphaFactor = method13317(percent, 0.8) * 0.5 + 0.5
         double factor = alphaFactor(true, false, progress, false);
+        // 缩放 = 1.5 - alphaFactor * 0.5（ClickGuiScreen:292）
         double scale = 1.5 - factor * 0.5;
         target.setScaleX(scale);
         target.setScaleY(scale);
+        // 透明度 = min(1, alphaFactor)（ClickGuiScreen:295）。
+        // 必须夹到 1：elastic 会过冲到 1.03，不夹的话展开中途会
+        // 「亮过 100%」再暗回来。
+        // 另一层（root.opacity = 0.5 + (1-p)*0.5）由 EdgeDock 管，
+        // 两者在 JavaFX 里相乘 —— 与 mod 的 partialTicks 逐层传递同构。
+        target.setOpacity(Math.min(1.0, factor));
     }
 
     /**
@@ -204,8 +219,10 @@ public final class ElasticReveal {
         stop();
         target.setScaleX(1);
         target.setScaleY(1);
-        // 不动 opacity —— 它归 {@link EdgeDock} 管。
-        // 这里强行设 1 会把收起态的半透明抹掉（动画结束的那一帧闪一下全亮）。
+        // 收起的终值不是 1：mod 收起时 alphaFactor = elastic(1, 1.0) = 1.0，
+        // 但 root 那层（EdgeDock）已经是 0.5，两者相乘 = 0.5 半透明。
+        // 这里复位 overlay 层即可，root 层由 EdgeDock 自己收。
+        target.setOpacity(1.0);
         if (onFinished != null) {
             onFinished.run();
         }
