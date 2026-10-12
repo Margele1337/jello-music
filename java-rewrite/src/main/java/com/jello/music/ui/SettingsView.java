@@ -442,6 +442,10 @@ public final class SettingsView extends Pane {
     }
 
     private String displayFor(Settings.Item item, String value) {
+        // 音质显示文本统一走 QualityResolver，避免与播放链路各写一份后走偏
+        if ("quality".equals(item.key)) {
+            return com.jello.music.api.QualityResolver.displayText(value);
+        }
         return switch (value) {
             case "128" -> "标准音质 128K";
             case "320" -> "高品音质 320K";

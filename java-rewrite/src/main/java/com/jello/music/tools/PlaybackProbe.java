@@ -67,8 +67,11 @@ public final class PlaybackProbe {
         }
 
         Song song = songs.get(0);
-        String url = api.songUrl(song.getHash(), 320);
+        // 走设置里的音质；直连那一档（不做协商），失败信息更能说明「这一档不行」
+        String quality = com.jello.music.api.QualityResolver.selectedQuality();
+        String url = api.songUrl(song.getHash(), quality);
         System.out.println("track   : " + song.getTitle() + " / " + song.getArtist());
+        System.out.println("quality : " + quality);
         System.out.println("duration: " + song.getDurationMs() / 1000 + "s (api 元数据)");
 
         probeLink(url);

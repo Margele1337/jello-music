@@ -358,6 +358,90 @@ writeSnapshot(root, pngPath);
         checkStripBlur();
         checkSpectrumParams();
         checkRightTitleBar();
+        checkDeadSwitches();
+    }
+
+    /**
+     * 三个「死开关」是否真的接上了。
+     *
+     * <p>之前这三个设置项都能改、能存盘，但完全不影响运行——
+     * 比缺功能更糟（用户以为设了）。这里逐个钉住它们的接线点。
+     */
+    private static void checkDeadSwitches() {
+        // ---- 音质：原版 QUALITY_LEVELS 7 档 + 降级链 ----
+        check("音质档位 == 7（原版 QUALITY_LEVELS）",
+                com.jello.music.api.QualityResolver.LEVELS.size() == 7,
+                "n=" + com.jello.music.api.QualityResolver.LEVELS.size());
+        check("默认音质 == 128（原版 settings.js defaultValue）",
+                com.jello.music.api.QualityResolver.DEFAULT.equals("128"),
+                "got=" + com.jello.music.api.QualityResolver.DEFAULT);
+        check("非法音质落回 128（normalizeQuality）",
+                "128".equals(com.jello.music.api.QualityResolver.normalize("bogus")),
+                com.jello.music.api.QualityResolver.normalize("bogus"));
+        // 降级链：选 viper_tape 要从最高档往下试，不是从低往高
+        var chainTape = com.jello.music.api.QualityResolver.fallbackChain("viper_tape");
+        check("选母带时降级链从最高档开始",
+                chainTape.get(0).equals("viper_tape")
+                        && chainTape.get(chainTape.size() - 1).equals("128"),
+                chainTape.toString());
+        var chain128 = com.jello.music.api.QualityResolver.fallbackChain("128");
+        check("选 128 时降级链只有一档",
+                chain128.size() == 1 && chain128.get(0).equals("128"),
+                chain128.toString());
+        // 无任何权限时的兜底：候选必须补一条 128
+        var cands = com.jello.music.api.QualityResolver.candidates(
+                java.util.Map.of(), "flac", "HASH");
+        check("无权限时兜底追加 128 候选（原版 :67-69）",
+                cands.stream().anyMatch(c -> "128".equals(c.quality())),
+                cands.toString());
+
+        // ---- 开机自启：登录项能写能删 ----
+        String saved = com.jello.music.system.AutoStart.currentLoginCommand();
+        try {
+            com.jello.music.system.AutoStart.apply(true);
+            String on = com.jello.music.system.AutoStart.currentLoginCommand();
+            check("开机自启能写入登录项", on != null && !on.isBlank(),
+                    on == null ? "null" : on.substring(0, Math.min(60, on.length())) + "...");
+            // 登录项脱离 run.bat 启动，必须自带 module-path，否则 javafx 拒绝从 classpath 加载
+            check("开发形态的登录项带 module-path（javafx 需要）",
+                    on != null && on.contains("--module-path"),
+                    on == null ? "null" : "no module-path");
+            check("登录项不带 test scope 依赖",
+                    on == null || (!on.contains("junit") && !on.contains("opentest4j")),
+                    on == null ? "null" : "含 test jar");
+        } finally {
+            com.jello.music.system.AutoStart.apply(false);
+            String off = com.jello.music.system.AutoStart.currentLoginCommand();
+            check("开机自启能取消（登录项被删除）", off == null,
+                    off == null ? "null" : off);
+        }
+        if (saved != null) {
+            com.jello.music.system.AutoStart.apply(true);
+        }
+
+        // ---- 界面缩放：读设置 + 夹取 ----
+        check("缩放默认 1.0", com.jello.music.system.UiScale.DEFAULT == 1.0, null);
+        check("缩放范围 0.6~2.0",
+                com.jello.music.system.UiScale.MIN == 0.6
+                        && com.jello.music.system.UiScale.MAX == 2.0, null);
+        // 非法值回落
+        String prevScale = com.jello.music.AppPrefs.getSetting("uiScale", "1.0");
+        try {
+            com.jello.music.AppPrefs.setSetting("uiScale", "abc");
+            check("非法缩放回落 1.0",
+                    com.jello.music.system.UiScale.current() == 1.0,
+                    "got=" + com.jello.music.system.UiScale.current());
+            com.jello.music.AppPrefs.setSetting("uiScale", "99");
+            check("越界缩放夹到 2.0",
+                    com.jello.music.system.UiScale.current() == 2.0,
+                    "got=" + com.jello.music.system.UiScale.current());
+            com.jello.music.AppPrefs.setSetting("uiScale", "0.1");
+            check("越界缩放夹到 0.6",
+                    com.jello.music.system.UiScale.current() == 0.6,
+                    "got=" + com.jello.music.system.UiScale.current());
+        } finally {
+            com.jello.music.AppPrefs.setSetting("uiScale", prevScale);
+        }
     }
 
     /**

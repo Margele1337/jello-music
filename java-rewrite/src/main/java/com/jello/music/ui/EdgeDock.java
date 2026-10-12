@@ -167,7 +167,12 @@ public final class EdgeDock {
         return right - Theme.DOCK_VISIBLE;
     }
 
-    /** 滑出目标 x：原版 var11 = parentWidth - 20 - width。 */
+    /**
+     * 滑出目标 x：原版 var11 = parentWidth - 20 - width。
+     *
+     * <p>{@code width} 要传<b>屏幕上实际占的宽</b>（逻辑宽 × 缩放比），
+     * 理由同 {@link #expandedX}。
+     */
     public static double restoreTargetX(double width, double right) {
         return right - width - Theme.RESTORE_MARGIN;
     }
@@ -198,6 +203,8 @@ public final class EdgeDock {
     }
 
     private double centerY(Rectangle2D area) {
+        // 开了界面缩放后 stage.getHeight() 已是放大后的值（Scene 根节点被 setScaleY，
+        // Stage 尺寸也乘了同样的比），直接用即可居中。
         return Math.round(area.getMinY() + (area.getHeight() - stage.getHeight()) / 2);
     }
 
@@ -208,6 +215,8 @@ public final class EdgeDock {
 
     /** 展开后的目标 x：靠右但留 RESTORE_MARGIN 间隙。 */
     private double expandedX(Rectangle2D area) {
+        // stage.getWidth() 在开了界面缩放后已经是放大后的值（Stage 尺寸乘了缩放比），
+        // 所以直接用它算就对了。逻辑宽仍按 Theme.PANEL_W 供根节点布局使用。
         return restoreTargetX(stage.getWidth(), area.getMaxX());
     }
 

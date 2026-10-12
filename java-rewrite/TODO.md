@@ -38,7 +38,27 @@
       - [x] 视图骨架：180px 分类栏 + 紧凑行 + 每分类「重置」+ 返回箭头
       - [x] 设置入口走系统托盘右键菜单（面板左下角被封面和 41px 触发条夹着，放不下）
       - [x] 持久化：复用原版 key 名（`spectrumScale` 等），存 `AppPrefs`
-      - [ ] `开机自启` / `界面缩放` / `全局快捷键` 三项目前只存值不生效（依赖 C 组能力）
+      - [x] **音质选择接进播放链路** —— 之前 `MainApp` 写死 `songUrl(hash, 320)`，
+            设置项能改却不生效。新增 `api/QualityResolver.java`，
+            1:1 复刻原版 `OnlineMusicQueue.js`（:1-200）：
+            - `QUALITY_LEVELS` 7 档、默认 **128**（原版 defaultValue，不是 320）
+            - 先问 `/privilege/lite` 拿这首歌实际有权限的档位（含 `relate_goods[]`）
+            - 按 `getFallbackChain`（截到目标档再 reverse）**从高往低**依次试
+            - 跳过 `extName == "mp4"`（JavaFX MediaPlayer 放不了，与原版同因）
+            - 全失败时退化到 `free_part=1` 试听片段
+            - `KuGouApiClient.songUrl` 加 String 重载（原版 quality 就是字符串，
+              含 `flac / viper_*` 这些非数字档）
+      - [x] **开机自启** —— 对应原版 `main.js:273-277` 的 `setLoginItemSettings`，
+            即写 `HKCU\Software\...\CurrentVersion\Run`。见 `system/AutoStart.java`
+      - [x] **界面缩放** —— 对应原版 `main.js:204-207` 的
+            `force-device-scale-factor`，同样**只在启动时生效**（Electron 那两个
+            switch 只能在 app ready 前设）。JavaFX 21 的 `Window` 没有 `setXScale`
+            （只有 `setRenderScaleX`，那是 HiDPI 渲染比例不是布局缩放），
+            所以缩场景根节点 + 放大 Stage 尺寸。见 `system/UiScale.java`
+      - [x] 三个死开关全部接通，`probe-ui` 加 15 项断言钉住接线点
+      - [ ] `全局快捷键` 仍是占位（ACTION 但无实现）
+      - [ ] `响度标准化` / `数据源` 没做——依赖 Web Audio 的
+            DynamicsCompressor / 节点切换，Java 侧要另找实现
 
 ## B. 播放器内的缺口
 

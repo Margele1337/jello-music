@@ -52,10 +52,15 @@ public final class PipelineProbe {
         System.out.println("[2] 调用 /song/url  hash=" + hash);
         String directUrl;
         try {
-            directUrl = api.songUrl(hash, 320);
+            // 直连当前设置里的那一档（不做协商），探针要的就是「这一档能不能出直链」。
+            // 协商与降级是 QualityResolver.resolve 的事，MainApp 走那条路。
+            String quality = com.jello.music.api.QualityResolver.selectedQuality();
+            directUrl = api.songUrl(hash, quality);
+            System.out.println("    音质: " + quality);
         } catch (Exception e) {
             System.out.println("    失败: " + e.getMessage());
             System.out.println("    常见原因：凭据无效，或触发了 20028 风控（需验证码）。");
+            System.out.println("    也可能是所选音质需要 VIP 权限 —— 试试在设置里降到 128。");
             return;
         }
         System.out.println("    直链: " + directUrl);

@@ -8,5 +8,8 @@ pkgout/
 mp.txt
 mp-pkg.txt
 
-# Maven extracted into tools/ (see README "Environment")
-tools/
+# Maven extracted into tools/ (see README "Environment").
+# Leading slash anchors it to java-rewrite/tools/ — without it, `tools/`
+# would also match src/main/java/com/jello/music/tools/ and silently drop the
+# UiProbe / PipelineProbe / PlaybackProbe sources.
+/tools/

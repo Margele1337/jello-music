@@ -3,14 +3,17 @@ package com.jello.music;
 import com.jello.music.api.KuGouApiClient;
 import com.jello.music.api.Playlist;
 import com.jello.music.api.PlaylistTab;
+import com.jello.music.api.QualityResolver;
 import com.jello.music.model.KuGouCredentials;
 import com.jello.music.model.ResultCard;
 import com.jello.music.model.Song;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
+import com.jello.music.system.AutoStart;
 import com.jello.music.system.MousePassthrough;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.system.TrayIconHelper;
+import com.jello.music.system.UiScale;
 import com.jello.music.ui.Assets;
 import com.jello.music.ui.DragGate;
 import com.jello.music.ui.EdgeDock;
@@ -147,6 +150,10 @@ private EdgeDock dock;
         // 预热字体，避免首帧字体回退导致排版跳动
         Assets.light(14);
 
+        // 开机自启：每次启动都按当前进程的实际入口重写一遍登录项。
+        // 这样从 run.bat（开发）切到 pkgout（打包）时登录项不会指向失效路径。
+        AutoStart.applyFromSettings();
+
         initCredentials();
         api = new KuGouApiClient(credentials);
 
@@ -276,6 +283,10 @@ rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock)
         }
         stage.setScene(scene);
         stage.setAlwaysOnTop(true);
+
+        // 界面缩放（对应原版 main.js:204-207 的 force-device-scale-factor）。
+        // 只作用于面板：教程窗是铺满主屏的，缩了会在边缘露出空白。
+        UiScale.apply(stage, Theme.PANEL_W, Theme.PANEL_H);
 
 dock = new EdgeDock(stage);
         // 半透明挂面板根节点（对应原版 .sigma-music-player）；
@@ -415,6 +426,9 @@ dock = new EdgeDock(stage);
             settings.onChange("spectrumSigmaSmoothing", v -> applySpectrumSettings(feed, spectrumView));
             settings.onChange("spectrumAvDelay", v -> applySpectrumSettings(feed, spectrumView));
             settings.onChange("spectrumLocked", v -> applySpectrumSettings(feed, spectrumView));
+            // 开机自启：原版 main.js:273-277 用 app.setLoginItemSettings，
+            // Java 侧写同一个注册表键（见 system/AutoStart）
+            settings.onChange("autoStart", v -> AutoStart.apply("on".equals(v)));
             settings.onAction("showTutorial", () -> {
                 AppPrefs.clearOnboardingDone();
                 settings.dispose();
@@ -742,7 +756,11 @@ dock = new EdgeDock(stage);
 
         IO.execute(() -> {
             try {
-                String url = api.songUrl(song.getHash(), 320);
+                // 之前写死 320，设置项的画质能改却不生效。改成走 QualityResolver：
+                // 先问 /privilege/lite 拿实际权限，再按「想要的档 → 逐级往下」试直链，
+                // 全失败才退化到 free_part 试听片段。
+                final String quality = QualityResolver.selectedQuality();
+                String url = QualityResolver.resolve(api, song.getHash(), quality);
                 Platform.runLater(() -> {
                     if (seq != requestSeq.get()) {
                         return;
@@ -990,6 +1008,8 @@ private void startPlayback(String url) {
         Scene sc = new Scene(holder, SPECTRUM_W, SPECTRUM_H);
         sc.setFill(Color.TRANSPARENT);
         spectrumStage.setScene(sc);
+        // 频谱窗跟着面板一起缩放，否则面板放大后频谱条还是原尺寸，看着不成一套
+        UiScale.apply(spectrumStage, SPECTRUM_W, SPECTRUM_H);
 
         installSpectrumDrag();
         applySpectrumLock();

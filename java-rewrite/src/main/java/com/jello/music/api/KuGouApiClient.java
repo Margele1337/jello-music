@@ -480,13 +480,23 @@ public final class KuGouApiClient {
 
     /** 取歌曲的音频直链；调用方需要已登录的凭据。 */
     public String songUrl(String hash, int quality) throws IOException, InterruptedException {
-        JsonNode r = get("/song/url?hash=" + hash + "&quality=" + quality);
+        return songUrl(hash, String.valueOf(quality));
+    }
+
+    /**
+     * 取歌曲的音频直链，音质用字符串。
+     *
+     * <p>原版 {@code OnlineMusicQueue.js} 传的 quality 就是字符串，
+     * 含 {@code flac / high / viper_*} 这类非数字档，所以这里不能用 int。
+     */
+    public String songUrl(String hash, String quality) throws IOException, InterruptedException {
+        JsonNode r = get("/song/url?hash=" + hash + "&quality=" + quality
+                + "&ppage_id=" + QualityResolver.PPAGE_ID);
         if (!isSuccess(r)) {
             throw new IOException("/song/url 失败: errcode="
                     + (r.has("errcode") ? r.get("errcode").asText() : "?")
                     + " " + errorMessage(r));
         }
-        // 响应结构：url / backup_url 数组，或嵌套在 data 下
         for (JsonNode arr : new JsonNode[]{r.get("url"), r.get("backup_url"), r.path("data").get("url")}) {
             if (arr != null && arr.isArray() && !arr.isEmpty()) {
                 String u = arr.get(0).asText();
