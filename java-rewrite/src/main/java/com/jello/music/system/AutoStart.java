@@ -104,8 +104,10 @@ public final class AutoStart {
      * <p>开发形态是 {@code java -m ...}（还得带 module path，否则 javafx 加载不了），
      * 打包形态是 exe 本身。两条都按当前进程的<b>实际形态</b>拼，
      * 这样从开发切到打包时登录项不会指向失效路径。
+     *
+     * <p>{@link JelloProtocol} 也用它来猜 {@code jello://} 的处理命令。
      */
-    static String loginCommand() {
+    public static String loginCommand() {
         File exe = locatePackagedExe();
         if (exe != null) {
             return "\"" + exe.getAbsolutePath() + "\"";

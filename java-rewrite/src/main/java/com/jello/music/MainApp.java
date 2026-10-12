@@ -10,8 +10,11 @@ import com.jello.music.model.Song;
 import com.jello.music.player.PlayQueue;
 import com.jello.music.player.SpectrumFeed;
 import com.jello.music.system.AutoStart;
+import com.jello.music.system.JelloProtocol;
+import com.jello.music.system.MediaKeyPoller;
 import com.jello.music.system.MousePassthrough;
 import com.jello.music.system.SingleInstance;
+import com.jello.music.system.WsApiServer;
 import com.jello.music.system.RightShiftPoller;
 import com.jello.music.system.TrayIconHelper;
 import com.jello.music.system.UiScale;
@@ -108,6 +111,11 @@ public class MainApp extends Application {
 private EdgeDock dock;
     private ElasticReveal reveal;
     private RightShiftPoller rshift;
+    private MediaKeyPoller mediaKeys;
+    /** 本次启动带来的 jello:// URL（浏览器点分享链接进来时才有）。 */
+    private String protocolUrl;
+    /** 对外控制服务（ws://127.0.0.1:6520）。 */
+    private WsApiServer wsApi;
 
     /** 视图容器：原版 SigmaUI.vue 的 sigma-shell，按 view 切换子视图。 */
     private final StackPane stageHolder = new StackPane();
@@ -157,6 +165,43 @@ private EdgeDock dock;
         // 开机自启：每次启动都按当前进程的实际入口重写一遍登录项。
         // 这样从 run.bat（开发）切到 pkgout（打包）时登录项不会指向失效路径。
         AutoStart.applyFromSettings();
+
+        // 注册 jello:// 协议，对应原版 app.setAsDefaultProtocolClient
+        JelloProtocol.register(null);
+        if (protocolUrl == null && launchProtocolUrl != null) {
+            protocolUrl = launchProtocolUrl;
+        }
+
+        // 对外控制服务，对应原版 apiService.js（ws://127.0.0.1:6520）。
+        // 端口被占用只警告不失败——它不是主功能。
+        wsApi = new WsApiServer(new WsApiServer.Controller() {
+            @Override
+            public void togglePlayPause() {
+                Platform.runLater(MainApp.this::togglePlay);
+            }
+
+            @Override
+            public void next() {
+                Platform.runLater(() -> playCurrent(queue.next()));
+            }
+
+            @Override
+            public void previous() {
+                Platform.runLater(() -> playCurrent(queue.previous()));
+            }
+
+            @Override
+            public boolean isPlaying() {
+                return player != null
+                        && player.getStatus() == MediaPlayer.Status.PLAYING;
+            }
+
+            @Override
+            public double currentTime() {
+                return playbackSeconds();
+            }
+        });
+        wsApi.start();
 
         initCredentials();
         api = new KuGouApiClient(credentials);
@@ -274,6 +319,36 @@ StackPane overlay = new StackPane(root);
         scene.setFill(Color.TRANSPARENT);
         // 全局右 Shift 收起/展开。回调在轮询线程上，必须切回 FX 线程。
 rshift = RightShiftPoller.createNative(() -> Platform.runLater(this::toggleDock));
+        // 系统媒体键（对应原版 MediaSession 的 mediaSession action handlers）。
+        // 回调在轮询线程上，同样要切回 FX 线程。
+        mediaKeys = MediaKeyPoller.createNative(new MediaKeyPoller.Handler() {
+            @Override
+            public void onPlayPause() {
+                Platform.runLater(MainApp.this::togglePlay);
+            }
+
+            @Override
+            public void onNext() {
+                Platform.runLater(() -> playCurrent(queue.next()));
+            }
+
+            @Override
+            public void onPrevious() {
+                Platform.runLater(() -> playCurrent(queue.previous()));
+            }
+
+            @Override
+            public void onStop() {
+                // 原版没注册 stop，这里对齐：停止 = 暂停（不销毁队列，
+                // 否则按停止再按播放会从头开始，与媒体键的常规语义不符）
+                Platform.runLater(() -> {
+                    if (player != null) {
+                        player.pause();
+                        syncSpectrumPlaying(false);
+                    }
+                });
+            }
+        });
         // 建完之后再对一次：教程是在 rshift 之前挂上去的
         syncHotkeySuspend();
         if (rshift == null) {
@@ -306,6 +381,13 @@ dock = new EdgeDock(stage);
 
         // 二次启动唤醒：拿到锁的那个实例负责响应
         watchSecondInstance();
+
+        // jello:// 分享链接：延到面板就绪后再播，避免和登录态/歌单初始化抢 api
+        if (protocolUrl != null && !protocolUrl.isBlank()) {
+            String url = protocolUrl;
+            protocolUrl = null;
+            Platform.runLater(() -> handleProtocolUrl(url));
+        }
 
         // 教程开着的话，Sigma 窗口先不显示；等用户点「完成」再显示。
         if (onboardingStage != null) {
@@ -705,6 +787,54 @@ dock = new EdgeDock(stage);
 
     private String rightTitleBarTitle() {
         return rightTitleBar == null ? "" : rightTitleBar.titleText();
+    }
+
+    /**
+     * 处理 {@code jello://} 协议带进来的分享链接。
+     *
+     * <p>对应原版 {@code handleUrl}（{@code electron/appServices.js:1529-1545}）：
+     * 取 hash / listid，然后交给渲染进程播。Java 侧直接走播放链路。
+     *
+     * <p>两个来源：①本次启动的命令行（从浏览器点链接）
+     * ②二次启动转发（已在跑时又点了一次）——
+     * 后者复用 {@link SingleInstance} 的请求文件。
+     */
+    private void handleProtocolUrl(String url) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        JelloProtocol.Share share = JelloProtocol.parse(url);
+        if (!share.isPlayable()) {
+            // 原版也会把 urlPath 发过去，但没有 hash/listid 时渲染进程无事可做
+            return;
+        }
+        if (!share.hash().isBlank()) {
+            Song s = new Song();
+            s.setHash(share.hash());
+            status("来自分享链接");
+            playShareSong(s);
+        } else if (!share.listId().isBlank()) {
+            setRightTitle("分享歌单");
+            showPlaylistTracks(share.listId());
+        }
+    }
+
+    /** 播一首只有 hash 的分享歌曲（无标题/歌手，需先向 api 查元信息）。 */
+    private void playShareSong(Song stub) {
+        IO.execute(() -> {
+            try {
+                List<Song> found = api.search(stub.getHash()).songs();
+                if (!found.isEmpty()) {
+                    Song real = found.get(0);
+                    Platform.runLater(() -> playCurrent(real));
+                } else {
+                    // 查不到元信息就直接用 hash 播——原版也是这个降级思路
+                    Platform.runLater(() -> playCurrent(stub));
+                }
+            } catch (Exception e) {
+                Platform.runLater(() -> playCurrent(stub));
+            }
+        });
     }
 
     /**
@@ -1195,6 +1325,10 @@ private void startPlayback(String url) {
         if (!playing && spectrumView != null) {
             spectrumView.clear();
         }
+        // 对外服务同步状态，对应原版 apiService.updatePlayerState
+        if (wsApi != null) {
+            wsApi.broadcastState();
+        }
     }
 
     private void disposePlayer() {
@@ -1395,13 +1529,28 @@ public void stop() {
         if (rshift != null) {
             rshift.close();
         }
+        if (mediaKeys != null) {
+            mediaKeys.close();
+        }
+        if (wsApi != null) {
+            wsApi.close();
+        }
         disposePlayer();
     }
 
     /** 单实例锁：抢不到就是二次启动，通知已有实例唤醒后立刻退出。 */
     private static SingleInstance instance;
 
+    /**
+     * 本次启动带来的 {@code jello://} URL。
+     *
+     * <p>在 {@link #main} 里从 {@code args} 取好——{@code Application.getParameters()}
+     * 在 {@code start(Stage)} 之前拿不到，那时参数已经被 launcher 消费了。
+     */
+    private static String launchProtocolUrl;
+
     public static void main(String[] args) {
+        launchProtocolUrl = JelloProtocol.findUrlIn(args);
         // 对应原版 electron/main.js:105-109：
         //   if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
         // 必须在 launch() 之前判断——一旦 launch 就会建窗口，退出时可能闪一下

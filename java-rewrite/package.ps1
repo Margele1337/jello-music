@@ -184,6 +184,28 @@ if (Test-Path $exe) {
     Write-Host ""
     Write-Host "  NOTE: the app expects the KuGou API on 127.0.0.1:6521."
     Write-Host "  Start it from the repo root with:  npm run api"
+    Write-Host ""
+
+    # ---- desktop shortcut ----
+    # The Electron original only *updates* an existing shortcut
+    # (electron/services/desktopShortcutIcon.js:47-58) and never creates one, so
+    # a fresh install has nothing on the desktop. Here we create it, which is
+    # what a user who just ran a packager expects.
+    $icon = Join-Path (Split-Path -Parent $root) 'build\icons\icon.ico'
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $lnk = Join-Path $desktop 'Jello Music.lnk'
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $sc = $shell.CreateShortcut($lnk)
+        $sc.TargetPath = $exe
+        $sc.WorkingDirectory = (Split-Path $exe)
+        $sc.Description = 'Jello Music'
+        if (Test-Path $icon) { $sc.IconLocation = "$icon,0" }
+        $sc.Save()
+        Write-Host "  desktop shortcut: $lnk" -ForegroundColor Green
+    } catch {
+        Write-Host "  could not create the desktop shortcut: $_" -ForegroundColor Yellow
+    }
 } else {
     Fail "expected $exe but it is missing"
 }

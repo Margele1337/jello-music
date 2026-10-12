@@ -200,7 +200,28 @@
 - [x] 托盘图标 + 托盘菜单 —— `system/TrayIconHelper.java` 走 AWT SystemTray，
       6 项操作（播放暂停 / 上一首 / 下一首 / 设置 / 显示隐藏面板 / 退出），
       原版是 9 项且用自定义 HTML 菜单窗，这里用系统原生菜单
-- [ ] 其余 11 个全局快捷键（目前只有 RSHIFT）
+- [ ] 其余 11 个全局快捷键 —— **按用户要求只保留 RSHIFT**
+- [x] **系统媒体键** —— 对应原版 `MediaSession.js`。原版用浏览器
+      `navigator.mediaSession`，Java 侧没有；改走 Win32 键盘虚拟键
+      （`VK_MEDIA_PLAY_PAUSE/STOP/NEXT_TRACK/PREV_TRACK`）+ `GetAsyncKeyState`
+      轮询（与 RSHIFT 同理，游戏 Raw Input 下钩子收不到、轮询照样有效）。
+      见 `system/MediaKeyPoller.java`。
+      **代价**：键盘能控播放，但系统音量面板/通知栏里看不到曲名与进度——
+      那需要 SMTC（WinRT COM），JNA 手搓 vtable 且跨 Windows 版本不稳定
+- [x] **`jello://` 协议** —— 对应原版 `appServices.js:1481-1545`。
+      Electron 一句 `setAsDefaultProtocolClient` 搞定，Java 改写注册表
+      `HKCU\Software\Classes\jello`（含 `URL Protocol` 与
+      `shell\open\command`）。见 `system/JelloProtocol.java`
+- [x] **对外控制服务（WS API）** —— 对应原版 `apiService.js`
+      （`ws://127.0.0.1:6520`）。Java 无内置 WebSocket，手写 RFC 6455
+      服务端最小子集（握手 SHA-1+base64、文本帧、客户端掩码解码、ping/pong/close）。
+      命令集与原版一致：`toggle` / `next` / `prev`；连上先收 `welcome` +
+      `playerState`，播放状态变化时主动推 `playerState`。
+      歌词推送那一路**刻意不做**（本项目不做歌词）。见 `system/WsApiServer.java`
+- [x] **桌面快捷方式** —— 原版 `desktopShortcutIcon.js` 只「更新已存在的」
+      不主动创建；这里在 `package.ps1` 打包后自动创建带图标的快捷方式
+- [ ] 自动更新（需要发布服务器与签名，本项目没有）
+- [ ] 内置 api 子进程（当前靠 `run.bat` / `npm run api`）
 - [ ] 任务栏缩略图工具条（上一首/播放暂停/下一首）、Jump List
 - [ ] 桌面歌词窗、KeyStrokes HUD（WASD + 鼠标键覆盖层）
 - [x] **单实例锁** —— 对应 `electron/main.js:105-133` 的

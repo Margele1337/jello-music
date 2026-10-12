@@ -360,6 +360,107 @@ writeSnapshot(root, pngPath);
         checkRightTitleBar();
         checkDeadSwitches();
         checkSingleInstance();
+        checkJelloProtocol();
+        checkMediaKeys();
+    }
+
+    /** jello:// 协议的 URL 解析，对齐原版 handleUrl（appServices.js:1529-1545）。 */
+    private static void checkJelloProtocol() {
+        // 从命令行里找 URL：位置不固定，可能带引号
+        check("能从 argv 找到协议 URL",
+                com.jello.music.system.JelloProtocol.findUrlIn(
+                        new String[]{"C:\\app.exe", "\"jello://play?hash=ABC\""})
+                        != null, "未找到");
+        check("忽略非协议参数",
+                com.jello.music.system.JelloProtocol.findUrlIn(
+                        new String[]{"--settings"}) == null, "误判");
+        check("null argv 不炸",
+                com.jello.music.system.JelloProtocol.findUrlIn(null) == null, "抛异常?");
+
+        // 解析 hash / listid / path
+        var s = com.jello.music.system.JelloProtocol.parse(
+                "jello://play?hash=ABC123&listid=L9");
+        check("解析出 hash", "ABC123".equals(s.hash()), "got=" + s.hash());
+        check("解析出 listid", "L9".equals(s.listId()), "got=" + s.listId());
+        check("解析出 path", "play".equals(s.path()), "got=" + s.path());
+        check("带 hash 视为可播", s.isPlayable(), "false");
+
+        // 只有 listid 也算可播
+        check("仅 listid 也算可播",
+                com.jello.music.system.JelloProtocol.parse(
+                        "jello://playlist?listid=L1").isPlayable(), "false");
+        check("空 URL 不可播",
+                !com.jello.music.system.JelloProtocol.parse("").isPlayable(), "true");
+        // 无 scheme 前缀也能解析（Windows 传参可能已剥离）
+        check("无 scheme 前缀也能解析",
+                "H1".equals(com.jello.music.system.JelloProtocol
+                        .parse("?hash=H1").hash()), "未解析");
+        // URL 编码
+        check("URL 编码能解码",
+                "a b".equals(com.jello.music.system.JelloProtocol
+                        .parse("jello://x?hash=a%20b").hash()), "未解码");
+    }
+
+    /**
+     * 媒体键的按键边沿判定。
+     *
+     * <p>用假的 KeyState 喂「按下 → 保持 → 松开」序列，验证只在<b>按下沿</b>触发一次，
+     * 且注册了原版需要的四个虚拟键码。
+     */
+    private static void checkMediaKeys() {
+        check("媒体键虚拟键码正确",
+                com.jello.music.system.MediaKeyPoller.VK_MEDIA_PLAY_PAUSE == 0xB3
+                        && com.jello.music.system.MediaKeyPoller.VK_MEDIA_STOP == 0xB2
+                        && com.jello.music.system.MediaKeyPoller.VK_MEDIA_NEXT_TRACK == 0xB0
+                        && com.jello.music.system.MediaKeyPoller.VK_MEDIA_PREV_TRACK == 0xB1,
+                "vk 不符");
+
+        // 假的状态源：可手动置位
+        final int[] pressed = {0};
+        int[] calls = {0};
+        // 构造前先按住，验证「预采样」能挡住开机就按着的情况
+        pressed[0] = com.jello.music.system.MediaKeyPoller.VK_MEDIA_PLAY_PAUSE;
+        com.jello.music.system.MediaKeyPoller poller =
+                new com.jello.music.system.MediaKeyPoller(
+                        vk -> pressed[0] == vk,
+                        20,
+                        new com.jello.music.system.MediaKeyPoller.Handler() {
+                            @Override
+                            public void onPlayPause() {
+                                calls[0]++;
+                            }
+                        },
+                        com.jello.music.system.MediaKeyPoller.VK_MEDIA_PLAY_PAUSE);
+
+        sleepMillis(120);
+        check("启动时已按住的键不误触发", calls[0] == 0, "calls=" + calls[0]);
+
+        // 松开
+        pressed[0] = 0;
+        sleepMillis(80);
+        // 按下 → 触发一次
+        pressed[0] = com.jello.music.system.MediaKeyPoller.VK_MEDIA_PLAY_PAUSE;
+        sleepMillis(120);
+        check("按下沿触发一次", calls[0] == 1, "calls=" + calls[0]);
+        // 保持按住 → 不重复
+        sleepMillis(120);
+        check("按住不连发", calls[0] == 1, "calls=" + calls[0]);
+        // 松开再按 → 再触发
+        pressed[0] = 0;
+        sleepMillis(80);
+        pressed[0] = com.jello.music.system.MediaKeyPoller.VK_MEDIA_PLAY_PAUSE;
+        sleepMillis(120);
+        check("再按触发第二次", calls[0] == 2, "calls=" + calls[0]);
+
+        poller.close();
+    }
+
+    private static void sleepMillis(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
