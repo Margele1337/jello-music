@@ -96,6 +96,30 @@
       但 mod 此时已经把触发条显示出来了。见 `PlayerPanel.setDockTriggerVisible`
 - [x] 点击 41px 触发条恢复展开（`EdgeDock.expand()` 清 snapped +
       `undockRequested=true` + 滑出）
+- [x] **展开缩放对齐 `alphaFactor` 三分支与双缓动** —— `ClickGuiScreen.draw:255-257,292`：
+      - `alphaFactor = (完成 && !已开始) ? method13317(p,0.8)*0.5+0.5
+        : (!完成 ? 1.0 : method13317(p,1.0))`
+      - 关键在 `method13317`（`:247-251`）**按方向选缓动**：BACKWARDS（展开）走
+        `easeOutQuad`，FORWARDS（收起）才走 `easeOutElastic`。
+        之前 Java 版无条件用 elastic，展开时曲线是错的
+      - 实测曲线：`scale` 1.25 →（过冲 0.9831）→ 0.9945 → 1.0013 → 1.0。
+        中途那个来回就是「弹进来」的手感，`easeOutQuad` 单调、不会有这个效果
+- [x] `run.bat probe-dock` / `probe-spectrum` 两个子命令，
+      改动画或频谱时能随手验
+
+### 拖拽机制：有意与 mod 不同
+
+mod（`AnimatedIconPanel:95-115`）与 Java 版（`EdgeDock`）的拖拽触发方式不同：
+
+| | mod | Java 版 |
+|---|---|---|
+| 进入「被拖动」 | 按住后计时 >=300ms（`field20888`）或鼠标移动 >2px（`field20889`） | 鼠标按下即进入 |
+| 边界处理 | 由 `updatePanelDimensions` 的 0.25/0.2 插值把面板拉向目标 | 拖拽中实时做橡皮筋（越界 200px 且 `movedX > 70` 才进） |
+| 观感 | 「按住 → 吸附过去」 | 「拖拽中带阻尼」 |
+
+Java 版跟的是 **Electron 版**（`appServices.js:679-709`，明确是拖拽中橡皮筋），
+不是 mod——因为本项目就是 Electron 版的移植。
+**记录在此以免下次误判成「没对齐 mod」。**
 - [x] **右侧弹出 / 贴边收起与 sigmarebase 逐值核对一致** ——
       `updatePanelDimensions`（:199-257）的两个目标位置都已对齐：
       - 收起 `var8 = parentWidth - 40` → `Theme.DOCK_VISIBLE = 40`
