@@ -653,13 +653,30 @@ private static void checkLoginView() {
         host.applyCss();
         host.layout();
 
-        check("登录卡片 400x470 @ 水平居中",
+check("登录卡片 400x470 @ 水平居中",
                 view.cardNode().getPrefWidth() == 400
                         && view.cardNode().getPrefHeight() == 470
                         && view.cardNode().getLayoutX() == (800 - 400) / 2.0,
                 String.format("w=%.0f h=%.0f x=%.0f",
                         view.cardNode().getPrefWidth(), view.cardNode().getPrefHeight(),
                         view.cardNode().getLayoutX()));
+
+        // 三个分段按钮必须真的能切换。原版 Login.vue:10 是 <button @click=...>，
+        // Java 侧漏挂处理器时手机号页（默认页）看起来完全正常，
+        // 表现就是「只能手机号登录」——用户根本走不到扫码和账号那两个页。
+        check("分段按钮挂了点击处理器（不然扫码/账号都切不过去）",
+                view.segmentNodes().stream().allMatch(s -> s.getOnMouseClicked() != null),
+                "handlers=" + view.segmentNodes().stream()
+                        .filter(s -> s.getOnMouseClicked() != null).count());
+        int switched = fireSegmentClicks(view);
+        check("点分段按钮能切到扫码页",
+                switched == 3 && view.qrTabVisible(),
+                "clicked=" + switched + " qrVisible=" + view.qrTabVisible());
+        // 二维码和空状态必须互斥（原版 v-if="qrCode"）。占位文字不是 placeholder
+        // 的子节点，隐藏 region 带不上它，漏了就变成「正在生成…」压在码上
+        check("二维码与空状态互斥（占位文字不会压在码上）",
+                view.qrPlaceholderVisible() && view.qrEmptyTextVisible()
+                        && !view.qrImageVisible(), null);
         check("登录卡片有 1px 描边（rgba(255,255,255,0.08)）",
                 view.cardNode().getBorder() != null
                         && !view.cardNode().getBorder().isEmpty(), null);
@@ -841,6 +858,26 @@ private static void checkLoginView() {
                     Math.abs(hit.getMinX() - b.getMinX()) < 1,
                     String.format("minX=%.0f 期望=%.0f", hit.getMinX(), b.getMinX()));
         }
+    }
+
+    /** 真点分段按钮，返回成功触发次数。 */
+    private static int fireSegmentClicks(LoginView view) {
+        int n = 0;
+        for (com.jello.music.ui.LoginView.Segment s : view.segmentNodes()) {
+            @SuppressWarnings("unchecked")
+            javafx.event.EventHandler<javafx.scene.input.MouseEvent> h =
+                    (javafx.event.EventHandler<javafx.scene.input.MouseEvent>) (Object) s.getOnMouseClicked();
+            if (h == null) {
+                continue;
+            }
+            h.handle(new javafx.scene.input.MouseEvent(
+                    javafx.scene.input.MouseEvent.MOUSE_CLICKED,
+                    0, 0, 0, 0, javafx.scene.input.MouseButton.PRIMARY, 1,
+                    false, false, false, false, true, false, false, true,
+                    false, false, null));
+            n++;
+        }
+        return n;
     }
 
     /**
@@ -1186,6 +1223,7 @@ OnboardingView view = new OnboardingView(Theme.PANEL_W, Theme.PANEL_H);
         new Scene(host, Theme.PANEL_W, Theme.PANEL_H);
         host.applyCss();
         host.layout();
+
         view.layout(Theme.PANEL_W, Theme.PANEL_H);
 
         check("教程键帽共 61 个（照抄原版键位表）", view.keyCount() == 61,

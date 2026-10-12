@@ -71,8 +71,14 @@ public final class LoginView extends Pane {
 
     private static final double CARD_W = 400;
     private static final double CARD_H = 470;
+    /** 扫码页要多放 202px 的二维码卡片，卡片随之长高（原版是内容自适应）。 */
+    private static final double CARD_H_QR = 530;
     private static final double INPUT_H = 42;
     private static final double BAR_H = 48;
+
+    /** 原版 .qr-code：图 180px + padding 10px×2 + border 1px×2。 */
+    private static final double QR_IMG = 180;
+    private static final double QR_PLATE = QR_IMG + 22;
 
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "jello-login");
@@ -108,7 +114,9 @@ public final class LoginView extends Pane {
     private final Label emailError = new Label();
 
     private final Label qrTips = new Label("请使用酷狗扫描二维码登录");
-    private final ImageView qrImage = new ImageView();
+private final ImageView qrImage = new ImageView();
+    /** 原版 .qr-code 那层白底圆角卡片，二维码压在它上面。 */
+    private final Region qrPlate = new Region();
     private final Region qrPlaceholder = new Region();
     private final Label qrEmptyText = new Label("正在生成二维码...");
 
@@ -129,8 +137,11 @@ public final class LoginView extends Pane {
 
     private final Box backButton = new Box("‹", 32, 32, 6, WHITE_08, Color.WHITE, 18);
 
-    private volatile String qrKey = "";
+private volatile String qrKey = "";
     private volatile boolean qrRunning;
+
+    /** 当前显示第几个 tab（0 手机号 / 1 账号 / 2 扫码），卡片高度随它变。 */
+    private int currentTab;
     private Consumer<UserInfo> onSuccess;
     private Runnable onBack;
     private int countdown;
@@ -218,10 +229,16 @@ node.setBorder(new Border(new BorderStroke(color, BorderStrokeStyle.SOLID,
         cardTitle.setAlignment(Pos.CENTER);
         getChildren().add(cardTitle);
 
-        double segW = (CARD_W - 50) / 3.0;
+double segW = (CARD_W - 50) / 3.0;
         String[] names = {"手机号登录", "账号登录", "扫码登录"};
         for (int i = 0; i < names.length; i++) {
+            final int index = i;
             Segment seg = new Segment(names[i], segW);
+            // 原版 Login.vue:10 是 <button @click="loginType = option;
+            // handleTabSwitch(option)">。这里之前漏了这个处理器，三个分段按钮
+            // 全都点不动——表现成「只能手机号登录」，因为手机号页恰好是默认页，
+            // 看上去像是其它两种方式不可用。
+            seg.setOnMouseClicked(e -> showTab(index));
             segments.add(seg);
             getChildren().add(seg);
         }
@@ -402,9 +419,20 @@ node.setBorder(new Border(new BorderStroke(color, BorderStrokeStyle.SOLID,
         qrTips.setTextFill(MUTED);
         qrTips.setFont(Font.font(14));
         qrTips.setPrefWidth(CARD_W - 50);
-        qrImage.setPreserveRatio(true);
+qrImage.setPreserveRatio(true);
         qrImage.setSmooth(false);
         qrImage.setMouseTransparent(true);
+        // 原版 .qr-code：白底 + 1px #eaeaea 描边 + 14px 圆角 + 10px 内边距，
+        // 二维码图 fit 到 180 居中放在这层上。不套这层的话就是一张裸 PNG，
+        // 和原版对不上。
+        qrPlate.setPrefSize(QR_PLATE, QR_PLATE);
+        qrPlate.setMouseTransparent(true);
+        // 白底 + 14px 圆角 + 1px #eaeaea 描边：先铺满描边色，再内缩 1px 铺白，
+        // 就得到一圈 1px 的边（对应 border:1px solid #eaeaea）
+        qrPlate.setBackground(new Background(
+                new BackgroundFill(Color.web("#eaeaea"), new CornerRadii(14), null),
+                new BackgroundFill(Color.web("#ffffff"), new CornerRadii(14),
+                        new javafx.geometry.Insets(1))));
         qrPlaceholder.setPrefSize(200, 200);
         qrPlaceholder.setBackground(new Background(new BackgroundFill(
                 Color.color(1, 1, 1, 0.05), new CornerRadii(14), null)));
@@ -413,7 +441,7 @@ node.setBorder(new Border(new BorderStroke(color, BorderStrokeStyle.SOLID,
         qrEmptyText.setPrefWidth(200);
         qrEmptyText.setLayoutY(90);
         qrEmptyText.setAlignment(Pos.CENTER);
-        p.getChildren().addAll(qrTips, qrImage, qrPlaceholder, qrEmptyText);
+        p.getChildren().addAll(qrTips, qrPlaceholder, qrEmptyText, qrPlate, qrImage);
         tabs.add(p);
         getChildren().add(p);
     }
@@ -421,19 +449,26 @@ node.setBorder(new Border(new BorderStroke(color, BorderStrokeStyle.SOLID,
     private void startQrLogin() {
         qrRunning = true;
         qrKey = "";
-        qrImage.setImage(null);
+qrImage.setImage(null);
         qrImage.setVisible(false);
+        qrPlate.setVisible(false);
         qrPlaceholder.setVisible(true);
+        qrEmptyText.setVisible(true);
         qrTips.setText("请使用酷狗扫描二维码登录");
         qrPoll.execute(() -> {
             try {
                 String key = api.qrKey();
                 String dataUrl = api.qrImage(key);
                 qrKey = key;
-                Platform.runLater(() -> {
+Platform.runLater(() -> {
                     qrImage.setImage(new Image(dataUrl));
                     qrImage.setVisible(true);
+                    qrPlate.setVisible(true);
+                    // 占位文字不是 placeholderRegion 的子节点，隐藏 region
+                    // 不会带上它。原版是 v-if="qrCode" 让二维码和空状态互斥，
+                    // 这里漏掉的话「正在生成二维码…」会一直压在码上。
                     qrPlaceholder.setVisible(false);
+                    qrEmptyText.setVisible(false);
                 });
                 pollQrStatus();
             } catch (Exception e) {
@@ -623,7 +658,10 @@ registerText.setTextFill(MUTED);
 
     // ================= 布局 =================
 
-    private void showTab(int index) {
+private void showTab(int index) {
+        currentTab = index;
+        // 卡片高度跟着页走（扫码页更高），必须重排一次
+        layoutAll();
         for (int i = 0; i < tabs.size(); i++) {
             tabs.get(i).setVisible(i == index);
         }
@@ -639,15 +677,19 @@ registerText.setTextFill(MUTED);
         }
     }
 
-    private void layoutAll() {
+private void layoutAll() {
         double w = getPrefWidth();
         double h = getPrefHeight();
         double cardX = (w - CARD_W) / 2;
-        double top = BAR_H + Math.max(0, (h - BAR_H - CARD_H) / 2.0);
+        // 卡片高度按当前页自适应（对应原版 .login-container 是内容撑出来的，
+        // .login-page 上还有 overflow:auto）。扫码页要放下 202px 的二维码，
+        // 用手机号页的 470 会让二维码压到底部免责声明上。
+        double cardH = currentTab == 2 ? CARD_H_QR : CARD_H;
+        double top = BAR_H + Math.max(0, (h - BAR_H - cardH) / 2.0);
 
         card.setLayoutX(cardX);
         card.setLayoutY(top);
-        card.setPrefSize(CARD_W, CARD_H);
+        card.setPrefSize(CARD_W, cardH);
         accent.setLayoutX(cardX + 1);
         accent.setLayoutY(top);
 
@@ -689,10 +731,17 @@ registerText.setTextFill(MUTED);
         emailError.setLayoutY(INPUT_H * 2 + 44);
         emailError.setPrefWidth(CARD_W - 50);
 
-        qrTips.setLayoutX(0);
+// 二维码 @ (350-202)/2，y=40。底板 202x202 = 180 图 + 10 padding×2 + 1 border×2
+    // （原版 .qr-code），二维码本身 fit 到 180 居中
+    qrTips.setLayoutX(0);
         qrTips.setLayoutY(8);
-        qrImage.setLayoutX((CARD_W - 50 - 180) / 2);
+        qrImage.setLayoutX((CARD_W - 50 - QR_PLATE) / 2);
         qrImage.setLayoutY(40);
+        qrImage.setFitWidth(QR_IMG);
+        qrImage.setFitHeight(QR_IMG);
+        qrImage.setPreserveRatio(true);
+        qrPlate.setLayoutX((CARD_W - 50 - QR_PLATE) / 2);
+        qrPlate.setLayoutY(40);
         qrPlaceholder.setLayoutX((CARD_W - 50 - 200) / 2);
         qrPlaceholder.setLayoutY(28);
 
@@ -702,13 +751,13 @@ registerText.setTextFill(MUTED);
         accountTip.setLayoutY(0);
 
 disclaimer.setLayoutX(cardX + innerX);
-        disclaimer.setLayoutY(top + CARD_H - 76 - 4);
+        disclaimer.setLayoutY(top + cardH - 76 - 4);
         disclaimerText.setLayoutX(cardX + innerX + 14);
-        disclaimerText.setLayoutY(top + CARD_H - 76 + 8);
+        disclaimerText.setLayoutY(top + cardH - 76 + 8);
         disclaimerBadge.setLayoutX(cardX + innerX + 20);
-        disclaimerBadge.setLayoutY(top + CARD_H - 76 - 14);
+        disclaimerBadge.setLayoutY(top + cardH - 76 - 14);
         registerText.setLayoutX(cardX + (CARD_W - 90) / 2);
-        registerText.setLayoutY(top + CARD_H + 14);
+        registerText.setLayoutY(top + cardH + 14);
         // 标题渐变下划线：left 30% / width 40% / bottom -6
         titleUnderline.setLayoutX(cardX + 240 * 0.3);
         titleUnderline.setLayoutY(cardTitle.getLayoutY() + 34);
@@ -746,8 +795,25 @@ disclaimer.setLayoutX(cardX + innerX);
         return card;
     }
 
-    public List<Segment> segmentNodes() {
+public List<Segment> segmentNodes() {
         return segments;
+    }
+
+    /** 扫码页（第 3 个 tab）当前是否可见，供离屏校验确认切换真的发生了。 */
+    public boolean qrTabVisible() {
+        return tabs.size() > 2 && tabs.get(2).isVisible();
+    }
+
+    public boolean qrPlaceholderVisible() {
+        return qrPlaceholder.isVisible();
+    }
+
+    public boolean qrEmptyTextVisible() {
+        return qrEmptyText.isVisible();
+    }
+
+    public boolean qrImageVisible() {
+        return qrImage.isVisible();
     }
 
     public TextField phoneInput() {
