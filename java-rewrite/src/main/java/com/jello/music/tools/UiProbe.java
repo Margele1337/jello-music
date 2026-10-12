@@ -372,6 +372,100 @@ writeSnapshot(root, pngPath);
         checkShellBackdrop();
         checkSearchBoxLayering();
         checkInitialCentering();
+        checkTrayIconsAndFont();
+    }
+
+    /**
+     * 托盘图标用原版资源 + 菜单字体必须能显示中文。
+     *
+     * <p><b>菜单乱码的根因是字体缺字形，不是编码</b>。已实测：
+     * <ul>
+     *   <li>{@code TrayIconHelper.java} 无 BOM，UTF-8 解码正常</li>
+     *   <li>{@code pom.xml} 有 {@code project.build.sourceEncoding=UTF-8}</li>
+     *   <li>class 文件常量池里是 UTF-8 字节（{@code 播放} 的 UTF-8 存在、
+     *       GBK 不存在）</li>
+     * </ul>
+     * 编码全程正确，那 AWT {@code MenuItem} 渲染成豆腐块 □□□
+     * 就只剩一个解释：它默认的 {@code MenuFont.systemFont} 缺中文字形。
+     * 所以修复方式是挑一个 {@code canDisplayUpTo} 能通过的 CJK 字体。
+     */
+    private static void checkTrayIconsAndFont() {
+        // ---- 原版图标资源必须打进 classpath ----
+        String[] icons = {"app.ico", "app-256.png",
+                "tray/play.png", "tray/prev.png", "tray/next.png",
+                "tray/home.png", "tray/show.png", "tray/quit.png"};
+        for (String name : icons) {
+            java.net.URL url = UiProbe.class.getResource("/icons/" + name);
+            check("图标资源在 classpath: " + name, url != null, "缺失");
+        }
+
+        // ---- ico 必须真的能解出尺寸，且不是空白 ----
+        try {
+            // 直接复用运行时那条路径：反射调 TrayIconHelper.loadTraySized()，
+            // 保证「探针验的」和「实际跑的」是同一段代码。
+            java.lang.reflect.Method m = Class
+                    .forName("com.jello.music.system.TrayIconHelper")
+                    .getDeclaredMethod("loadTraySized");
+            m.setAccessible(true);
+            java.awt.Image img = (java.awt.Image) m.invoke(null);
+            check("loadTraySized() 能解出图标（手工解析 ico 目录）",
+                    img != null, "返回 null");
+            if (img != null) {
+                int w = img.getWidth(null);
+                int h = img.getHeight(null);
+                check("托盘图标尺寸非 0 且在 16~64 之间",
+                        w > 0 && h > 0 && w <= 64 && h <= 64,
+                        w + "x" + h);
+                java.awt.image.BufferedImage bi =
+                        new java.awt.image.BufferedImage(w, h,
+                                java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                java.awt.Graphics2D g = bi.createGraphics();
+                g.drawImage(img, 0, 0, null);
+                g.dispose();
+                boolean hasColor = false;
+                for (int y = 0; y < h && !hasColor; y++) {
+                    for (int x = 0; x < w; x++) {
+                        int argb = bi.getRGB(x, y);
+                        int r = (argb >>> 16) & 0xFF;
+                        int gch = (argb >>> 8) & 0xFF;
+                        int b = argb & 0xFF;
+                        // 非灰阶即视为有颜色（原版图标带紫/粉）
+                        if (Math.max(r, Math.max(gch, b))
+                                - Math.min(r, Math.min(gch, b)) > 12) {
+                            hasColor = true;
+                            break;
+                        }
+                    }
+                }
+                check("图标不是纯灰阶（是原版紫粉图标，不是现画的圆底）",
+                        hasColor, "全灰阶");
+            }
+        } catch (Exception e) {
+            check("反射调 loadTraySized", false, String.valueOf(e));
+        }
+
+        // ---- 菜单字体必须能显示中文 ----
+        String sample = "播放设置退出上一首下一首";
+        java.awt.Font[] candidates = {
+                new java.awt.Font("Microsoft YaHei UI", java.awt.Font.PLAIN, 14),
+                new java.awt.Font("Microsoft YaHei", java.awt.Font.PLAIN, 14),
+                new java.awt.Font("SimHei", java.awt.Font.PLAIN, 14),
+                new java.awt.Font("SimSun", java.awt.Font.PLAIN, 14),
+                new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 14),
+        };
+        int cjkOk = 0;
+        for (java.awt.Font f : candidates) {
+            if (f.canDisplayUpTo(sample) < 0) {
+                cjkOk++;
+            }
+        }
+        check("候选字体里至少 2 个能显示中文（说明本机有 CJK 字体）",
+                cjkOk >= 2, "只有 " + cjkOk + " 个能显示");
+        // AWT 默认菜单字体 —— 乱码的元凶
+        java.awt.Font sysMenuFont =
+                new java.awt.Font("Dialog", java.awt.Font.PLAIN, 14);
+        check("java.awt.Dialog 字体能显示中文（AWT 兜底可用）",
+                sysMenuFont.canDisplayUpTo(sample) < 0, "无中文字形");
     }
 
     /**
