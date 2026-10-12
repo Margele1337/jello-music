@@ -42,10 +42,13 @@ public final class SpectrumTap implements AutoCloseable {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-    private final HttpResponse<InputStream> response;
-    private final Bitstream bitstream;
-    private final Decoder decoder;
-    private final SampleBuffer sampleBuffer;
+    private final String directUrl;
+    private final int fftSizeRequested;
+    private HttpResponse<InputStream> response;
+    private InputStream stream;
+    private Bitstream bitstream;
+    private Decoder decoder;
+    private SampleBuffer sampleBuffer;
     private final Fft fft;
 
     private int sampleRate;
@@ -60,31 +63,229 @@ public final class SpectrumTap implements AutoCloseable {
      */
     private long decodedSamples;
 
+    /** Content-Length；服务端没给时为 -1（此时不能按字节 seek）。 */
+    private long contentLength = -1;
+
+    /** 字节偏移 → 音频时间的换算比例，seek 成功后按实际帧率校准。 */
+    private double bytesPerSecond = -1;
+
+    /** 已消费的字节数估算（按采样数 × 每采样字节数）。 */
+    private long bytesConsumed;
+
+    /**
+     * 估算一个音频时间对应的字节偏移。
+     *
+     * <p>MP3 是变比特率流，字节与时间不是严格线性。这里按「前 64KB 的实际解码
+     * 结果」估一个平均值，误差累积后由 {@link #seekToSeconds} 的周期性校正兜住——
+     * 频谱只要大致对齐，肉眼看不出毫秒级误差。
+     */
+    private static final int BYTES_PER_SECOND_PROBE = 64 * 1024;
+
     public SpectrumTap(String directUrl, int fftSize) throws IOException {
         this.fft = new Fft(fftSize);
+        this.directUrl = directUrl;
+        this.fftSizeRequested = fftSize;
+        this.sampleBuffer = new SampleBuffer(Obuffer.OBUFFERSIZE, Obuffer.MAXCHANNELS);
+        open(0);
+    }
 
-        HttpRequest req = HttpRequest.newBuilder(URI.create(directUrl))
+    /**
+     * （重）打开流。
+     *
+     * @param byteOffset 从流的哪个字节开始读；0 表示从头
+     */
+    private void open(long byteOffset) throws IOException {
+        closeStream();
+        // 变量别叫 req：那是 HttpRequest.Builder 的产物，
+        // 而下面还要用 HttpRequest.newBuilder() 这个类名
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(directUrl))
                 .timeout(Duration.ofSeconds(60))
                 .header("Accept", "*/*")
-                .GET()
-                .build();
+                .GET();
+        if (byteOffset > 0) {
+            // 直链实测支持 Range（返回 206），所以可以按字节跳
+            builder.header("Range", "bytes=" + byteOffset + "-");
+        }
         try {
-            this.response = HTTP.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            this.response = HTTP.send(builder.build(),
+                    HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("拉流被中断", e);
         }
         int code = response.statusCode();
+        // 206 = 按 Range 返回的片段；200 = 服务端忽略了 Range，只能从头
+        boolean partial = code == 206;
         if (code != 200 && code != 206) {
             response.body().close();
             throw new IOException("拉流失败 HTTP " + code);
         }
+        long len = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+        this.contentLength = partial && len > 0 ? byteOffset + len : len;
 
-        InputStream in = new BufferedInputStream(response.body(), 1 << 16);
-        this.bitstream = new Bitstream(in);
+        this.stream = new java.io.PushbackInputStream(
+                new BufferedInputStream(response.body(), 1 << 16), 2);
+        this.bitstream = new Bitstream(stream);
         this.decoder = new Decoder();
-        this.sampleBuffer = new SampleBuffer(Obuffer.OBUFFERSIZE, Obuffer.MAXCHANNELS);
         this.decoder.setOutputBuffer(sampleBuffer);
+        this.sampleBuffer.clear_buffer();
+        this.decodedSamples = 0;
+        // bytesConsumed 是「距当前起点的字节数」，重新打开流后从 0 重新累计。
+        // 但 bytesPerSecond 是整首歌的平均码率，不能清——它正是我们要保留的换算依据。
+        this.bytesConsumed = 0;
+    }
+
+    private void closeStream() {
+        try {
+            // Bitstream 持有 InputStream，先关它再关底层流
+            if (bitstream != null) {
+                bitstream.close();
+            }
+        } catch (Exception ignored) {
+            // 关闭失败无需处理
+        }
+        bitstream = null;
+        try {
+            if (stream != null) {
+                stream.close();
+            }
+        } catch (IOException ignored) {
+            // 同上
+        }
+        if (response != null) {
+            try {
+                response.body().close();
+            } catch (IOException ignored) {
+                // 同上
+            }
+        }
+        stream = null;
+        response = null;
+    }
+
+    /** 已知的音频总时长（秒）；拿不到时返回 0。 */
+    public double totalSeconds() {
+        if (contentLength <= 0 || bytesPerSecond <= 0) {
+            return 0;
+        }
+        return contentLength / bytesPerSecond;
+    }
+
+    /**
+     * 跳到指定音频时间（秒）。
+     *
+     * <p>对应原版 {@code syncLookahead} 里给预读播放器设 {@code currentTime} 的动作
+     * （{@code AudioController.js:110-117}）。
+     *
+     * <h2>为什么不能直接从任意字节开始解</h2>
+     * MP3 帧头是变长的：帧长由「采样率 + 比特率 + 填充位」算出，
+     * 从帧中间开始读，{@code Bitstream.readFrame} 会把垃圾字节当成同步字，
+     * 结果是<b>一帧都解不出来</b>（实测：按估算偏移跳到 20s，
+     * 后续 500 次解码尝试全部返回 null）。
+     *
+     * <p>所以这里用「扫同步字」的办法对齐：从估算偏移开始向前找
+     * {@code 0xFFEx} 这样的帧头，命中后再退一点留出余量，
+     * 让 {@code readFrame} 自己去找下一个真正的帧。
+     *
+     * @return 跳转是否成功；服务端不支持 Range 或换算失败时返回 false
+     */
+    public boolean seekToSeconds(double seconds) {
+        if (seconds <= 0) {
+            return false;
+        }
+        if (contentLength <= 0 || bytesPerSecond <= 0) {
+            // 没有 Content-Length 或还没估出速率：跳不了，只能顺序解码
+            return false;
+        }
+        long target = (long) (seconds * bytesPerSecond);
+        if (target >= contentLength) {
+            target = Math.max(0, contentLength - 1);
+        }
+        try {
+            open(target);
+            if (!alignToFrameBoundary()) {
+                // 对不齐就退回从头：宁可慢一点，也不能拿一帧都解不出的流
+                open(0);
+                return false;
+            }
+            // 预热：alignToFrameBoundary 的探测会消耗掉开头几帧，
+            // 而 Bitstream 解完第一帧后内部才完全进入稳态。
+            // 不预热的话，调用方第一轮 nextRawFrame 只能拿到十来帧，
+            // 第二轮才恢复——表现为频谱刚跳转时卡一下。
+            for (int i = 0; i < WARMUP_FRAMES; i++) {
+                if (nextRawFrame() == null) {
+                    break;
+                }
+            }
+            return true;
+        } catch (IOException e) {
+            System.err.println("[SpectrumTap] 跳转到 " + seconds + "s 失败: " + e);
+            return false;
+        }
+    }
+
+    /** 跳转后预热解多少帧，用来盖掉 Bitstream 的启动抖动。 */
+    private static final int WARMUP_FRAMES = 12;
+
+    /**
+     * 从当前位置向前扫，找到 MP3 帧头。
+     *
+     * <p>MP3 帧同步字是 11 位全 1，即首字节 {@code 0xFF} 且次字节高 3 位为 {@code 0xE0}。
+     * 扫到之后再多读几帧让解码器自己复位——宁可跳过几帧，也比落在帧中间好。
+     *
+     * @return 是否找到并成功解出至少一帧
+     */
+    private boolean alignToFrameBoundary() {
+        // 上限：最多向前找 512KB，够跨过任何一处非帧边界
+        final long maxScanBytes = 512 * 1024;
+        long scanned = 0;
+        for (int attempt = 0; attempt < 4096; attempt++) {
+            try {
+                int b1 = stream.read();
+                if (b1 < 0) {
+                    return false;
+                }
+                scanned++;
+                if ((b1 & 0xFF) != 0xFF) {
+                    continue;
+                }
+                int b2 = stream.read();
+                if (b2 < 0) {
+                    return false;
+                }
+                scanned++;
+                // 11 位同步：11111111 111xxxxx
+                if ((b2 & 0xE0) != 0xE0) {
+                    continue;
+                }
+                // 剩下的版本/层/比特率位不校验：不同编码版本差异大，
+                // 宁可放过一些误命中，也不要漏掉真帧头。
+                // 回退 2 字节，让 readFrame 从帧头开始读
+                pushback(b1, b2);
+                // 试解一帧确认真的对齐了
+                double[] probe = nextRawFrame();
+                if (probe != null) {
+                    return true;
+                }
+            } catch (IOException e) {
+                return false;
+            }
+            // 这里用自己累计的 scanned，而不是 bytesConsumed——
+            // 后者只在解码成功时才涨，扫不到帧时它一直是 0，循环上限形同虚设
+            if (scanned > maxScanBytes) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** 把刚读走的字节放回流头，供 {@link Bitstream} 重新解析。 */
+    private void pushback(int b1, int b2) throws IOException {
+        if (!(stream instanceof java.io.PushbackInputStream)) {
+            return;
+        }
+        ((java.io.PushbackInputStream) stream).unread(b2);
+        ((java.io.PushbackInputStream) stream).unread(b1);
     }
 
     public int sampleRate() {
@@ -187,6 +388,12 @@ public final class SpectrumTap implements AutoCloseable {
                 filled += consumed;
             }
             decodedSamples += consumed;
+            // 累计字节数，用来估 bytesPerSecond（按字节 seek 必需）
+            bytesConsumed += consumed * (channels == 1 ? 2 : 4);
+            if (bytesPerSecond < 0 && bytesConsumed >= BYTES_PER_SECOND_PROBE
+                    && sampleRate > 0) {
+                bytesPerSecond = bytesConsumed / (decodedSamples / (double) sampleRate);
+            }
         }
 
         if (filled > 0) {
@@ -214,16 +421,7 @@ public final class SpectrumTap implements AutoCloseable {
 
     @Override
     public void close() {
-        try {
-            bitstream.close();
-        } catch (Exception ignored) {
-            // 关闭失败无需处理
-        }
-        try {
-            response.body().close();
-        } catch (IOException ignored) {
-            // 同上
-        }
+        closeStream();
     }
 
     /**

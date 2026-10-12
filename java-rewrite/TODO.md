@@ -124,12 +124,21 @@
             Java 侧没有 `Minecraft.getFps()`，用画布实测帧率代替
       - [x] `spectrumScale` —— `(参考窗口高/1080) * scale`，
             条高 `max(0, sqrt(a)/12-5) * heightRatio`
-      - [x] `spectrumAvDelay` —— 预读领先量，夹到 [0, 2000]，默认 590ms
       - [x] `spectrumLocked` —— 对应原版 `setIgnoreMouseEvents`。
             JavaFX 21 没有公开的鼠标穿透 API（`Scene` 上无 `setMouseTransparent`，
             `com.sun.javafx.tk.quantum.WindowUtils` 在 21 已移除），
             改用 JNA + Win32 `WS_EX_TRANSPARENT`（`system/MousePassthrough.java`）；
             双击切换解锁态，锁定时可拖窗口并记住位置
+      - [x] `spectrumAvDelay` —— 预读领先量，夹到 [0, 2000]，默认 590ms。
+            **这是第四个死开关，本轮才真正接上**：
+            之前只 `setLeadSeconds` 存着，没人消费。
+            现在 1:1 复刻原版 `syncLookahead`（`AudioController.js:106-124`）：
+            `expected = 播放位置 + lead`，偏差 > 80ms 就重新定位。
+            差别在「怎么跳」——原版给真实 Audio 设 `currentTime` 由浏览器 seek，
+            Java 侧是自己拉流，所以改成按字节偏移重开 Range 请求。
+            实现见 `SpectrumTap.seekToSeconds` 与 `SpectrumFeed.realignToPlayback`
+      - [x] **频谱窗开关持久化** —— 对应原版 `desktopSpectrum`（`settings.js:46-57`，
+            默认 off）。之前只切窗口显示，重启后不记得开没开过
       - [x] 暂停语义 —— 对应 `while(!playing){ sleep(300); visualizerData.clear(); }`，
             是「最多 300ms 内清空」而非立即清；恢复播放时首帧吸附不做渐变
       - [x] 频谱窗位置持久化（对应 `electron/appServices.js:165`、`main.js:459`）
@@ -144,6 +153,21 @@
       - [x] 频谱窗尺寸 220×60 → **420×130** —— 220x60 装不下 100x100 的信息块
       - [ ] **待验证**：真实播放时条高观感。离屏探针只能验公式与参数落地，
             实际条形高度要真机听一遍（`run.bat probe-play` 只验解码，不画频谱）
+
+### 频谱 seek 的三个坑（按字节跳音频流）
+
+`spectrumAvDelay` 要真生效就得能按时间跳，实测踩了三层：
+
+| 坑 | 现象 | 解法 |
+|---|---|---|
+| FFT 长度不是 2 的幂 | 上轮把 `FFT_SIZE` 改成 1152（一个 MP3 帧的采样数），`Fft` 构造直接抛 `IllegalArgumentException`，**真实播放会当场崩** | 改回 1024。1152=128×9 不是 2 的幂，而 mod 的 `JavaFFT.transform` 同样是 `blockSize <<= 1`，**那条路在 mod 里其实也跑不通** |
+| 跳到帧中间解不出 | 按估算字节偏移跳到 20s，后续 500 次解码全返回 null | 扫 MP3 同步字（`0xFF` + 次字节高 3 位 `0xE0`），命中后 pushback 回流头再试解一帧确认 |
+| 跳完第一轮只解出 10 帧 | 对齐探测消耗了开头几帧，且 `Bitstream` 解完第一帧才进稳态 | seek 后预热解 12 帧（`WARMUP_FRAMES`） |
+
+另外 MP3 是变比特率，字节与时间不严格线性：按前 64KB 的实际解码结果估平均码率
+（`bytesPerSecond`），误差累积后靠 `realignToPlayback` 的周期性校正兜住。
+`realignToPlayback` **只往后跳不往回跳**——已解出的帧不能「撤销」，
+强行回到过去只会把顺序解码打乱。
 - [x] 播放模式持久化 —— 原版 `localStorage['player_playback_mode']`（`AppPrefs`，默认 1）
 - [x] 拖拽排除列表 —— 原版 `SigmaMusicPlayer.vue:340` 的 `NO_DRAG_SELECTOR`
       （12 项）照抄成 `DragGate`，控件挂原版同名的 CSS class，

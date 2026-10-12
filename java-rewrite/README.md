@@ -174,11 +174,37 @@ PCM 字节 → convertToPCMFloatArray (MathHelper:21-30)   sample / 32768.0f  �
   Electron 版换算成 `τ = 1/(smoothing*60)` 的指数步进。两者在不同帧率下曲线接近，
   但不是同一个表达式。
 - **坐标方向**：sigmarebase 的 y 是 `H - 偏移`（原点在左上、y 向下）；
-  JavaFX 原点在左下、y 向上，所以 `H - offset` **直接就是** JavaFX 的 y，
-  **不能再取负**。写成 `-offset` 会把封面甩到窗口外——这个 bug 是被 `probe-ui`
+  JavaFX 原点在左下、y 向上，所以 `H - 偏移` **直接就是** JavaFX 的 y，
+  **不能再取负**。写成 `-偏移` 会把封面甩到窗口外——这个 bug 是被 `probe-ui`
   的「缩放后仍在窗内」断言抓到的，肉眼看截图只会觉得「封面不见了」。
 - **`Parent.layout()` 和 `Region.layoutChildren()` 都是 final**，不能覆写。
   要按自定义规则摆子节点，只能监听 `width/heightProperty` 后手动 `resizeRelocate`。
+- **FFT 长度必须是 2 的幂**。mod 写的是 `new JavaFFT(一个 MP3 帧的 1152 采样)`，
+  但 1152 = 128×9 不是 2 的幂，而 mod 的 `JavaFFT.transform` 同样是
+  `blockSize <<= 1` 的 Cooley-Tukey——**那条路在 mod 里其实也跑不通**。
+  这里取 1024（最接近的 2 的幂，与 Electron 版一致）。
+
+### 音画差补偿：为什么频谱流要能按时间跳
+
+`spectrumAvDelay` 的语义是「频谱领先声音多少」（默认 590ms）。
+sigmarebase / Electron 版靠一个**静音的预读播放器**实现——那个播放器位置
+= 主播放器位置 + leadMs，偏差超过 80ms 就 seek（`AudioController.js:106-124`）。
+
+Java 侧没有第二个播放器，频谱是自己拉流自己解的，所以改成：
+`SpectrumFeed.realignToPlayback()` 周期性比对
+「已解码位置」与「播放位置 + lead」，超差就让 `SpectrumTap` 按字节偏移
+重开一条 Range 请求。
+
+**按字节跳音频流有三个坑**，都实测踩过：
+
+| 坑 | 现象 | 解法 |
+|---|---|---|
+| 跳到帧中间 | 按估算偏移跳到 20s，后续 500 次解码全返回 null | 扫 MP3 同步字（`0xFF` + 次字节高 3 位 `0xE0`），命中后 pushback 回流头再试解一帧确认 |
+| 跳完第一轮只解出 10 帧 | 对齐探测消耗了开头几帧，且 `Bitstream` 解完第一帧才进稳态 | seek 后预热解 12 帧 |
+| 位置抖动 | 每次都跳、队列里还留着跳转前的旧帧，画面会「倒带」 | 跳完清队列；且**只往后跳不往回跳**（已解出的帧无法撤销，强行回到过去只会打乱顺序解码） |
+
+MP3 是变比特率，字节与时间不严格线性：按前 64KB 的实际解码结果估平均码率，
+误差累积后靠周期性校正兜住。频谱只要大致对齐，肉眼看不出毫秒级误差。
 
 ### 鼠标穿透：JavaFX 没有这个开关
 

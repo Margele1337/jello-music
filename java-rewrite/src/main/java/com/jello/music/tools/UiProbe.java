@@ -557,8 +557,23 @@ writeSnapshot(root, pngPath);
         // ---- 内核常量，对齐 sigmarebase 的权威定义 ----
         check("频谱条数 == 114（renderSpectrum maxWidth）",
                 SpectrumFeed.BAR_COUNT == 114, "got=" + SpectrumFeed.BAR_COUNT);
-        check("FFT 长度 == 1152（一个 MP3 帧的采样数）",
-                SpectrumFeed.FFT_SIZE == 1152, "got=" + SpectrumFeed.FFT_SIZE);
+        // FFT 必须是 2 的幂，否则 Fft 构造直接抛 IllegalArgumentException。
+        // 这里钉住这条，因为「1152（一个 MP3 帧）」看起来更权威，但它不是 2 的幂，
+        // 而 mod 的 JavaFFT 同样用 blockSize <<= 1，所以那条路在 mod 里也跑不通。
+        check("FFT 长度 == 1024（最接近 1152 的 2 的幂）",
+                SpectrumFeed.FFT_SIZE == 1024, "got=" + SpectrumFeed.FFT_SIZE);
+        check("FFT 长度是 2 的幂（radix-2 硬性要求）",
+                Integer.bitCount(SpectrumFeed.FFT_SIZE) == 1,
+                "got=" + SpectrumFeed.FFT_SIZE);
+        // 实际构造一次 Fft，确保不会被长度约束当场拦下
+        boolean fftOk;
+        try {
+            new com.jello.music.player.Fft(SpectrumFeed.FFT_SIZE);
+            fftOk = true;
+        } catch (RuntimeException e) {
+            fftOk = false;
+        }
+        check("Fft 能以该长度构造", fftOk, "抛异常");
         check("幅度上限 == 2.256e7（onRender2D 钳位）",
                 Math.abs(SpectrumFeed.MAX_AMPLITUDE - 2.256e7) < 1,
                 String.valueOf(SpectrumFeed.MAX_AMPLITUDE));

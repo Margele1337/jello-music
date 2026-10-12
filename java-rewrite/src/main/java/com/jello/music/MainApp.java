@@ -83,6 +83,9 @@ public class MainApp extends Application {
     /** 音画差补偿默认值，对应 Electron 侧 {@code SPECTRUM_AV_DELAY_DEFAULT_MS}。 */
     private static final double SPECTRUM_AV_DELAY_DEFAULT_MS = 590;
 
+    /** 频谱窗开关，对应原版设置项 key {@code desktopSpectrum}。 */
+    private static final String SPECTRUM_ON_KEY = "desktopSpectrum";
+
     /**
      * 频谱悬浮窗尺寸。
      *
@@ -704,6 +707,25 @@ dock = new EdgeDock(stage);
         return rightTitleBar == null ? "" : rightTitleBar.titleText();
     }
 
+    /**
+     * 当前播放位置（秒）。
+     *
+     * <p>供 {@link SpectrumFeed} 做音画差对齐。播放器还没就绪时返回 0。
+     *
+     * <p>注意：进度条 seek 之后这个值会突变，feed 那边靠
+     * 「只往后跳」的策略忽略向后的跳变（见 {@code realignToPlayback}）。
+     */
+    private double playbackSeconds() {
+        if (player == null) {
+            return 0;
+        }
+        try {
+            return player.getCurrentTime().toSeconds();
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
     private static List<ResultCard> toCards(List<Song> songs) {
         List<ResultCard> out = new ArrayList<>(songs.size());
         for (Song s : songs) {
@@ -816,6 +838,11 @@ private void startPlayback(String url) {
             player.play();
             playerPanel.bindPlayer(player);
             rewireSpectrum(url);
+            // 开始播放：让频谱从「暂停清队列」切回解码，并记住当前进度作为对齐起点
+            syncSpectrumPlaying(true);
+            if (feed != null) {
+                feed.resetAlignment();
+            }
         } catch (Exception e) {
             status("初始化播放失败：" + e.getMessage());
         }
@@ -897,6 +924,11 @@ private void startPlayback(String url) {
     private void applySpectrumSettings(SpectrumFeed f, SpectrumView v) {
         if (f != null) {
             f.setLeadSeconds(spectrumAvDelayMs() / 1000.0);
+            // 把播放位置喂给 feed，后台线程据此把解码位置对齐到
+            // 「播放位置 + 领先量」（对应原版 syncLookahead）。
+            // 之前只 setLeadSeconds 而没有位置来源，领先量存着没人用——
+            // 那就是第四个死开关。
+            f.setPlaybackPosition(this::playbackSeconds);
         }
         if (v != null) {
             v.setSpectrumScale(spectrumScale());
@@ -1024,6 +1056,11 @@ private void startPlayback(String url) {
         }
         persistSpectrumPositionOnExit();
         spectrumStage.hide();
+        // 对应原版 SigmaMusicPlayer.vue:260 —— 启动时按 settings.desktopSpectrum 恢复
+        if (spectrumOnByDefault()) {
+            spectrumStage.show();
+            playerPanel.setSpectrumActive(true);
+        }
     }
 
     /** 频谱窗拖动：只有解锁态可拖，对应原版 {@code -webkit-app-region: drag}。 */
@@ -1109,10 +1146,27 @@ private void startPlayback(String url) {
         if (spectrumStage.isShowing()) {
             spectrumStage.hide();
             playerPanel.setSpectrumActive(false);
+            setSpectrumOn(false);
         } else {
             spectrumStage.show();
             playerPanel.setSpectrumActive(true);
+            setSpectrumOn(true);
         }
+    }
+
+    /**
+     * 频谱窗开关的持久化，对应原版设置项 {@code desktopSpectrum}
+     * （{@code settings.js:46-57}，默认 off；
+     * {@code SigmaMusicPlayer.vue:244} 切换时写回 settings）。
+     */
+    private void setSpectrumOn(boolean on) {
+        AppPrefs.setSetting(SPECTRUM_ON_KEY, on ? "on" : "off");
+        AppPrefs.putSettings(java.util.Map.of());
+    }
+
+    /** 启动时按设置决定频谱窗是否显示。 */
+    private boolean spectrumOnByDefault() {
+        return "on".equals(AppPrefs.getSetting(SPECTRUM_ON_KEY, "off"));
     }
 
     /**
