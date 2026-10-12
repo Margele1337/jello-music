@@ -118,6 +118,10 @@ public final class DockMotionProbe {
                     new javafx.scene.layout.StackPane(root);
             javafx.scene.Scene sc2 = new javafx.scene.Scene(overlay,
                     com.jello.music.ui.Theme.PANEL_W, com.jello.music.ui.Theme.PANEL_H);
+            // Scene 默认白底。漏了这行截出来的帧会是一片纯白——
+            // 动画期间整体 opacity < 1，白底就透出来了。
+            // MainApp:350 也是这么设的。
+            sc2.setFill(javafx.scene.paint.Color.TRANSPARENT);
             stage.setScene(sc2);
             com.jello.music.ui.ElasticReveal reveal =
                     new com.jello.music.ui.ElasticReveal(overlay);
@@ -150,6 +154,22 @@ public final class DockMotionProbe {
         }.start();
     }
 
+    /** 用 ImageIO 写 PNG（javafx.embed.swing 不在模块路径里）。 */
+    private static void writePng(javafx.scene.image.WritableImage img, String path)
+            throws java.io.IOException {
+        java.awt.image.BufferedImage bi =
+                new java.awt.image.BufferedImage(
+                        (int) img.getWidth(), (int) img.getHeight(),
+                        java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        var reader = img.getPixelReader();
+        for (int y = 0; y < bi.getHeight(); y++) {
+            for (int x = 0; x < bi.getWidth(); x++) {
+                bi.setRGB(x, y, reader.getArgb(x, y));
+            }
+        }
+        javax.imageio.ImageIO.write(bi, "png", new java.io.File(path));
+    }
+
     /** 逐帧采样位置与透明度。 */
     private static final class Sampler extends AnimationTimer {
         private final Stage stage;
@@ -159,6 +179,9 @@ public final class DockMotionProbe {
         private final long t0;
         private final double targetX;
         private long last = -1;
+        private int sampleSeq = 0;
+        private int lastShotSeq = -10;
+        private int shotIndex = 0;
         private boolean printedArrive;
         private boolean printedAlpha;
         private double firstX;
@@ -185,11 +208,26 @@ public final class DockMotionProbe {
             }
             if (ms - last >= 30) {
                 last = ms;
+                sampleSeq++;
                 samples.add(new double[]{ms, x, alpha});
                 // 两层相乘才是最终观感 —— mod 里 partialTicks 就是逐层往下乘的
-                double composed = alpha * overlay.getOpacity();
+                            double composed = alpha * overlay.getOpacity();
                 System.out.printf("%-8d %-10.1f %-8.3f %-8.4f %-8.4f%n",
                         ms, x, alpha, overlay.getOpacity(), composed);
+                // 动画中途把整棵树截一张图落盘 —— 白底这类「只在动画里出现」
+                // 的问题，静态面板截图是看不出来的（静态截图明明是好的）
+                // 用采样序号计间隔，不拿 ms 相减（lastShot 初值取 MIN_VALUE
+                // 会让减法溢出成负数，永远不满足条件——踩过一次）
+                if (shotIndex < 6 && sampleSeq - lastShotSeq >= 4) {
+                    lastShotSeq = sampleSeq;
+                    try {
+                        writePng(stage.getScene().snapshot(null),
+                                System.getProperty("java.io.tmpdir")
+                                        + "/jello-dock-frame-" + (shotIndex++) + ".png");
+                    } catch (Throwable t) {
+                        System.err.println("  截图失败: " + t);
+                    }
+                }
             }
             if (!printedArrive && Math.abs(x - targetX) < 1.0) {
                 printedArrive = true;

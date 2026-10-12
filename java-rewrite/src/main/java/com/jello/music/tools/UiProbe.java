@@ -368,6 +368,80 @@ writeSnapshot(root, pngPath);
         checkJumpList();
         checkSystemToggles();
         checkApiBaseUrl();
+        checkNoWhiteBackdrop();
+    }
+
+    /**
+     * 半透明时不能透出白色背景。
+     *
+     * <p><b>这个 bug 的成因</b>：{@code Pane} / {@code StackPane} 都继承自
+     * {@code Region}，JavaFX modena 默认样式会画一层白色背景。
+     * 平时 opacity 恒为 1，面板的深色底板把它完全盖住、看不出来；
+     * 但贴边 / 展开动画会让整体 opacity 短暂小于 1
+     * （{@code EdgeDock} 的半透明 × {@code ElasticReveal} 的 alphaFactor），
+     * 那一瞬间白底就透出来，表现为「面板边缘一圈白」。
+     *
+     * <p>做法：造一个只有 root、没有任何底板的 overlay，
+     * 把整体 opacity 设成 0.5（模拟动画中途），截图检查四角与中心
+     * 是否仍为全透明。先跑一个「未设背景的 Pane」对照组，
+     * 确认这个 JavaFX 版本的默认背景确实是白的 —— 否则断言前提不成立。
+     */
+    private static void checkNoWhiteBackdrop() {
+        // 空节点不放进 Scene 时 snapshot 是 0x0（设了 prefSize / 调 layout() 也没用，
+        // 因为没有 Scene 时布局不生效），所以两条都要先套一层 Scene。
+        // Scene 自身也设透明，免得 Scene 的默认白底混进要测的信号里。
+        javafx.scene.layout.Pane bare = new javafx.scene.layout.Pane();
+        bare.setOpacity(0.5);
+        // 对照组：Scene 不设 Fill 时就是默认白底。
+        // 「动画里面板变白」的真凶就在这 —— 平时 opacity=1 被面板底板盖住看不出来，
+        // 动画期间整体半透明，白底就透出来了。
+        var bareScene = new javafx.scene.Scene(bare, 200, 150);
+        bareScene.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        var bareImg = bare.snapshot(null, null);
+        check("对照组快照尺寸非空（否则读像素会越界）",
+                bareImg.getWidth() > 2 && bareImg.getHeight() > 2,
+                bareImg.getWidth() + "x" + bareImg.getHeight());
+        int bareAlpha = (bareImg.getPixelReader().getArgb(2, 2) >>> 24) & 0xFF;
+        check("对照组：Scene 设透明 Fill 后，Pane 本身不画白底",
+                bareAlpha == 127, // 0.5 opacity 作用在透明底上 -> alpha 127
+                "alpha=" + bareAlpha + "（255 说明仍有白底）");
+
+        // 对照：同一条 Scene 不设 Fill 时应当是白的
+        javafx.scene.layout.Pane whiteProbe = new javafx.scene.layout.Pane();
+        whiteProbe.setOpacity(0.5);
+        var whiteScene = new javafx.scene.Scene(whiteProbe, 200, 150);
+        // 故意不 setFill —— 这就是 bug 的样子
+        int whiteAlpha = (whiteProbe.snapshot(null, null)
+                .getPixelReader().getArgb(2, 2) >>> 24) & 0xFF;
+        check("对照组：Scene 不设 Fill 时确实是白底（alpha=255）",
+                whiteAlpha == 255, "alpha=" + whiteAlpha);
+
+        javafx.scene.layout.Pane root = new javafx.scene.layout.Pane();
+        root.setBackground(javafx.scene.layout.Background.fill(
+                javafx.scene.paint.Color.TRANSPARENT));
+        javafx.scene.layout.StackPane overlay =
+                new javafx.scene.layout.StackPane(root);
+        overlay.setBackground(javafx.scene.layout.Background.fill(
+                javafx.scene.paint.Color.TRANSPARENT));
+        overlay.setOpacity(0.5);
+        var scene = new javafx.scene.Scene(overlay, 200, 150);
+        scene.setFill(javafx.scene.paint.Color.TRANSPARENT);
+
+        var img = overlay.snapshot(null, null);
+        var reader = img.getPixelReader();
+        int[] points = {2, 2, 197, 2, 2, 147, 100, 75};
+        boolean allClear = true;
+        StringBuilder detail = new StringBuilder();
+        for (int i = 0; i < points.length; i += 2) {
+            int a = (reader.getArgb(points[i], points[i + 1]) >>> 24) & 0xFF;
+            if (a != 0) {
+                allClear = false;
+                detail.append(String.format("(%d,%d)=%d ",
+                        points[i], points[i + 1], a));
+            }
+        }
+        check("半透明时四角与中心都是全透明（无白底漏出）",
+                allClear, detail.toString());
     }
 
     /**
