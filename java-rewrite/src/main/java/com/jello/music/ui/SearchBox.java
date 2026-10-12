@@ -242,10 +242,26 @@ long phase = elapsed % CARET_PERIOD_MS;
         this.onOpenPlaylist = r;
     }
 
+    /**
+ * 清空搜索框与结果列表。
+     *
+     * <p><b>输入框文字也要清</b>：原版从左栏点歌单时
+     * {@code loadPlaylist}（SigmaSearchBox.vue:89）只填卡片，
+     * <b>从不写 keyword</b> —— 搜索框会回到 "Search..." 占位符。
+     *
+     * <p>之前这里只清结果列表，残留的输入文字（比如上一轮搜的「我喜欢」）
+     * 会一直挂在搜索框上，看起来像「搜索框显示了歌单名」。
+     */
     public void clear() {
         results.viewport().getChildren().clear();
         results.setContentHeight(0);
         cards.clear();
+        if (!field.getText().isEmpty()) {
+            field.clear();
+        }
+        scrollX = 0;
+        scrollTarget = 0;
+        paintFieldText();
     }
 
     /** 搜索结果区在子节点里的位置，供 UiProbe 断言层级顺序。 */
@@ -266,6 +282,11 @@ long phase = elapsed % CARET_PERIOD_MS;
     /** 搜索结果区的纵坐标（原版是 top:0，铺满整块）。 */
     public double resultsLayoutY() {
         return results.getLayoutY();
+    }
+
+    /** 输入框当前文字，供 UiProbe 断言 clear() 是否清干净。 */
+    public String typedTextForTest() {
+        return field.getText();
     }
 
     /** 结果区的滚动容器，外部（校验工具）需要查滚动状态时用。 */

@@ -853,6 +853,11 @@ dock = new EdgeDock(stage);
 
     /** 歌单曲目铺到右栏网格（点歌单卡或点左栏歌单都走这里）。 */
     private void showPlaylistTracks(String gid) {
+        // 原版 loadPlaylist（SigmaSearchBox.vue:89）只填卡片、从不写 keyword，
+        // 所以搜索框回到 "Search..."。这里必须 clear，
+        // 否则上一轮搜的词（比如「我喜欢」）会留在搜索框里，
+        // 看起来就像「搜索框显示了左侧歌单名」。
+        playerPanel.searchBox().clear();
         status("加载歌单…");
         IO.execute(() -> {
             try {
@@ -1413,20 +1418,59 @@ private void startPlayback(String url) {
     private void persistSpectrumPositionOnExit() {
         spectrumStage.setOnHidden(e -> {
             if (spectrumStage != null) {
-                AppPrefs.setSpectrumWindowPosition(spectrumStage.getX(), spectrumStage.getY());
+                // <b>只在「本来就在屏内」时才记</b>：buildSpectrumStage 里
+                // 先 hide() 再按设置决定是否 show，那次 hide 会走到这里，
+                // 而此刻窗口还没正式摆位（见 repositionSpectrum 的说明），
+                // 记下来就是一个「停在左上角」的坐标，之后每次启动都跟着错。
+                javafx.geometry.Rectangle2D area = javafx.stage.Screen
+                        .getPrimary().getVisualBounds();
+                double x = spectrumStage.getX();
+                double y = spectrumStage.getY();
+                boolean placed = Double.isFinite(x) && Double.isFinite(y)
+                        && x > area.getMinX() - 1 && x < area.getMaxX()
+                        && y > area.getMinY() - 1 && y < area.getMaxY();
+                if (placed) {
+                    AppPrefs.setSpectrumWindowPosition(x, y);
+                }
             }
         });
     }
 
+    /**
+     * 频谱窗首次摆位：贴主面板左下角外侧。
+     *
+     * <p><b>不能依赖 {@code main.getX()/getY()}</b>：
+     * {@code buildSpectrumStage} 跑在 {@code start(Stage)} 里，
+     * 那时主窗口还没 {@code show()}，getX/getY 返回的是 JavaFX 默认值
+     * {@code NaN} 或 0，于是频谱窗被 clamp 到屏幕左上角（实测 x=234 y=234）。
+     *
+     * <p>改成用「主面板该在的位置」自己算：主面板首次是屏幕居中
+     * （见 {@link #centerOnPrimaryScreen}），但用户可能拖走过，
+     * 所以优先读 {@code stage} 的实际位置，读不到再退回居中估算。
+     */
     private void repositionSpectrum(Stage main) {
         if (spectrumStage == null) {
             return;
         }
-        javafx.geometry.Rectangle2D area = javafx.stage.Screen.getPrimary().getVisualBounds();
-        double x = main.getX() + 12;
-        double y = main.getY() + Theme.PANEL_H - 72;
-        spectrumStage.setX(Math.max(area.getMinX(), Math.min(x, area.getMaxX() - SPECTRUM_W)));
-        spectrumStage.setY(Math.max(area.getMinY(), Math.min(y, area.getMaxY() - SPECTRUM_H)));
+        javafx.geometry.Rectangle2D area =
+                javafx.stage.Screen.getPrimary().getVisualBounds();
+        // 主窗口还没显示时 getX/getY 不可信，用 NaN / 越界判断
+        double mainX = main == null ? Double.NaN : main.getX();
+        double mainY = main == null ? Double.NaN : main.getY();
+        boolean mainPlaced = Double.isFinite(mainX) && Double.isFinite(mainY)
+                && mainX > area.getMinX() && mainX < area.getMaxX()
+                && mainY > area.getMinY() && mainY < area.getMaxY();
+        if (!mainPlaced) {
+            // 退回「主面板居中」的位置，与 centerOnPrimaryScreen 一致
+            mainX = area.getMinX() + (area.getWidth() - Theme.PANEL_W) / 2;
+            mainY = area.getMinY() + (area.getHeight() - Theme.PANEL_H) / 2;
+        }
+        double x = mainX + 12;
+        double y = mainY + Theme.PANEL_H - 72;
+        spectrumStage.setX(
+                Math.max(area.getMinX(), Math.min(x, area.getMaxX() - SPECTRUM_W)));
+        spectrumStage.setY(
+                Math.max(area.getMinY(), Math.min(y, area.getMaxY() - SPECTRUM_H)));
     }
 
     private void toggleSpectrumWindow() {

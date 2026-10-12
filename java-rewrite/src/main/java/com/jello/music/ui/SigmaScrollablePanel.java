@@ -45,6 +45,13 @@ public final class SigmaScrollablePanel extends Pane {
 
         viewport.setLayoutX(0);
         viewport.setLayoutY(0);
+        // viewport <b>必须显式透明</b>：{@code Pane} 继承 {@code Region}，
+        // JavaFX modena 默认样式会给它画一层<b>浅灰背景</b>，
+        // 而原版 {@code .sigma-scrollable-panel} 的内容区是透明的
+        // （SigmaScrollablePanel.vue 只设了 overflow / scrollbar，没有 background）。
+        // 不设的话歌单面板右侧会出现一条贯穿的浅灰竖带 —— 就是这个坑。
+        viewport.setBackground(javafx.scene.layout.Background.fill(
+                javafx.scene.paint.Color.TRANSPARENT));
         getChildren().add(viewport);
 
         setOnScroll(e -> {

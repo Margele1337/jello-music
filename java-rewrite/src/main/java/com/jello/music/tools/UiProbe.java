@@ -373,6 +373,72 @@ writeSnapshot(root, pngPath);
         checkSearchBoxLayering();
         checkInitialCentering();
         checkTrayIconsAndFont();
+        checkViewportTransparent();
+        checkSearchBoxClear();
+    }
+
+    /**
+     * {@code SigmaScrollablePanel} 的 viewport 必须是透明的。
+     *
+     * <p>{@code viewport = new Pane()} 继承 {@code Region}，
+     * JavaFX modena 默认样式会给它画一层<b>浅灰背景</b>；
+     * 而原版 {@code .sigma-scrollable-panel} 的内容区透明
+     * （{@code SigmaScrollablePanel.vue} 只设了 overflow / scrollbar）。
+     *
+     * <p>不设的话：歌单面板右侧会出现一条贯穿的浅灰竖带，
+     * 搜索结果区同样受影响 —— 就是用户截图里框出来的那个。
+     *
+     * <p><b>这和之前「Pane 默认白底」那次是同一个坑</b>：
+     * 那次是 root / overlay / stageHolder，这次是 viewport。
+     * 只要容器节点没显式设背景，就得当成「会带默认色」处理。
+     */
+    private static void checkViewportTransparent() {
+        var sp = new com.jello.music.ui.SigmaScrollablePanel(300, 400);
+        check("viewport 背景是透明（否则面板右侧出现浅灰竖带）",
+                isTransparentBg(sp.viewport()),
+                "viewport 有背景色");
+        check("外层 SigmaScrollablePanel 背景也是透明",
+                isTransparentBg(sp),
+                "外层有背景色");
+    }
+
+    /** 节点的背景填充是否透明（fill 类型取 opacity，其余一律算不透明）。 */
+    private static boolean isTransparentBg(javafx.scene.layout.Region region) {
+        var bg = region.getBackground();
+        if (bg == null || bg.getFills().isEmpty()) {
+            return true; // 没设背景 = 透明
+        }
+        var paint = bg.getFills().get(0).getFill();
+        if (paint instanceof javafx.scene.paint.Color c) {
+            return c.getOpacity() == 0.0;
+        }
+        return false;
+    }
+
+    /**
+     * {@code SearchBox.clear()} 必须把<b>输入框文字</b>也清掉。
+     *
+     * <p>原版 {@code loadPlaylist}（{@code SigmaSearchBox.vue:89}）只填卡片，
+     * <b>从不写 keyword</b> —— 搜索框回到 "Search..." 占位符。
+     *
+     * <p>之前 {@code clear()} 只清结果列表，于是上一轮搜的词（比如「我喜欢」）
+     * 一直挂在搜索框上，用户看到的就是「搜索框显示了左侧歌单名」。
+     */
+    private static void checkSearchBoxClear() {
+        var box = new com.jello.music.ui.SearchBox();
+        // 模拟「用户搜过某首歌」：直接往子节点里的 TextField 写。
+        // 走 children 而不是反射私有字段 —— SearchBox 没有公开写入口，
+        // 断言只需要构造出「有残留」这个状态即可。
+        for (var node : box.getChildrenUnmodifiable()) {
+            if (node instanceof javafx.scene.control.TextField tf) {
+                tf.setText("我喜欢");
+                break;
+            }
+        }
+        box.clear();
+        String txt = box.typedTextForTest();
+        check("clear() 之后输入框文字为空（回到 Search... 占位符）",
+                txt == null || txt.isEmpty(), "残留=[" + txt + "]");
     }
 
     /**
