@@ -102,10 +102,37 @@
       - 关键在 `method13317`（`:247-251`）**按方向选缓动**：BACKWARDS（展开）走
         `easeOutQuad`，FORWARDS（收起）才走 `easeOutElastic`。
         之前 Java 版无条件用 elastic，展开时曲线是错的
-      - 实测曲线：`scale` 1.25 →（过冲 0.9831）→ 0.9945 → 1.0013 → 1.0。
-        中途那个来回就是「弹进来」的手感，`easeOutQuad` 单调、不会有这个效果
+- [x] **两套透明度不能相乘** —— 这是「收起后明显比原版暗」的根因：
+      `overlay` 是 `root` 的**父容器**，父子 opacity 会相乘。
+      `EdgeDock` 设 0.5（收起半透明）、`ElasticReveal` 又设 0.5 → 实际渲染 **0.25**。
+      按 mod 的分层理清：`ClickGuiScreen.alphaFactor` 管**缩放**，
+      `MusicPlayer.partialTicks *= …` 管**透明度**，Java 侧也照此拆开：
+      `ElasticReveal` 从此**只动 scale，绝不碰 opacity**，
+      透明度统一由 `EdgeDock` 负责（`finish`/`reset` 里原先也有 `setOpacity(1)`，同样删掉）
+- [x] **收起时位置滑动与半透明同时进行** —— 之前是
+      `reveal.collapse(() -> dock.collapse())`，先原地淡 125ms 才开始滑出去，
+      比原版多一个顿挫。mod 里 `updatePanelDimensions` 插值位置的同时
+      `draw` 里的 `field20873` 也在降 alpha，是并行的。
+      现在直接 `dock.collapse()` + `reveal.resetScale()`
 - [x] `run.bat probe-dock` / `probe-spectrum` 两个子命令，
       改动画或频谱时能随手验
+
+### 展开动画的实测数据（`run.bat probe-dock`）
+
+采样 overlay 的 scale 与 root 的 opacity，看**最终合成观感**：
+
+| t(ms) | x | alpha | scale |
+|---|---|---|---|
+| 起始 | 1880 | 0.500 | 1.179 |
+| 99 | 1466 | 0.720 | 1.037 |
+| 195 | 1182 | 1.000 | **0.980**（回弹过冲） |
+| 482 | 1100 | 1.000 | 1.000 |
+
+三个维度同时动：位置指数收敛、alpha 由 0.5 回到 1.0、scale 从 1.18 回弹过冲后落回 1.0。
+探针已扩展为同时采样 scale 与 alpha，避免只验其中一个而漏掉相乘问题。
+
+> 关于 alpha 到 1.0 用了 195ms 而权威是 150ms：探针 30ms 的采样粒度
+> + 首帧要等 `AnimationTimer` 起播，实测稳定在 195~210ms。
 
 ### 拖拽机制：有意与 mod 不同
 

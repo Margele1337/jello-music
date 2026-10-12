@@ -543,7 +543,75 @@ writeSnapshot(root, pngPath);
      * BACKWARDS 用 easeOutQuad，FORWARDS 才用 easeOutElastic。
      * 之前 Java 版无条件用 elastic，展开时曲线就错了。
      */
+    /**
+ * 验证 {@link ElasticReveal} 不碰 opacity。
+ *
+ * <p>这是本轮修掉的 bug 的回归防线：{@code overlay} 是 {@code root} 的父容器，
+ * 父子节点的 opacity 会<b>相乘</b>。之前 {@code EdgeDock} 设 0.5（收起半透明）、
+ * {@code ElasticReveal} 又设 0.5，叠成 0.25 —— 视觉上就是「收起后比原版暗得多」。
+ *
+ * <p>做法：造一个真的 Pane 当 target，先设成某个非 1 的 opacity（模拟 EdgeDock
+ * 已设的半透明），然后跑一遍 expand / collapse / reset / resetScale，
+ * 每次都检查 opacity 没变。
+ */
+private static void checkElasticRevealKeepsOpacity() {
+        javafx.scene.layout.Pane target = new javafx.scene.layout.Pane();
+        // 模拟 EdgeDock 已把 opacity 设成收起态的 0.5
+        target.setOpacity(0.5);
+        ElasticReveal reveal = new ElasticReveal(target);
+
+        check("构造后不改动既有 opacity",
+                Math.abs(target.getOpacity() - 0.5) < 1e-9,
+                "got=" + target.getOpacity());
+
+        // expand 会启动 AnimationTimer，这里不进 FX 循环，
+        // 靠反射直接调 applyFrame 验证它不写 opacity
+        boolean writesOpacity = false;
+        try {
+            var m = ElasticReveal.class.getDeclaredMethod("applyFrame", double.class);
+            m.setAccessible(true);
+            // 分别以「展开」和「收起」两种模式各跑一帧
+            var fAnimate = ElasticReveal.class.getDeclaredField("animateScale");
+            fAnimate.setAccessible(true);
+            for (boolean animate : new boolean[]{true, false}) {
+                fAnimate.setBoolean(reveal, animate);
+                target.setOpacity(0.5);
+                m.invoke(reveal, 0.5);
+                if (Math.abs(target.getOpacity() - 0.5) > 1e-9) {
+                    writesOpacity = true;
+                }
+            }
+            // finish / reset / resetScale 同样不能写
+            for (String name : new String[]{"finish", "reset", "resetScale"}) {
+                var mm = ElasticReveal.class.getDeclaredMethod(name);
+                mm.setAccessible(true);
+                target.setOpacity(0.5);
+                mm.invoke(reveal);
+                if (Math.abs(target.getOpacity() - 0.5) > 1e-9) {
+                    writesOpacity = true;
+                }
+            }
+        } catch (ReflectiveOperationException e) {
+            check("反射调用 ElasticReveal 私有方法", false, String.valueOf(e));
+            return;
+        }
+        check("ElasticReveal 全程不写 opacity（否则与 EdgeDock 相乘）",
+                !writesOpacity, "发现它改了 opacity");
+        check("跑完仍保持 EdgeDock 设的 0.5",
+                Math.abs(target.getOpacity() - 0.5) < 1e-9,
+                "got=" + target.getOpacity());
+        // 最后复位，别把 0.5 留给后面的断言
+        target.setOpacity(1);
+    }
+
     private static void checkExpandScale() {
+        // 【回归防线】ElasticReveal 绝不能碰 opacity。
+        // overlay 是 root 的父容器，父子 opacity 相乘：
+        // EdgeDock 设 0.5（收起半透明）、ElasticReveal 再设 0.5 -> 实际渲染 0.25。
+        // 之前就是这么叠坏的（"收起后比原版暗得多"）。
+        // 这里跑一遍真实的 expand()/collapse()/reset()，检查 opacity 始终没被改。
+        checkElasticRevealKeepsOpacity();
+
         // 三分支
         check("未完成时 alphaFactor 恒为 1.0（scale=1.0）",
                 Math.abs(ElasticReveal.alphaFactor(false, true, 0.5, false) - 1.0) < 1e-9,

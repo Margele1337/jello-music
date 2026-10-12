@@ -4,30 +4,36 @@ import javafx.animation.AnimationTimer;
 import javafx.scene.Node;
 
 /**
- * 展开/收起的弹性缩放动画，1:1 复刻原版 Minecraft 客户端的
- * {@code ClickGuiScreen.draw:304-346}：
+ * 展开/收起的缩放动画，1:1 复刻 sigmarebase
+ * {@code ClickGuiScreen.draw:292} 的
+ * {@code child.method13279(1.5F - alphaFactor * 0.5F, ...)}。
  *
  * <pre>
- *   scale = 1.5 - a * 0.5
- *   a     = easeOutElastic(p)，p = t / 450ms（展开）或 t / 125ms（收起）
- *   alpha = 0.2 * a
+ *   float alphaFactor = animationCompleted &amp;&amp; !animationStarted
+ *       ? method13317(animationProgress.calcPercent(), 0.8F) * 0.5F + 0.5F
+ *       : (!animationCompleted ? 1.0F : method13317(animationProgress.calcPercent(), 1.0F));
  * </pre>
  *
- * <p><b>起始点是 1.25 而不是 1.5</b>：a 的初始值为 0.5，所以
- * {@code 1.5 - 0.5*0.5 = 1.25}。这正是原版「不先猛缩一下再弹」的表现——
- * 之前 Electron 版踩过这个坑，收起态误用 1.5→1 导致收缩时先缩再弹。
+ * <h2>只管缩放，不管透明度</h2>
+ * mod 里这是<b>两层独立</b>的：
+ * <ul>
+ *   <li>{@code ClickGuiScreen} 的 {@code alphaFactor} → 整个 GUI 的缩放
+ *       （展开时从 1.25 回弹到 1.0）</li>
+ *   <li>{@code MusicPlayer} 的 {@code partialTicks *= 0.5 + (1-p)*0.5}
+ *       → <b>只影响面板内部绘制</b>（底板、Logo、文字的 alpha）</li>
+ * </ul>
  *
- * <p>easeOutElastic 用 Minecraft 的公式
- * {@code 2^(-10p) * sin((p - period/4) * 2pi / period) + 1}，
- * period = 0.8，p 先乘 4 再传入（对应原版 {@code method13279} 的调用方式）。
+ * <p>之前 Java 版把两者都压到同一个节点的 {@code setOpacity} 上，
+ * 而 {@code overlay} 是 {@code root} 的<b>父容器</b>——父子 opacity 会<b>相乘</b>：
+ * EdgeDock 设 0.5、这里再设 0.5，实际渲染成 0.25。
+ * 这就是「收起后比原版暗得多、展开后也不对」的根因。
+ *
+ * <p>所以这里<b>只操作缩放</b>，透明度一律交给 {@link EdgeDock} 统一管理。
+ * 缩放锚点固定在窗口中心（JavaFX {@code setScaleX} 的默认行为），
+ * 与 mod 的 {@code method13279} 一致——它也是围绕面板中心缩放。
  *
  * <p>收起态<b>不做缩放</b>（对应原版 {@code .sigma-shell--docked { animation: none }}）：
  * 面板只是滑出屏幕右侧并把大部分移出视野，不应该再有缩放动画。
- * 因此 {@link #collapse} 只做淡出，缩放保持 1。
- *
- * <p><b>实现说明</b>：用 {@link AnimationTimer} 手动按时间推进，而不是
- * {@code ValueAnimator}——{@code ValueAnimator} 在 JavaFX 21.0.5 的
- * {@code javafx-graphics} jar 里缺失（该版本的类拆分问题），且手动驱动更精确。
  */
 public final class ElasticReveal {
 
@@ -47,17 +53,33 @@ public final class ElasticReveal {
         reset();
     }
 
-    /** 展开：1.25 → 回弹 → 1.0，同时淡入。 */
+    /** 展开：1.25 → 回弹 → 1.0（只改缩放，透明度见 {@link EdgeDock}）。 */
     public void expand(Runnable onFinished) {
         start(OPEN_NANOS, true, onFinished);
     }
 
     /**
-     * 收起：只淡出并把控制权交回给 {@link EdgeDock} 做位置滑出，
-     * 这里刻意<b>不动缩放</b>——保持 scale = 1 对应原版收起态无缩放动画。
+     * 收起：保持 scale = 1，把控制权交回 {@link EdgeDock} 做位置滑出与透明度。
+     *
+     * <p>对应原版 {@code .sigma-shell--docked { animation: none }}——
+     * 收起态没有缩放动画，视觉变化全部来自「滑出屏幕右侧」。
      */
     public void collapse(Runnable onFinished) {
         start(CLOSE_NANOS, false, onFinished);
+    }
+
+    /**
+     * 只把缩放复位到 1，不碰其它任何属性。
+     *
+     * <p>收起时用：原版收起态没有缩放动画（{@code .sigma-shell--docked
+     * { animation: none }}），但上一次展开可能留下没走完的 1.25 缩放，
+     * 得立刻归位。刻意做成「只动缩放」而不是调 {@link #reset()}——
+     * 后者会连带清掉 {@link EdgeDock} 设的透明度。
+     */
+    public void resetScale() {
+        stop();
+        target.setScaleX(1);
+        target.setScaleY(1);
     }
 
     /** 静止态：scale 恒为 1，展开动画不再残留。 */
@@ -65,7 +87,8 @@ public final class ElasticReveal {
         stop();
         target.setScaleX(1);
         target.setScaleY(1);
-        target.setOpacity(1);
+        // opacity 归 EdgeDock 管，这里不动（构造时的初值本来就是 1，
+        //  但显式写一次会把 EdgeDock 已设的半透明抹掉）
         target.setMouseTransparent(false);
         target.setVisible(true);
     }
@@ -95,10 +118,12 @@ public final class ElasticReveal {
 
     private void applyFrame(double progress) {
         if (!animateScale) {
-            // 收起：只淡出，缩放保持 1（对应原版 .sigma-shell--docked { animation: none }）
+            // 收起：不动缩放（对应原版 .sigma-shell--docked { animation: none }）。
+            // 位置滑出交给 EdgeDock，透明度也由 EdgeDock 统一管，
+            // 这里<b>不能</b>再碰 opacity —— overlay 是 root 的父容器，
+            // 父子 opacity 相乘会叠成 0.25。
             target.setScaleX(1);
             target.setScaleY(1);
-            target.setOpacity(1 - progress);
             return;
         }
         // 展开：走权威的 alphaFactor（展开完成中 = easeOutElastic(·,0.8)*0.5+0.5）
@@ -106,7 +131,6 @@ public final class ElasticReveal {
         double scale = 1.5 - factor * 0.5;
         target.setScaleX(scale);
         target.setScaleY(scale);
-        target.setOpacity(0.5 + 0.5 * factor);
     }
 
     /**
@@ -180,7 +204,8 @@ public final class ElasticReveal {
         stop();
         target.setScaleX(1);
         target.setScaleY(1);
-        target.setOpacity(1);
+        // 不动 opacity —— 它归 {@link EdgeDock} 管。
+        // 这里强行设 1 会把收起态的半透明抹掉（动画结束的那一帧闪一下全亮）。
         if (onFinished != null) {
             onFinished.run();
         }

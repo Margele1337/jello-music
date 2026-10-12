@@ -107,12 +107,25 @@ public final class DockMotionProbe {
                     + " -> " + (stage.getX() + stage.getWidth() > area.getMaxX()
                     ? "越界，触发条应宽 41" : "未越界，触发条应宽 0"));
             System.out.println();
-            System.out.printf("%-8s %-10s %-8s%n", "t(ms)", "x", "alpha");
+            System.out.printf("%-8s %-10s %-8s %-8s%n", "t(ms)", "x", "alpha", "scale");
             System.out.println("-".repeat(28));
 
             long t0 = System.nanoTime();
+            // overlay 是 root 的父容器（对应 MainApp 的 StackPane overlay），
+            // 缩放作用在它身上、透明度作用在 root 身上——
+            // 这个探针要同时采样两者，才能验「最终合成效果」而不是只看一个
+            javafx.scene.layout.StackPane overlay =
+                    new javafx.scene.layout.StackPane(root);
+            javafx.scene.Scene sc2 = new javafx.scene.Scene(overlay,
+                    com.jello.music.ui.Theme.PANEL_W, com.jello.music.ui.Theme.PANEL_H);
+            stage.setScene(sc2);
+            com.jello.music.ui.ElasticReveal reveal =
+                    new com.jello.music.ui.ElasticReveal(overlay);
+            dock.attachOpacityTarget(root);
+
             dock.expand();
-            new Sampler(stage, root, samples, t0, expandedX).start();
+            reveal.expand(null);
+            new Sampler(stage, root, overlay, samples, t0, expandedX).start();
 
             // FX 线程让出，交给 AnimationTimer；到点后由采样器唤醒 main
             scheduleWakeup(t0, done);
@@ -141,6 +154,7 @@ public final class DockMotionProbe {
     private static final class Sampler extends AnimationTimer {
         private final Stage stage;
         private final Node node;
+        private final javafx.scene.Node overlay;
         private final List<double[]> samples;
         private final long t0;
         private final double targetX;
@@ -148,11 +162,12 @@ public final class DockMotionProbe {
         private boolean printedArrive;
         private boolean printedAlpha;
         private double firstX;
-        private double firstAlpha;
 
-        Sampler(Stage stage, Node node, List<double[]> samples, long t0, double targetX) {
+        Sampler(Stage stage, Node node, javafx.scene.Node overlay,
+                List<double[]> samples, long t0, double targetX) {
             this.stage = stage;
             this.node = node;
+            this.overlay = overlay;
             this.samples = samples;
             this.t0 = t0;
             this.targetX = targetX;
@@ -163,14 +178,16 @@ public final class DockMotionProbe {
             long ms = (System.nanoTime() - t0) / 1_000_000L;
             double x = stage.getX();
             double alpha = node.getOpacity();
+            // overlay 上是缩放，root 上是透明度 —— 两者叠起来才是最终观感
+            double scale = overlay.getScaleX();
             if (firstX == 0) {
                 firstX = x;
-                firstAlpha = alpha;
             }
             if (ms - last >= 30) {
                 last = ms;
                 samples.add(new double[]{ms, x, alpha});
-                System.out.printf("%-8d %-10.1f %-8.3f%n", ms, x, alpha);
+                System.out.printf("%-8d %-10.1f %-8.3f %-8.4f%n",
+                        ms, x, alpha, scale);
             }
             if (!printedArrive && Math.abs(x - targetX) < 1.0) {
                 printedArrive = true;

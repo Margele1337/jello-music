@@ -1597,12 +1597,15 @@ private void installDragHandlers(javafx.scene.Node overlay) {
         if (dock.isDocked()) {
             expandDock();
         } else {
-            reveal.collapse(() -> {
-                dock.collapse();
-                // 收起后窗口只剩右侧 40px 露在屏幕里，正好对应原版那条
-                // 41px 的 .smp-dock-trigger（它取的是面板 x=0..41）。
-                playerPanel.setDockTriggerActive(true);
-            });
+            // 收起：位置滑动与半透明<b>同时</b>进行（对应 mod —— updatePanelDimensions
+            // 插值位置的同时 draw 里的 field20873 也在降 alpha）。
+            // 之前是先等 ElasticReveal 跑完 125ms 再 dock.collapse()，
+            // 于是「面板先原地淡一下、然后才开始滑出去」，比原版多一个顿挫。
+            dock.collapse();
+            playerPanel.setDockTriggerActive(true);
+            // 缩放复位交给 reveal：收起态原版没有缩放动画，
+            // 但上一次展开可能留下未走完的 1.25 缩放
+            reveal.resetScale();
         }
     }
 
