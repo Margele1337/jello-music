@@ -10,6 +10,9 @@ REM    run.bat <direct-url>     build then launch with a given audio URL
 REM    run.bat probe            build then run the headless pipeline probe
 REM    run.bat probe-ui         build then run the silent UI probe (no window)
 REM    run.bat probe-play       build then run the muted playback probe (no sound)
+REM    run.bat probe-dock       build then measure the dock animation timing
+REM                            -- a window appears for about 1.5s
+REM    run.bat probe-spectrum  build then render a real song's spectrum to PNG
 REM    run.bat api              run the KuGou API in the foreground (debugging)
 REM    run.bat api-stop         kill whatever listens on the API port
 REM
@@ -109,6 +112,30 @@ REM Muted playback check: volume 0, no window, but the real audio pipeline runs.
 if /i "%~1"=="probe-play" (
   echo [4/4] Running muted playback probe...
   java --module-path "%CP%" -m com.jello.music/com.jello.music.tools.PlaybackProbe
+  set "RC=%errorlevel%"
+  goto :cleanup
+)
+
+REM Dock motion check: DOES show an 800x600 window -- the animation under test
+REM is the window position itself, so it has to be visible. Runs about 1.5s.
+REM Use after touching EdgeDock / ElasticReveal to compare the alpha curve and
+REM the arrival time against sigmarebase -- 80ms dim / 150ms brighten.
+REM NOTE: no parentheses inside this block. cmd treats an unescaped ) as the
+REM end of an if-block, so "echo ... (blah)..." closes the block early and the
+REM leftover text becomes a bogus command. That is what "此时不应有 ..." was.
+if /i "%~1"=="probe-dock" (
+  echo [4/4] Running dock motion probe -- a window will appear briefly...
+  java --module-path "%CP%" -m com.jello.music/com.jello.music.tools.DockMotionProbe
+  set "RC=%errorlevel%"
+  goto :cleanup
+)
+
+REM Real-spectrum check: connects to the api, pulls a real direct link and
+REM decodes actual audio, then renders the spectrum and writes PNGs.
+REM Needs the api up -- run.bat starts it automatically above.
+if /i "%~1"=="probe-spectrum" (
+  echo [4/4] Running real-spectrum probe -- pulls a real song...
+  java --module-path "%CP%" -m com.jello.music/com.jello.music.tools.SpectrumProbe "%TEMP%"
   set "RC=%errorlevel%"
   goto :cleanup
 )
