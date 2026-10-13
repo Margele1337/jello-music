@@ -758,6 +758,9 @@ export function restoreSigmaWindow() {
 export function createSigmaWindow() {
     if (sigmaWindow && !sigmaWindow.isDestroyed()) {
         sigmaWindow.show();
+        // 已在后台时唤回来，顺手再置一次顶：别的应用可能改过 z 序
+        sigmaWindow.setAlwaysOnTop(true);
+        sigmaWindow.moveTop();
         sigmaWindow.focus();
         return sigmaWindow;
     }
@@ -782,7 +785,11 @@ export function createSigmaWindow() {
         transparent: true,
         hasShadow: false,
         skipTaskbar: true,
-        alwaysOnTop: false,
+        // 常驻置顶：面板是桌面悬浮件，切到别的软件后不该被盖住。
+        // 之前这里是 false，只靠 raiseSigmaWindow 临时置顶 600ms 就降回，
+        // 结果 600ms 一到就沉到别的窗口下面，用户反馈「切出去窗口就不见了」。
+        // 收起态只剩 40px 触发条时也保持置顶，否则那条会被别的窗口盖住点不到。
+        alwaysOnTop: true,
         show: false,
         backgroundColor: '#00000000',
         title: 'Sigma Music',
@@ -803,6 +810,10 @@ export function createSigmaWindow() {
             sigmaWindow.show();
         }
     });
+
+    // 全屏应用（游戏）之上也要能看到，否则置顶在非全屏窗口之上、
+    // 一进全屏就被盖住。与歌词/频谱/按键 HUD 三个悬浮窗同一套处理。
+    sigmaWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
     sigmaWindow.on('closed', () => {
         sigmaWindow = null;
@@ -842,20 +853,18 @@ export function getSigmaWindow() {
     return sigmaWindow;
 }
 
-// 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）。
-// 用普通置顶层级即可，随后 600ms 降回，避免长期压住其它应用。
+// 把 Sigma 窗口叫到最前（呼出瞬间跳到前台）。
+//
+// 原来这里置顶 600ms 后就 setAlwaysOnTop(false) 降回普通层级，注释写的是
+// 「避免长期压住其它应用」。但面板本来就是桌面悬浮件，降回后切到任何别的
+// 软件都会被盖住，收起态那条 40px 触发条也会点不到——已经按反馈改成常驻置顶，
+// 这里只负责「叫到前面」：moveTop + focus 让它从后台跳到当前活动窗口之上。
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
     win.setAlwaysOnTop(true);
     win.show();
     win.moveTop();
     win.focus();
-    // 置顶只是「叫到前面」，一段时间后降回普通层级，避免长期压住其它应用
-    setTimeout(() => {
-        if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            sigmaWindow.setAlwaysOnTop(false);
-        }
-    }, 600);
 };
 
 // 吸附到右侧收起位（共用逻辑：快捷键与托盘切换收起）
