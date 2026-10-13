@@ -417,7 +417,10 @@ public final class SettingsView extends Pane {
     private void buildBackButton() {
         StackPane back = new StackPane();
         back.setPrefSize(32, 32);
-        back.setLayoutX(RAIL_W + PAD - 8);
+        back.setMinSize(32, 32);
+        back.setMaxSize(32, 32);
+        // 放内容区右上角：原来贴在标题左边会被「界面」标题压住看不见
+        back.setLayoutX(Theme.PANEL_W - PAD - 32);
         back.setLayoutY(PAD - 6);
         back.setBackground(new javafx.scene.layout.Background(
                 new javafx.scene.layout.BackgroundFill(Color.color(1, 1, 1, 0.06),
@@ -429,6 +432,12 @@ public final class SettingsView extends Pane {
         arrow.setAlignment(Pos.CENTER);
         arrow.setMouseTransparent(true);
         back.getChildren().add(arrow);
+        back.setOnMouseEntered(e -> back.setBackground(new javafx.scene.layout.Background(
+                new javafx.scene.layout.BackgroundFill(Color.color(1, 1, 1, 0.12),
+                        new CornerRadii(8), null))));
+        back.setOnMouseExited(e -> back.setBackground(new javafx.scene.layout.Background(
+                new javafx.scene.layout.BackgroundFill(Color.color(1, 1, 1, 0.06),
+                        new CornerRadii(8), null))));
         back.setOnMouseClicked(e -> {
             if (onBack != null) {
                 onBack.run();
