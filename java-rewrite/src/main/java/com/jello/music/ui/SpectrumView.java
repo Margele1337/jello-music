@@ -56,6 +56,18 @@ public final class SpectrumView {
  */
     public static final double REFERENCE_HEIGHT = 290;
 
+    /**
+     * 原版条高基准：游戏 framebuffer 高度。
+     *
+     * <p>权威 {@code SpectrumHUD.vue:22} {@code GAME_FRAMEBUFFER_HEIGHT = 1009}，
+     * 用于 {@code sigmaAmp = (1009 / 1080) * spectrumScale}。
+     *
+     * <p>和 {@link #REFERENCE_HEIGHT} 的区别：后者是<b>面板内嵌版</b>的高度标定，
+     * 独立频谱窗要用这个。两个混用会让条形高度差一截 ——
+     * 「看起来不像原版」主要就卡在这里。
+     */
+    public static final double GAME_FRAMEBUFFER_HEIGHT = 1009;
+
     /** {@code 2.256E7}：sigmarebase amplitudes 的钳位上限。 */
     public static final double MAX_AMPLITUDE = SpectrumFeed.MAX_AMPLITUDE;
 
@@ -211,10 +223,16 @@ public final class SpectrumView {
         }
         lastFrameNanos = now;
 
-        // ===== 平滑：复刻 onRender2D =====
-        // fps = 60 / 实际FPS；alpha = min(smoothing * fps, 1)
-        double frameRateComp = 60.0 / Math.max(1.0, fps);
-        double alpha = Math.min(1.0, Math.max(0.001, spectrumSmoothing) * frameRateComp);
+        // ===== 平滑：复刻 SpectrumHUD.vue:150 =====
+        //   const alpha = Math.min(1, 1 - Math.exp(-dt / tauMs))
+        //
+        // <b>与旧版的区别</b>：旧版是 {@code alpha = min(1, smoothing * 60/fps)}，
+        // 那把「用户设置的平滑参数」直接当每帧步长用，
+        // 在 144Hz 上会快一倍、在 30Hz 上又跟不上，帧率一变观感就变。
+        // 原版是<b>时间常数</b>形式（与帧率无关），这里照抄。
+        double dtMs = lastFrameNanos > 0 ? (now - lastFrameNanos) / 1_000_000.0 : 16.0;
+        double tauMs = Math.max(1.0, spectrumSmoothing * 100.0);
+        double alpha = Math.min(1.0, 1.0 - Math.exp(-dtMs / tauMs));
 
         double[] data = feed.levels();
         if (data != null) {
@@ -236,12 +254,24 @@ public final class SpectrumView {
 
         // ===== renderSpectrum 复刻 =====
         double barWidth = Math.ceil(w / BAR_COUNT);
-        double heightRatio = (REFERENCE_HEIGHT / 1080.0) * spectrumScale;
+        // 权威：{@code sigmaAmp = (GAME_FRAMEBUFFER_HEIGHT / 1080) * spectrumScale}
+        // （SpectrumHUD.vue:161，1:1 复刻 sigmarebase）
+        //
+        // <b>关键</b>：分子是<b>游戏 framebuffer 高度 1009</b>，不是频谱窗高度。
+        // 原版条高是绝对像素值（不受频谱窗尺寸影响），所以 1.0x 时
+        // Java 侧算出的像素高度必须和原版一致，否则同一个音量看起来高度不同。
+        //
+        // 之前这里用 {@code REFERENCE_HEIGHT(290) / 1080}，那是面板内嵌版的高度，
+        // 搬到独立窗后条形会明显偏矮 —— 就是「不像」的主要来源。
+        double heightRatio = (GAME_FRAMEBUFFER_HEIGHT / 1080.0) * spectrumScale;
 
         double[] heights = new double[amplitudes.length];
         for (int i = 0; i < amplitudes.length; i++) {
             double refHeight = Math.sqrt(amplitudes[i]) / 12.0 - 5.0;
-            heights[i] = Math.max(0, refHeight) * heightRatio;
+            // 权威 SpectrumHUD.vue:166：heights[i] = Math.min(h, height)
+            // 超出窗高要夹住，否则画到窗外的部分会被 Canvas 裁掉一半，
+            // 看起来像条形被「切平」。
+            heights[i] = Math.min(h, Math.max(0, refHeight) * heightRatio);
         }
 
         // 1) 灰底条，左→右渐隐
@@ -255,21 +285,41 @@ public final class SpectrumView {
         }
 
         // 2) 条形内叠加模糊封面，alpha 0.4。
-        //    原版走 OpenGL stencil（initStencilBuffer → configureStencilTest → drawImage），
-        //    JavaFX 没有 stencil；这里改成「逐条按条形区域绘制」达到同样效果，
-        //    避免为了一个 clip 引入 Path。
+        //    权威 SpectrumHUD.vue:178-193：原版走 OpenGL stencil
+        //    （initStencilBuffer → configureStencilTest →
+        //     drawImage(0,0,W,H, songThumbnail, 0.4)），
+        //    即<b>整张封面按窗宽窗高拉伸</b>，再用条形区域做 clip。
+        //
+        //    <b>GraphicsContext 没有 clip 方法</b>（实测 javafx.graphics 21.0.1
+        //    的字节里只有 clipStack 字段，无 clip/clipPath），
+        //    所以不能「先 clip 再整图 drawImage」。
+        //
+        //    等效做法：逐条画，但<b>源区域按条的横坐标取</b>，
+        //    而不是把整张封面缩到每条里 —— 后者会让每条都出现一幅完整的封面，
+        //    条与条之间内容重复拼接，看上去是一列相同的模糊图案。
+        //    现在第 i 条取封面 x∈[i/barCount, (i+1)/barCount] 这一竖切片，
+        //    拼起来正好是一张连续完整的封面。
         javafx.scene.image.Image overlay = overlayImage;
         if (overlay != null && overlay.getWidth() > 0 && overlay.getException() == null) {
             g.save();
             g.setGlobalAlpha(0.4);
+            double ow = overlay.getWidth();
+            double oh = overlay.getHeight();
             for (int i = 0; i < BAR_COUNT; i++) {
                 double x = i * barWidth;
                 if (x >= w) {
                     break;
                 }
-                if (heights[i] > 0) {
-                    g.drawImage(overlay, x, h - heights[i], barWidth, heights[i]);
+                if (heights[i] <= 0) {
+                    continue;
                 }
+                // 源：封面横向第 i 段，纵向整幅（对应 drawImage 的 0,0,W,H 拉伸）
+                double sx = ow * i / BAR_COUNT;
+                double sw = ow / BAR_COUNT;
+                double sy = 0;
+                double sh = oh;
+                g.drawImage(overlay, sx, sy, sw, sh, x, h - heights[i],
+                        barWidth, heights[i]);
             }
             g.restore();
         }

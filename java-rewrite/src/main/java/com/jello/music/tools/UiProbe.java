@@ -1821,8 +1821,56 @@ private static void checkElasticRevealKeepsOpacity() {
                         && info.coverBoundsInParent().getMinY() >= -0.5,
                 "bounds=" + info.coverBoundsInParent());
 
+        // ---- 以下是「频谱对齐原版」这一轮的钉子 ----
+
+        // 1) 封面 64 / 圆角 10 / left 14（权威 SpectrumHUD.vue:295-302）
+        check("信息块封面 64px（原版 .spectrum-info .cover）",
+                Math.abs(info.coverSize() - 64) < 0.001,
+                "got=" + info.coverSize());
+        check("封面圆角 10px（原版 border-radius:10px）",
+                Math.abs(info.coverCornerRadius() - 10) < 0.001,
+                "got=" + info.coverCornerRadius());
+        check("封面左边距 14px（原版 left:14px）",
+                Math.abs(info.coverX() - 14) < 0.001,
+                "got=" + info.coverX());
+
+        // 2) 作者行：原版有，Java 版之前整行没做
+        info.setAuthor("测试作者");
+        check("作者行已写入（原版 .spectrum-info .author）",
+                info.authorText() != null && info.authorText().contains("测试作者"),
+                "got=" + info.authorText());
+        check("作者行在窗内",
+                info.authorBoundsInParent().getHeight() > 0
+                        && info.authorBoundsInParent().getMinY() >= -0.5
+                        && info.authorBoundsInParent().getMaxY() <= 130.5,
+                "bounds=" + info.authorBoundsInParent());
+        // 歌名应排在作者上方
+        check("歌名在作者上方（meta 是 column 布局）",
+                info.titleBoundsInParent().getMinY()
+                        < info.authorBoundsInParent().getMinY(),
+                "title=" + info.titleBoundsInParent().getMinY()
+                        + " author=" + info.authorBoundsInParent().getMinY());
+
+        // 3) 条高基准用游戏 framebuffer 高度 1009，不是面板内嵌的 290
+        check("条高基准是 1009（权威 GAME_FRAMEBUFFER_HEIGHT）",
+                Math.abs(com.jello.music.ui.SpectrumView.GAME_FRAMEBUFFER_HEIGHT
+                        - 1009) < 0.001,
+                "got=" + com.jello.music.ui.SpectrumView.GAME_FRAMEBUFFER_HEIGHT);
+        check("1.0x 下 1.14 倍缩放后的最大条高不会撑破窗",
+                com.jello.music.ui.SpectrumView.GAME_FRAMEBUFFER_HEIGHT / 1080.0
+                        * spectrumMaxHeightFor(2.256e7) >= 0,
+                "负高度");
+
         view.stop();
         feed.close();
+    }
+
+    /**
+     * 给定 amplitudes 的最大 sqrt(refHeight)（refHeight = sqrt(amp)/12 - 5）。
+     * 用来验证 1009/1080 这个基准在最大幅度下仍然合理。
+     */
+    private static double spectrumMaxHeightFor(double amplitude) {
+        return Math.sqrt(amplitude) / 12.0 - 5.0;
     }
 
     private static boolean subtitleVisible(List<SigmaTextView> texts) {

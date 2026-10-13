@@ -1117,7 +1117,7 @@ private static int customApiPort(String base) {
             playerPanel.setSong(song.getTitle(), song.getArtist(), song.getCoverUrl());
             playerPanel.setCover(song.getCoverUrl());
             // 频谱窗信息块同步（对应 renderSpectrum 的 cover/title）
-            updateSpectrumInfo(song.getTitle(), song.getCoverUrl());
+            updateSpectrumInfo(song.getTitle(), song.getArtist(), song.getCoverUrl());
         }
     }
 
@@ -1189,11 +1189,15 @@ private void startPlayback(String url) {
     }
 
     /** 更新频谱窗的信息块（封面 + 歌名），对应 renderSpectrum :217-240。 */
-    private void updateSpectrumInfo(String songTitle, String coverUrl) {
+    private void updateSpectrumInfo(String songTitle, String songArtist,
+                String coverUrl) {
         if (spectrumInfo == null) {
             return;
         }
         spectrumInfo.setTitle(songTitle);
+        // 作者行：原版 .spectrum-info .author（SpectrumHUD.vue:315，
+        // rgba(255,255,255,0.75) / 12px）。之前 Java 版整行没做。
+        spectrumInfo.setAuthor(songArtist);
         if (coverUrl != null && !coverUrl.isBlank()) {
             // 后台加载：构造函数返回时宽高还是 0，必须等 progress 到 1 再挂上去。
             // 这条坑在 CanvasStrip.setCover 里踩过一次——加载不完就 setImage，
