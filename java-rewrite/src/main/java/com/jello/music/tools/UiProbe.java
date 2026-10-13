@@ -376,6 +376,101 @@ writeSnapshot(root, pngPath);
         checkViewportTransparent();
         checkSearchBoxClear();
         checkTrayMenuIsSelfDrawn();
+        checkDockTriggerAndDragScope();
+    }
+
+    /**
+     * 收起态整条边可点 + 拖拽要覆盖所有视图。
+     *
+     * <h3>问题 1：收起态只有左上角能点</h3>
+     * 触发条宽度由 {@code setDockTriggerVisible} 设，而那个方法只在
+     * <b>越界拖拽</b>时调用（{@code MainApp} 的 overhang 监听）。
+     * 收起吸附完成走的是 {@code setDockTriggerActive}，它原本只解除
+     * mouseTransparent，<b>宽度还停在 0</b> —— 窗口明明露出 40px，
+     * 用户却只能点中最左边一小块。
+     *
+     * <h3>问题 2：设置页点不出、拖不动</h3>
+     * 拖拽处理器原来装在 {@code root} 上，但设置页 / 登录页是 root 的
+     * <b>兄弟节点</b>，收不到事件。必须装在 {@code stageHolder}
+     * （所有视图的公共祖先）上。
+     */
+    private static void checkDockTriggerAndDragScope() {
+        var panel = new com.jello.music.ui.PlayerPanel();
+
+        // ---- 收起态：宽度必须是 EDGE_TRIGGER（41），不能是 0 ----
+        panel.setDockTriggerVisible(false);
+        double wHidden = triggerWidth(panel);
+        check("越界结束（展开态）触发条宽度为 0",
+                Math.abs(wHidden) < 0.001, "got=" + wHidden);
+
+        panel.setDockTriggerActive(true);
+        double wActive = triggerWidth(panel);
+        check("收起态触发条宽度 == 41（原版 .smp-dock-trigger width:41px）",
+                Math.abs(wActive - com.jello.music.ui.Theme.EDGE_TRIGGER) < 0.001,
+                "got=" + wActive);
+        check("收起态触发条必须可点（mouseTransparent=false）",
+                !triggerMouseTransparent(panel), "仍是穿透");
+
+        panel.setDockTriggerActive(false);
+        check("展开回位后触发条宽度归 0",
+                Math.abs(triggerWidth(panel)) < 0.001,
+                "got=" + triggerWidth(panel));
+
+        // ---- 拖拽要装在 stageHolder 而不是 root ----
+        try {
+            var f = java.nio.file.Files.readString(java.nio.file.Path.of(
+                    "src/main/java/com/jello/music/MainApp.java"));
+            boolean onStageHolder = f.contains("installDragHandlers(stageHolder)");
+            boolean onRoot = false;
+            for (String line : f.split("\n")) {
+                String t = line.strip();
+                if (t.startsWith("//") || t.startsWith("*")) {
+                    continue;
+                }
+                if (t.equals("installDragHandlers(root);")) {
+                    onRoot = true;
+                }
+            }
+            check("拖拽装在 stageHolder（设置页/登录页也能拖）",
+                    onStageHolder && !onRoot,
+                    onRoot ? "仍装在 root 上" : "没找到 stageHolder 调用");
+        } catch (Exception e) {
+            check("读 MainApp 源码", false, String.valueOf(e));
+        }
+    }
+
+    /**
+     * 反射取 PlayerPanel 里的 dockTrigger 宽度。
+     *
+     * <p>读 {@code prefWidth} 而<b>不</b>读 {@code layoutBounds}：
+     * 节点没被加进 Scene 时，{@code setVisible}/{@code setPrefSize} 的变化
+     * 不会反映到 layoutBounds（实测明明设了 41 却读到 0），
+     * 那是「没 layout」不是「没设宽度」。
+     */
+    private static double triggerWidth(com.jello.music.ui.PlayerPanel panel) {
+        try {
+            var f = com.jello.music.ui.PlayerPanel.class
+                    .getDeclaredField("dockTrigger");
+            f.setAccessible(true);
+            var r = (javafx.scene.layout.Region) f.get(panel);
+            return r.getPrefWidth();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /** 反射取 dockTrigger 的 mouseTransparent。 */
+    private static boolean triggerMouseTransparent(
+            com.jello.music.ui.PlayerPanel panel) {
+        try {
+            var f = com.jello.music.ui.PlayerPanel.class
+                    .getDeclaredField("dockTrigger");
+            f.setAccessible(true);
+            var n = (javafx.scene.Node) f.get(panel);
+            return n.isMouseTransparent();
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     /**

@@ -215,22 +215,43 @@ public final class PlayerPanel extends Pane {
      * @param overhanging 面板右缘是否已越过容器右界
      */
     public void setDockTriggerVisible(boolean overhanging) {
-        double w = overhanging ? Theme.EDGE_TRIGGER : 0;
-        dockTrigger.setPrefWidth(w);
-        dockTrigger.setMinWidth(w);
-        dockTrigger.setMaxWidth(w);
+        applyDockTriggerWidth(overhanging ? Theme.EDGE_TRIGGER : 0);
         // 宽度为 0 时必须不可见，否则仍能吃到鼠标事件
         dockTrigger.setVisible(overhanging);
         // 宽度 0 时穿透，宽度 41 时要能点
         dockTrigger.setMouseTransparent(!overhanging);
     }
 
-    public SearchBox searchBox() {
-        return search;
+    /**
+     * 收起态：让整条 41px 边条都能点。
+     *
+     * <p><b>为什么不能只改 mouseTransparent</b>：触发条的宽度由
+     * {@link #setDockTriggerVisible} 设，而那个方法只在<b>越界拖拽</b>时调用
+     * （{@code MainApp} 的 overhang 监听）。收起吸附完成时走的是
+     * {@link #setDockTriggerActive}，它原本只解除了 mouseTransparent ——
+     * 宽度还停在越界拖拽结束时的值（多半是 0）。
+     *
+     * <p>结果就是：窗口滑到 {@code x = 屏幕右界 - 40}，理论上露出 40px，
+     * 但触发条没宽度，用户<b>只能点中最左边那一小块</b>，看着像「点不出来」。
+     *
+     * <p>原版 {@code .smp-dock-trigger} 是 {@code left:0; top:0; width:41px;
+     * height:100%}（SigmaMusicPlayer.vue:811-821）——<b>整条</b>都是热区。
+     */
+    public void setDockTriggerActive(boolean active) {
+        applyDockTriggerWidth(active ? Theme.EDGE_TRIGGER : 0);
+        dockTrigger.setVisible(active);
+        dockTrigger.setMouseTransparent(!active);
     }
 
-    public void setDockTriggerActive(boolean active) {
-        dockTrigger.setMouseTransparent(!active);
+    /** 统一设宽，避免两条路径各设一半导致宽度对不上。 */
+    private void applyDockTriggerWidth(double w) {
+        dockTrigger.setPrefWidth(w);
+        dockTrigger.setMinWidth(w);
+        dockTrigger.setMaxWidth(w);
+    }
+
+    public SearchBox searchBox() {
+        return search;
     }
 
     // ---------- 构造辅助 ----------

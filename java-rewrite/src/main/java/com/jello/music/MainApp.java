@@ -436,7 +436,10 @@ dock = new EdgeDock(stage);
         // 与上面那条分工：吸附态控制播放键的高亮，越界控制 41px 触发条本身。
         dock.onOverhangChanged(
                 () -> playerPanel.setDockTriggerVisible(dock.isOverhanging()));
-        installDragHandlers(root);
+        // 拖拽装在 <b>stageHolder</b>（所有视图的公共祖先），不是 root：
+        // 设置页 / 登录页是 root 的<b>兄弟节点</b>，挂在 root 上的话它们
+        // 收不到事件 —— 表现就是「打开设置后点不动、也拖不动」。
+        installDragHandlers(stageHolder);
         dock.expand();
         reveal.expand(null);
 
@@ -1542,8 +1545,8 @@ private void startPlayback(String url) {
         }
     }
 
-private void installDragHandlers(javafx.scene.Node overlay) {
-        overlay.setOnMousePressed(e -> {
+private void installDragHandlers(javafx.scene.Node node) {
+        node.setOnMousePressed(e -> {
             // 原版 SigmaMusicPlayer.vue:403 —— 只有左键起拖
             if (e.getButton() != javafx.scene.input.MouseButton.PRIMARY) {
                 return;
@@ -1554,12 +1557,20 @@ private void installDragHandlers(javafx.scene.Node overlay) {
             if (DragGate.blocked(e.getTarget())) {
                 return;
             }
+            // 收起态：优先把手势交给「唤回面板」，
+            // 否则点一下就变成拖一个只露 40px 的窄条（几乎拖不动）
+            if (dock.isDocked()) {
+                expandDock();
+                return;
+            }
+            dock.beginDrag(e);
+        });
+        node.setOnMouseDragged(e -> {
             if (!dock.isDocked()) {
-                dock.beginDrag(e);
+                dock.drag(e);
             }
         });
-        overlay.setOnMouseDragged(e -> dock.drag(e));
-        overlay.setOnMouseReleased(e -> dock.endDrag());
+        node.setOnMouseReleased(e -> dock.endDrag());
     }
 
     /** 播放模式索引（0..3）→ 队列语义，同时刷新按钮并落盘。 */
