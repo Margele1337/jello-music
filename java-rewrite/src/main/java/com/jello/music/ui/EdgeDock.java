@@ -418,6 +418,10 @@ public final class EdgeDock {
             slideTimer.stop();
             slideTimer = null;
         }
+        // 也要清 sliding：手动拖拽时动画已经停了，
+        // 若留着 true，{@link #isSliding()} 会一直返回 true，
+        // 点击处理被永久挡掉（表现为「点不动」）。
+        sliding = false;
     }
 
     /**

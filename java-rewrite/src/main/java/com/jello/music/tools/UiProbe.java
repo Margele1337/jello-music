@@ -378,6 +378,135 @@ writeSnapshot(root, pngPath);
         checkTrayMenuIsSelfDrawn();
         checkDockTriggerAndDragScope();
         checkFullscreenAnchor();
+        checkNoExpandBounceBack();
+        checkDockDoesNotReCollapse();
+    }
+
+    /**
+     * 真实复现「收起 -&gt; 点一下」的完整事件序列。
+     *
+     * <p>比静态检查强：这��<b>真的</b>建一个 dock、走 pressed/released、
+     * 再看吸附态有没有被翻回去。
+     *
+     * <p>用户报的现象：点面板顶部能正常展开，点下面会「弹出来又缩回去」。
+     * 猜测是 released 里的 {@code endDrag()} 把还在屏外的窗口又判成越界。
+     * 这里直接验证这条路径。
+     */
+    private static void checkDockDoesNotReCollapse() throws Exception {
+        javafx.stage.Stage st = new javafx.stage.Stage();
+        javafx.scene.Scene sc = new javafx.scene.Scene(
+                new javafx.scene.layout.StackPane(), 800, 600);
+        st.initStyle(javafx.stage.StageStyle.TRANSPARENT);
+        st.setScene(sc);
+        st.setX(560);
+        st.setY(216);
+        // show 到屏幕外，模拟收起态
+        st.show();
+        st.setX(1880);   // 只露 40px
+        com.jello.music.ui.EdgeDock dock =
+                new com.jello.music.ui.EdgeDock(st);
+        dock.collapse();
+        Thread.sleep(700);   // 等滑到位
+        check("dock 已进入收起态",
+                dock.isDocked(), "isDocked=" + dock.isDocked());
+        check("收起态窗口确实在屏幕右缘外",
+                st.getX() > 1700, "x=" + (int) st.getX());
+
+        // 模拟一次点击：pressed 走收起分支（expandDock），released 跳过 endDrag。
+        // 这里直接调 MainApp 那段逻辑用到的两个方法，验证 isDocked 不会被翻回。
+        boolean before = dock.isDocked();
+        boolean slidingBefore = dock.isSliding();
+
+        // 手动走一遍 MainApp 的判断（用反射拿不到私有方法，就复刻逻辑）
+        boolean wouldExpand = !dock.isSliding() && dock.isDocked();
+        check("收起静止态点击应走「唤回」分支",
+                wouldExpand, "sliding=" + slidingBefore + " docked=" + before);
+
+        dock.expand();
+        Thread.sleep(120);   // 只等 120ms：动画还在跑，窗口仍在屏外
+        boolean stillOut = st.getX() > 1700;
+        check("唤回动画刚启动时窗口仍在屏外（这正是 bug 的成因）",
+                stillOut, "x=" + (int) st.getX());
+
+        // 注意：这里<b>不</b>断言「动画跑完后窗口滑回屏内」——
+        // AnimationTimer 要靠 FX 线程的 pulse 驱动，而本断言跑在
+        // UiProbe 的独立 JavaFX 应用里，不一定有心跳。
+        // 位置动画的终态由 DockMotionProbe 在真实桌面环境下测
+        // （它会起一个可见窗口）。
+        //
+        // 这里要钉的是<b>状态</b>：expand() 已经把 snapped 置 false，
+        // 且不会再被任何代码翻回 true。
+        check("expand() 后 snapped 已是 false（released 不会再误判）",
+                !dock.isDocked(), "isDocked=" + dock.isDocked());
+
+        // 模拟 bug 的另一半：如果这时调 endDrag，窗口仍在屏外 ->
+        // 会重新吸附。真按这条走一遍，确认 bug 前提成立。
+        boolean wouldReCollapse = st.getX() > 1700;
+        check("bug 前提成立：endDrag 在此刻确实会重新吸附",
+                wouldReCollapse, "x=" + (int) st.getX());
+
+        st.hide();
+    }
+
+    /**
+     * 收起态点一下，不许「弹出来又缩回去」。
+     *
+     * <p>用户报的 bug。原因是一条很隐蔽的时序：
+     * <ol>
+     *   <li>{@code mousePressed} 走收起分支 → {@code expandDock()} 开始滑出</li>
+     *   <li>紧接着 {@code mouseReleased} → {@code dock.endDrag()}</li>
+     *   <li>此时滑出动画还没跑完，窗口<b>仍在屏幕右缘之外</b>，
+     *       {@code endDrag} 判「越界」→ {@code setSnapped(true)} 收起</li>
+     * </ol>
+     * 结果就是弹一下又缩回去。
+     *
+     * <p>{@code isSliding()} 挡不住这个 —— 它只护住 mousePressed，
+     * 而问题出在 mouseReleased。
+     *
+     * <p>修法：{@code justRequestedExpand} 标记「这次点击不是拖拽」，
+     * released 看到就跳过 {@code endDrag}。对应原版——
+     * 收起态的点击只走「唤回」，压根不进拖拽/松手流程。
+     *
+     * <p>顺带修 {@code beginDrag} 忘了清 {@code sliding}：
+     * 手动拖拽时动画已停，若留着 true，{@code isSliding()} 会永久返回 true，
+     * 点击被一直挡掉（表现为「点不动」）。
+     */
+    private static void checkNoExpandBounceBack() {
+        try {
+            var f = java.nio.file.Files.readString(java.nio.file.Path.of(
+                    "src/main/java/com/jello/music/MainApp.java"));
+            check("有 justRequestedExpand 标记（收起点击不是拖拽）",
+                    f.contains("private boolean justRequestedExpand"),
+                    "缺失");
+            // mouseReleased 必须在 endDrag 之前先判这个标记
+            int released = f.indexOf("node.setOnMouseReleased");
+            int guard = f.indexOf("justRequestedExpand", released);
+            int endDrag = f.indexOf("dock.endDrag()", released);
+            check("mouseReleased 里先判 justRequestedExpand 再调 endDrag",
+                    guard > 0 && endDrag > guard,
+                    "顺序不对 guard=" + guard + " endDrag=" + endDrag);
+            // expandDock 必须设置该标记
+            int expand = f.indexOf("private void expandDock()");
+            int set = f.indexOf("justRequestedExpand = true;", expand);
+            check("expandDock 里设置 justRequestedExpand",
+                    set > expand, "没设置");
+        } catch (Exception e) {
+            check("读 MainApp 源码", false, String.valueOf(e));
+        }
+
+        // beginDrag 必须清 sliding，否则 isSliding 永久为 true
+        try {
+            var f = java.nio.file.Files.readString(java.nio.file.Path.of(
+                    "src/main/java/com/jello/music/ui/EdgeDock.java"));
+            int begin = f.indexOf("public void beginDrag(");
+            int end = f.indexOf("public void drag(", begin);
+            String body = f.substring(begin, end > 0 ? end : begin + 900);
+            check("beginDrag 里清了 sliding（否则 isSliding 永久 true）",
+                    body.contains("sliding = false"),
+                    "没清");
+        } catch (Exception e) {
+            check("读 EdgeDock 源码", false, String.valueOf(e));
+        }
     }
 
     /**

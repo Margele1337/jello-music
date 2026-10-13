@@ -1663,7 +1663,15 @@ private void installDragHandlers(javafx.scene.Node node) {
                 dock.drag(e);
             }
         });
-        node.setOnMouseReleased(e -> dock.endDrag());
+        node.setOnMouseReleased(e -> {
+            // 收起态那次点击不是「拖拽」，别让 endDrag 把它当成
+            // 「拖出去松手被吸走」——那样会弹出来又缩回去。
+            if (justRequestedExpand) {
+                justRequestedExpand = false;
+                return;
+            }
+            dock.endDrag();
+        });
     }
 
     /** 播放模式索引（0..3）→ 队列语义，同时刷新按钮并落盘。 */
@@ -1807,7 +1815,22 @@ private void installDragHandlers(javafx.scene.Node node) {
         }
     }
 
-    private void expandDock() {
+    /**
+ * 刚发起过「唤回」，用来防止同一次点击的 released 把面板又收起。
+ *
+ * <p>对应用户报的「点下面就会弹出来又立马缩回去」：收起态点一下，
+ * {@code mousePressed} 调 {@link #expandDock()} 开始滑出，
+ * 紧接着 {@code mouseReleased} 又调 {@link EdgeDock#endDrag()}。
+ * 而滑出动画还没跑完，窗口此刻<b>仍在屏幕右缘之外</b>，
+ * {@code endDrag} 看到越界就判定「拖出去松手被吸走」→ 收起。
+ * 结果就是弹一下又缩回去。
+ *
+ * <p>原版不会有这问题：收起态的点击只走「唤回」，压根不进拖拽/松手流程。
+ */
+private boolean justRequestedExpand;
+
+private void expandDock() {
+        justRequestedExpand = true;
         dock.expand();
         reveal.expand(null);
         playerPanel.setDockTriggerActive(false);
