@@ -1347,6 +1347,8 @@ private void startPlayback(String url) {
 
         installSpectrumDrag();
         applySpectrumLock();
+        // 全屏时贴物理底边、平时贴任务栏上沿（对应原版 appServices.js:372-375）
+        watchSpectrumFullscreen();
 
         // 位置优先用上次存的（对应原版 spectrumWindowPosition），没有才贴主面板
         if (!restoreSpectrumPosition()) {
@@ -1358,6 +1360,10 @@ private void startPlayback(String url) {
         if (spectrumOnByDefault()) {
             spectrumStage.show();
             playerPanel.setSpectrumActive(true);
+            // 启动恢复时同样贴底
+            anchorSpectrum(
+                    com.jello.music.system.FullscreenWatcher
+                            .isForegroundFullscreen());
         }
     }
 
@@ -1451,7 +1457,78 @@ private void startPlayback(String url) {
      * （见 {@link #centerOnPrimaryScreen}），但用户可能拖走过，
      * 所以优先读 {@code stage} 的实际位置，读不到再退回居中估算。
      */
-    private void repositionSpectrum(Stage main) {
+    /**
+ * 频谱窗贴底，对应原版 {@code anchorSpectrumWindow} +
+ * {@code getSpectrumAnchorBottom}（{@code appServices.js:168-203}）：
+ * <pre>
+ *   有应用全屏 -&gt; anchorArea = display.bounds    // 物理底边，绕过任务栏
+ *   否则      -&gt; anchorArea = display.workArea  // 任务栏上沿
+ *   y = anchorArea.bottom - windowHeight
+ * </pre>
+ *
+ * <p><b>关键区别</b>：JavaFX 的 {@code getVisualBounds()} 已经排除了任务栏，
+ * 也就是它等价于 Electron 的 {@code workArea}。
+ * 但全屏时要贴的是<b>物理底边</b>（{@code getBounds()}）——
+ * 游戏全屏时任务栏被盖住，频谱若还按 workArea 贴就会浮在屏幕中间，
+ * 正对游戏画面中央，非常挡视线。
+ *
+ * @param fullscreen 当前是否有应用全屏
+ */
+private void anchorSpectrum(boolean fullscreen) {
+    if (spectrumStage == null || !spectrumStage.isShowing()) {
+        return;
+    }
+    // 频谱窗当前所在的那块屏幕，不是主屏
+    javafx.stage.Screen screen = findScreenFor(spectrumStage.getX(),
+            spectrumStage.getY());
+    javafx.geometry.Rectangle2D area = fullscreen
+            ? screen.getBounds()          // 物理底边
+            : screen.getVisualBounds();   // 任务栏上沿
+    double y = area.getMaxY() - spectrumStage.getHeight();
+    // 原版是「y 不同才 setBounds」，避免无谓的移动
+    if (Math.abs(spectrumStage.getY() - y) < 1) {
+        return;
+    }
+    spectrumStage.setY(y);
+    // 原版 x 不动（:199 只传了 y）——保持用户拖出来的横向位置
+    AppPrefs.setSpectrumWindowPosition(spectrumStage.getX(), y);
+}
+
+/** 找包含该点（或最接近）的屏幕。 */
+private static javafx.stage.Screen findScreenFor(double x, double y) {
+    javafx.stage.Screen best = javafx.stage.Screen.getPrimary();
+    double bestDist = Double.MAX_VALUE;
+    for (var s : javafx.stage.Screen.getScreens()) {
+        var b = s.getBounds();
+        if (x >= b.getMinX() && x <= b.getMaxX()
+                && y >= b.getMinY() && y <= b.getMaxY()) {
+            return s;
+        }
+        // 落在缝隙里时取中心最近的
+        double cx = (b.getMinX() + b.getMaxX()) / 2;
+        double cy = (b.getMinY() + b.getMaxY()) / 2;
+        double d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+        if (d < bestDist) {
+            bestDist = d;
+            best = s;
+        }
+    }
+    return best;
+}
+
+/**
+ * 启动全屏监听：进游戏全屏时把频谱贴到屏幕物理底边，
+ * 退出全屏再贴回任务栏上沿。对应原版
+ * {@code watchForegroundFullscreen(anchorSpectrumWindow)}（appServices.js:372-375）。
+ */
+private void watchSpectrumFullscreen() {
+    com.jello.music.system.FullscreenWatcher.watch(300, fullscreen -> {
+        // 回调在后台线程上，必须切回 FX 线程改 Stage
+        Platform.runLater(() -> anchorSpectrum(fullscreen));
+    });
+}
+
+private void repositionSpectrum(Stage main) {
         if (spectrumStage == null) {
             return;
         }
@@ -1488,6 +1565,10 @@ private void startPlayback(String url) {
             spectrumStage.show();
             playerPanel.setSpectrumActive(true);
             setSpectrumOn(true);
+            // 刚显示出来要按当前全屏状态贴底，否则可能停在旧位置
+            anchorSpectrum(
+                    com.jello.music.system.FullscreenWatcher
+                            .isForegroundFullscreen());
         }
     }
 
@@ -1557,8 +1638,16 @@ private void installDragHandlers(javafx.scene.Node node) {
             if (DragGate.blocked(e.getTarget())) {
                 return;
             }
-            // 收起态：优先把手势交给「唤回面板」，
-            // 否则点一下就变成拖一个只露 40px 的窄条（几乎拖不动）
+            // <b>滑动动画进行中一律不响应</b>：
+            // expandDock() 一进去就把 snapped 置 false，所以滑出过程中
+            // isDocked() 也是 false。不挡住的话，用户在面板滑出时点一下，
+            // 代码会当成「已经展开了」而走收起分支 —— 表现就是
+            // 「右侧弹出的时候点击又会收回去」。
+            if (dock.isSliding()) {
+                return;
+            }
+            // 收起静止态：把手势交给「唤回面板」。
+            // 不能起拖 —— 只露 40px 的窄条几乎拖不动。
             if (dock.isDocked()) {
                 expandDock();
                 return;
@@ -1690,6 +1779,14 @@ private void installDragHandlers(javafx.scene.Node node) {
             return;
         }
         lastToggleAt = now;
+        // 滑动动画进行中直接忽略：expandDock() 会立刻把 snapped 置 false、
+        // collapseDock() 会立刻置 true，所以动画期间 isDocked() 的值
+        // 反映的是「动画结束时该去的方向」而不是「用户看到的样子」。
+        // 不挡住的话，滑出过程中按 RSHIFT 会被当成「收回去」——
+        // 正是用户报的「弹出的时候点击又会收回去」。
+        if (dock.isSliding()) {
+            return;
+        }
         if (dock.isDocked()) {
             expandDock();
         } else {

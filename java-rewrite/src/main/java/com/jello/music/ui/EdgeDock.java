@@ -80,6 +80,8 @@ public final class EdgeDock {
     private boolean translucent;
 
     private AnimationTimer slideTimer;
+    /** 滑动动画进行中。AnimationTimer 没有 isRunning()，得自己记。 */
+    private boolean sliding;
     private double slideFromX;
     private double slideFromY;
     private double slideToX;
@@ -115,6 +117,23 @@ public final class EdgeDock {
 
     public boolean isDocked() {
         return snapped;
+    }
+
+    /**
+     * 贴边滑动动画是否正在跑。
+     *
+     * <p>用来区分「收起态静止」与「正在滑出 / 滑入」：
+     * {@link #snapped} 在 {@link #expand()} 一进去就被置 false，
+     * 所以<b>动画刚启动的那一瞬</b> {@code isDocked()} 也是 false。
+     *
+     * <p>不加这个区分就会出用户报的「右侧弹出的时候点击又会收回去」：
+     * 面板正在滑出的过程中点它，代码看到 {@code !isDocked()} 就当成
+     * 「已经展开了」，于是走收起分支 —— 正好和用户想做的相反。
+     *
+     * @return 滑动动画进行中返回 true
+     */
+    public boolean isSliding() {
+        return slideTimer != null && sliding;
     }
 
     /**
@@ -326,9 +345,11 @@ public final class EdgeDock {
         // 否则旧动画会继续往它自己的目标推进（连按时表现为「分散开」）
         if (Math.abs(slideFromX - targetX) < 1 && Math.abs(slideFromY - targetY) < 1) {
             slideTimer = null;
+            sliding = false;
             return;
         }
 
+        sliding = true;
         slideTimer = new AnimationTimer() {
             @Override
             public void handle(long now) {
@@ -380,6 +401,7 @@ public final class EdgeDock {
             slideTimer.stop();
             slideTimer = null;
         }
+        sliding = false;
         stage.setX(slideToX);
         stage.setY(slideToY);
         syncFromGeometry();

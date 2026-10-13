@@ -377,6 +377,72 @@ writeSnapshot(root, pngPath);
         checkSearchBoxClear();
         checkTrayMenuIsSelfDrawn();
         checkDockTriggerAndDragScope();
+        checkFullscreenAnchor();
+    }
+
+    /**
+     * 全屏时频谱贴<b>物理底边</b>，平时贴<b>任务栏上沿</b>。
+     *
+     * <p>1:1 对齐原版 {@code getSpectrumAnchorBottom}（appServices.js:168-191）：
+     * <pre>
+     *   if (fullscreen) anchorArea = display.bounds;    // 物理底边
+     *   else           anchorArea = display.workArea;  // 任务栏上沿
+     * </pre>
+     *
+     * <p><b>为什么不直接用 getVisualBounds() 了事</b>：JavaFX 的
+     * {@code getVisualBounds()} 就等于 Electron 的 {@code workArea}（已排除任务栏）。
+     * 但游戏全屏时任务栏被盖住，频谱若还按 workArea 贴就会浮在屏幕中间，
+     * 正对游戏画面中央，非常挡视线。
+     */
+    private static void checkFullscreenAnchor() {
+        // 全屏检测要能调通（JNA 手写映射）
+        boolean fs;
+        try {
+            fs = com.jello.music.system.FullscreenWatcher
+                    .isForegroundFullscreen();
+            check("FullscreenWatcher 能调通（JNA user32 映射正确）",
+                    true, "");
+        } catch (Throwable t) {
+            check("FullscreenWatcher 能调通（JNA user32 映射正确）",
+                    false, String.valueOf(t));
+            return;
+        }
+        check("普通桌面上应判为非全屏",
+                !fs, "在普通桌面上判成了全屏");
+
+        // 屏幕 bounds 与 visualBounds 的关系：没有任务栏时两者相等，
+        // 有任务栏时 visualBounds 矮一截 —— 断言代码用的是 bounds（全屏分支）
+        var s = javafx.stage.Screen.getPrimary();
+        check("primary screen 有 bounds（物理）",
+                s.getBounds().getHeight() > 0, "");
+        check("primary screen 有 visualBounds（工作区）",
+                s.getVisualBounds().getHeight() > 0, "");
+        boolean workAreaDiffers = s.getBounds().getHeight()
+                != s.getVisualBounds().getHeight();
+        System.out.println("      （本机" + (workAreaDiffers ? "有" : "无")
+                + "任务栏，bounds=" + (int) s.getBounds().getHeight()
+                + " visualBounds=" + (int) s.getVisualBounds().getHeight() + "）");
+
+        // MainApp 里必须有 anchorSpectrum(boolean) 且走 getBounds/getVisualBounds
+        try {
+            var f = java.nio.file.Files.readString(java.nio.file.Path.of(
+                    "src/main/java/com/jello/music/MainApp.java"));
+            check("MainApp 有 anchorSpectrum(boolean fullscreen)",
+                    f.contains("private void anchorSpectrum(boolean fullscreen)"),
+                    "缺失");
+            check("全屏分支用 getBounds（物理底边）",
+                    f.contains("screen.getBounds()"),
+                    "没用到 getBounds");
+            check("非全屏分支用 getVisualBounds（任务栏上沿）",
+                    f.contains("screen.getVisualBounds()"),
+                    "没用到 getVisualBounds");
+            check("已接全屏轮询（对应 watchForegroundFullscreen）",
+                    f.contains("watchSpectrumFullscreen()")
+                            && f.contains("FullscreenWatcher.watch(300"),
+                    "未接入轮询");
+        } catch (Exception e) {
+            check("读 MainApp 源码", false, String.valueOf(e));
+        }
     }
 
     /**
