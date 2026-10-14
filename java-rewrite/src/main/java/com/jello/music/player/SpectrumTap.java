@@ -123,8 +123,10 @@ public final class SpectrumTap implements AutoCloseable {
         long len = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
         this.contentLength = partial && len > 0 ? byteOffset + len : len;
 
+        // 探测 ID3v2 要往回塞 10 字节（探针读的头），缓冲必须 >= 10
         this.stream = new java.io.PushbackInputStream(
-                new BufferedInputStream(response.body(), 1 << 16), 2);
+                new BufferedInputStream(response.body(), 1 << 16), 16);
+        skipId3v2(this.stream, byteOffset == 0);
         this.bitstream = new Bitstream(stream);
         this.decoder = new Decoder();
         this.decoder.setOutputBuffer(sampleBuffer);
@@ -133,6 +135,52 @@ public final class SpectrumTap implements AutoCloseable {
         // bytesConsumed 是「距当前起点的字节数」，重新打开流后从 0 重新累计。
         // 但 bytesPerSecond 是整首歌的平均码率，不能清——它正是我们要保留的换算依据。
         this.bytesConsumed = 0;
+    }
+
+    /**
+ * 跳过开头的 ID3v2 标签。
+ *
+ * <p><b>这是频谱解不出帧的真正原因。</b>酷狗直链返回的是
+ * {@code content-type: audio/mpeg} 且带 ID3v2 标签（实测开头 4 字节是 {@code ID3}，
+ * 真正的帧同步字在第 21 字节）。而 JLayer 1.0.1 的 {@link Bitstream} <b>不认 ID3</b>，
+ * 它假设流一打开就是 {@code 0xFFEx} 帧头：开头的 {@code 'I'} 既不是 0xFF 也没有下一字节，
+ * 于是 {@code readFrame()} 一直返回 {@code null}，表现为「拉到了直链但一帧都解不出」。
+ *
+ * <p>ID3v2 的长度不是普通整数：头 10 字节里，{@code bytes[6..9]} 是
+ * <b>syncsafe</b> 编码（每字节只用低 7 位），所以要先还原再跳。
+ *
+ * @param onlyAtStart 只在从流开头（offset==0）时跳：按 Range 跳到中途时
+ *                    流的起点本来就是音频帧，硬跳会吃掉开头几十个字节
+ */
+private static void skipId3v2(InputStream in, boolean onlyAtStart) throws IOException {
+        if (!onlyAtStart) {
+            return;
+        }
+        byte[] head = in.readNBytes(10);
+        if (head.length < 10
+                || head[0] != 'I' || head[1] != 'D' || head[2] != '3') {
+            // 不是 ID3v2，探测读的字节要还回去
+            if (head.length > 0) {
+                ((java.io.PushbackInputStream) in).unread(head);
+            }
+            return;
+        }
+        // syncsafe：4 字节各取低 7 位
+        int size = ((head[6] & 0x7F) << 21) | ((head[7] & 0x7F) << 14)
+                | ((head[8] & 0x7F) << 7) | (head[9] & 0x7F);
+        // bit7 = 0x10 表示标签尾部还有 10 字节 footer
+        boolean hasFooter = (head[5] & 0x10) != 0;
+        long total = 10L + size + (hasFooter ? 10L : 0L);
+        System.err.println("[SpectrumTap] 跳过 ID3v2 标签 " + total + " 字节");
+        long left = total;
+        byte[] buf = new byte[1 << 16];
+        while (left > 0) {
+            int n = in.read(buf, 0, (int) Math.min(buf.length, left));
+            if (n < 0) {
+                return;
+            }
+            left -= n;
+        }
     }
 
     private void closeStream() {
