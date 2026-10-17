@@ -158,6 +158,48 @@ let spectrumFullscreenState = { fullscreen: false, monitor: null };
 let stopSpectrumFullscreenWatch = null;
 let spectrumDisplayListenersBound = false;
 let spectrumAnchorGuard = false;
+let spectrumGeometryKey = '';
+
+// 频谱几何基准：1080p 物理像素。sigmarebase 把条形像素高硬编码成「游戏窗口高/1080」，
+// 只在 1080p 下正确；这里改为按当前显示器的物理高度等比缩放，1080p 仍是原值，
+// 1440p/4K 则条宽、条高、默认窗口尺寸同步放大，观感与 1080p 一致。
+const SPECTRUM_REFERENCE_HEIGHT = 1080;
+const SPECTRUM_BASE_WINDOW_HEIGHT = 280;
+const SPECTRUM_BASE_MIN_WIDTH = 300;
+const SPECTRUM_BASE_MIN_HEIGHT = 60;
+const SPECTRUM_MIN_SCALE = 0.5;
+const SPECTRUM_MAX_SCALE = 4;
+
+const clampSpectrumScale = (scale) =>
+    Math.min(SPECTRUM_MAX_SCALE, Math.max(SPECTRUM_MIN_SCALE, scale));
+
+// 相对 1080p 的物理像素缩放系数
+const getSpectrumGeometryScale = (display) => {
+    const pixelHeight = display?.size?.height || 0;
+    if (!pixelHeight) return 1;
+    return clampSpectrumScale(pixelHeight / SPECTRUM_REFERENCE_HEIGHT);
+};
+
+// 物理像素缩放 → DIP（窗口尺寸单位），保证 4K + 150% 缩放下默认窗口物理高度仍是 560px
+const toDipScale = (display, pixelScale) => {
+    const factor = display?.scaleFactor;
+    return factor > 0 ? pixelScale / factor : pixelScale;
+};
+
+const pushSpectrumGeometry = () => {
+    if (!spectrumWindow || spectrumWindow.isDestroyed()) return;
+    let display;
+    try {
+        display = screen.getDisplayMatching(spectrumWindow.getBounds());
+    } catch (error) {
+        display = screen.getPrimaryDisplay();
+    }
+    const scale = getSpectrumGeometryScale(display);
+    const key = `${scale}|${display.size.width}x${display.size.height}`;
+    if (key === spectrumGeometryKey) return;
+    spectrumGeometryKey = key;
+    spectrumWindow.webContents.send('spectrum-geometry', { scale });
+};
 
 const persistSpectrumWindowBounds = () => {
     if (!spectrumWindow || spectrumWindow.isDestroyed()) return;
@@ -205,7 +247,10 @@ const anchorSpectrumWindow = () => {
 const bindSpectrumDisplayListeners = () => {
     if (spectrumDisplayListenersBound) return;
     spectrumDisplayListenersBound = true;
-    const reanchor = () => anchorSpectrumWindow();
+    const reanchor = () => {
+        anchorSpectrumWindow();
+        pushSpectrumGeometry();
+    };
     screen.on('display-metrics-changed', reanchor);
     screen.on('display-added', reanchor);
     screen.on('display-removed', reanchor);
@@ -217,6 +262,12 @@ export function stopSpectrumFullscreenWatcher() {
         stopSpectrumFullscreenWatch = null;
     }
     stopForegroundFullscreenWatcher();
+}
+
+// 频谱窗口渲染进程挂载后调用：补发当前显示器的分辨率系数（loadURL 前发的会被丢弃）
+export function syncSpectrumGeometry() {
+    spectrumGeometryKey = '';
+    pushSpectrumGeometry();
 }
 
 export function createLyricsWindow() {
@@ -307,20 +358,41 @@ export function createLyricsWindow() {
 }
 
 export function createSpectrumWindow() {
-    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
     const savedConfig = store.get('settings') || {};
 
-    const defaultHeight = 280;
+    // 分辨率系数：物理像素相对 1080p；窗口尺寸走 DIP，所以要先除以系统缩放
+    const pixelScale = getSpectrumGeometryScale(primaryDisplay);
+    const dipScale = toDipScale(primaryDisplay, pixelScale);
+    const defaultHeight = Math.round(SPECTRUM_BASE_WINDOW_HEIGHT * dipScale);
     const savedPosition = store.get('spectrumWindowPosition') || {};
     const savedSize = store.get('spectrumWindowSize') || {
         width: screenWidth,
         height: defaultHeight
     };
 
+    // 换过分辨率/缩放后按系数迁移已保存的尺寸，避免沿用 1080p 时代的大小导致条形被截断
+    const storedScale = store.get('spectrumGeometryScale');
+    let width = savedSize.width || screenWidth;
+    let height = savedSize.height || defaultHeight;
+    let scaleRatio = 1;
+    if (Number.isFinite(storedScale) && storedScale > 0) {
+        scaleRatio = pixelScale / storedScale;
+    } else if (Math.abs(height - SPECTRUM_BASE_WINDOW_HEIGHT) <= 2) {
+        // 老版本没记录系数：高度仍是写死的默认 280，说明是 1080p 时代的整屏默认窗口，按新系数放大
+        scaleRatio = pixelScale;
+    }
+    if (scaleRatio !== 1) {
+        width = Math.round(width * scaleRatio);
+        height = Math.round(height * scaleRatio);
+    }
+
     let x = savedPosition.x ?? 0;
-    let y = savedPosition.y ?? (screenHeight - defaultHeight);
-    let width = Math.min(savedSize.width || screenWidth, screenWidth);
-    let height = Math.min(savedSize.height || defaultHeight, screenHeight);
+    let y = savedPosition.y ?? (screenHeight - height);
+    width = Math.min(width, screenWidth);
+    height = Math.min(height, screenHeight);
+    store.set('spectrumGeometryScale', pixelScale);
 
     // 位置无效时锚定屏幕底部
     const isValidPosition = x !== undefined && y !== undefined &&
@@ -336,8 +408,8 @@ export function createSpectrumWindow() {
         height: height,
         x: x,
         y: y,
-        minWidth: 300,
-        minHeight: 60,
+        minWidth: Math.round(SPECTRUM_BASE_MIN_WIDTH * dipScale),
+        minHeight: Math.round(SPECTRUM_BASE_MIN_HEIGHT * dipScale),
         maxWidth: screenWidth,
         maxHeight: screenHeight,
         alwaysOnTop: true,
@@ -362,10 +434,14 @@ export function createSpectrumWindow() {
         anchorSpectrumWindow();
         persistSpectrumWindowBounds();
     });
-    spectrumWindow.on('move', persistSpectrumWindowBounds);
+    spectrumWindow.on('move', () => {
+        persistSpectrumWindowBounds();
+        pushSpectrumGeometry();
+    });
     mainWindow.spectrumWindow = spectrumWindow;
     spectrumWindow.on('closed', () => {
         mainWindow.spectrumWindow = null;
+        spectrumGeometryKey = '';
     });
 
     bindSpectrumDisplayListeners();

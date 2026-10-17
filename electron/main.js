@@ -5,7 +5,7 @@ import {
     registerShortcut,
     createLyricsWindow, setThumbarButtons,
     registerProtocolHandler, sendHashAfterLoad, getTray,
-    createSpectrumWindow, stopSpectrumFullscreenWatcher,
+    createSpectrumWindow, stopSpectrumFullscreenWatcher, syncSpectrumGeometry,
     createKeystrokesWindow, closeKeystrokesWindow, getKeystrokesWindow,
     createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
@@ -313,6 +313,7 @@ ipcMain.on('spectrum-hud-ready', () => {
     if (mainWindow && mainWindow.spectrumWindow) {
         mainWindow.webContents.send('request-current-spectrum');
     }
+    syncSpectrumGeometry();
 });
 
 // 转发设置变更到频谱窗口（实时生效，无需重启）

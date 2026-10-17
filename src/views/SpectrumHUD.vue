@@ -1,5 +1,5 @@
 <template>
-  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }">
+  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }" :style="{ '--hud-scale': hudScale }">
     <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
     <div class="spectrum-info" v-show="title || cover">
       <img v-if="cover" class="cover" :src="cover" alt="" />
@@ -16,10 +16,27 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 
 const BAR_COUNT = 114            // 与 sigmarebase renderSpectrum 的 maxWidth 一致
 const SPECTRUM_SMOOTHING = 0.335 // sigmarebase 60fps 平滑系数（onRender2D 里更新 amplitudes）
-// 与原版 1:1：原版条形像素高 = refH × (游戏窗口高 / 1080)。
-// 实测游戏窗口 1920x1009（可按实际分辨率修改），所以 1.0x 时我们的条形绝对像素高度与原版一致，
-// 与频谱窗自身高度无关（窗口只决定可见范围/余量）。
-const GAME_FRAMEBUFFER_HEIGHT = 1009
+// 与原版 1:1：原版条形像素高 = refH × (游戏窗口高 / 1080)，参考游戏窗口实测为 1920x1009。
+// 原版把这个高度写死在渲染器里，换到 1440p/4K 就只条宽翻倍、条高不变 → 频谱被横向拉扁。
+// 这里把 1009/1080 保留为 1080p 基准比值，再乘主进程下发的分辨率系数（物理像素高/1080），
+// 条宽随窗口宽度、条高随之等比放大，1080p 仍是原版像素值，4K 观感一致。
+const REFERENCE_DISPLAY_HEIGHT = 1080
+const REFERENCE_GAME_HEIGHT = 1009
+const REFERENCE_BAR_RATIO = REFERENCE_GAME_HEIGHT / REFERENCE_DISPLAY_HEIGHT
+const HUD_SCALE_MIN = 0.75
+const HUD_SCALE_MAX = 2
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+
+// 主进程 IPC 之前先用 window.screen 推断一次，避免首帧比例错误
+const detectDisplayScale = () => {
+  const pixelHeight = (window.screen?.height || 0) * (window.devicePixelRatio || 1)
+  if (!pixelHeight) return 1
+  return clamp(pixelHeight / REFERENCE_DISPLAY_HEIGHT, 0.5, 4)
+}
+
+let displayScale = detectDisplayScale()
+const hudScale = ref(clamp(displayScale, HUD_SCALE_MIN, HUD_SCALE_MAX))
 
 const canvasRef = ref(null)
 const cover = ref('')
@@ -154,11 +171,11 @@ const draw = (now = performance.now()) => {
   }
 
   // ===== 1:1 复刻 sigmarebase renderSpectrum =====
-  // 条宽 ceil(窗口宽 / 114)；条高按原版绝对像素高度（见 sigmaAmp），不随频谱窗高度缩放
+  // 条宽 ceil(窗口宽 / 114)（物理像素，窗口拉多宽就铺多宽）；条高按原版比例 × 分辨率系数
   const sigmaBarWidth = Math.ceil(w / BAR_COUNT)
 
-  // 与原版 1:1：原版像素高 = refH × (游戏窗口高/1080)；1.0x 时两者绝对像素高度一致
-  const sigmaAmp = (GAME_FRAMEBUFFER_HEIGHT / 1080) * spectrumScale
+  // 1080p 时 displayScale = 1 → 与原版绝对像素高度一致；1440p/4K 等比放大
+  const sigmaAmp = REFERENCE_BAR_RATIO * displayScale * spectrumScale
   for (let i = 0; i < BAR_COUNT; i++) {
     const refHeight = Math.sqrt(levels[i]) / 12 - 5
     const height = Math.max(0, refHeight) * sigmaAmp
@@ -235,6 +252,14 @@ onMounted(() => {
     }
   })
 
+  window.electron.ipcRenderer.on('spectrum-geometry', (_e, geometry) => {
+    const scale = Number(geometry?.scale)
+    if (!Number.isFinite(scale) || scale <= 0) return
+    // 主进程掌握窗口实际所在显示器，比 window.screen 更准（多屏 / 跨屏拖动）
+    displayScale = clamp(scale, 0.5, 4)
+    hudScale.value = clamp(displayScale, HUD_SCALE_MIN, HUD_SCALE_MAX)
+  })
+
   window.electron.ipcRenderer.on('spectrum-setting-changed', (_e, { key, value }) => {
     if (key === 'spectrumLocked') {
       locked.value = value !== 'off'
@@ -292,10 +317,14 @@ body { background: transparent; overflow: hidden; }
 
 .spectrum-info {
   position: absolute;
-  left: 14px; bottom: 12px;
+  left: calc(14px * var(--hud-scale, 1));
+  bottom: calc(12px * var(--hud-scale, 1));
   display: flex; align-items: center; gap: 10px;
   -webkit-app-region: no-drag;
   pointer-events: none;
+  /* 高分辨率下封面/文字跟条形一起放大，否则 4K 上只有频谱变大 */
+  transform: scale(var(--hud-scale, 1));
+  transform-origin: left bottom;
 }
 .spectrum-info .cover {
   width: 64px; height: 64px;
