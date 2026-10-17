@@ -81,12 +81,17 @@ const render = () => {
   const width = Math.round(canvas.clientWidth || 0);
   const height = Math.round(canvas.clientHeight || 0);
   if (width <= 0 || height <= 0) return;
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
+  // 后备缓冲按设备像素分配（CSS 尺寸不变），否则高 DPI 下整张文字位图被放大而发虚
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
   }
   const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = (atlasValue?.density || 1) !== dpr;
   ctx.clearRect(0, 0, width, height);
   // 组字期间由原生输入框显示（含输入法候选框），图集不绘制
   if (!atlasValue || composing.value) return;

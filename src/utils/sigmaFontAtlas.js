@@ -23,17 +23,73 @@ const PNG_IMPORTS = {
   'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.png?url')
 };
 
+// 高 DPI：1x 位图在 dpr=1.5/2 的屏幕上会被浏览器整体放大，文字发虚/带锯齿。
+// 这里按需改用同一套 Java2D 参数光栅化的 2x 图集（tools/font-atlas/FontAtlas.java，
+// 字号翻倍），度量统一折算回 CSS px，布局代码不需要区分密度。
+// 重新生成（只覆盖实际用到的字号）：
+//   java tools/font-atlas/FontAtlas.java src/assets/sigma/fonts/helvetica-neue-light.ttf src/assets/sigma/fonts 26,28,40,80 atlas2x-light
+//   java tools/font-atlas/FontAtlas.java SansSerif src/assets/sigma/fonts 24,50 atlas2x-sans
+const HIGH_DPI_THRESHOLD = 1.25;
+const DENSITY_2X = 2;
+
+const META_IMPORTS_2X = {
+  'light-13': () => import('../assets/sigma/fonts/atlas2x-light-26.json'),
+  'light-14': () => import('../assets/sigma/fonts/atlas2x-light-28.json'),
+  'light-20': () => import('../assets/sigma/fonts/atlas2x-light-40.json'),
+  'light-40': () => import('../assets/sigma/fonts/atlas2x-light-80.json'),
+  'sans-12': () => import('../assets/sigma/fonts/atlas2x-sans-24.json'),
+  'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.json')
+};
+
+const PNG_IMPORTS_2X = {
+  'light-13': () => import('../assets/sigma/fonts/atlas2x-light-26.png?url'),
+  'light-14': () => import('../assets/sigma/fonts/atlas2x-light-28.png?url'),
+  'light-20': () => import('../assets/sigma/fonts/atlas2x-light-40.png?url'),
+  'light-40': () => import('../assets/sigma/fonts/atlas2x-light-80.png?url'),
+  'sans-12': () => import('../assets/sigma/fonts/atlas2x-sans-24.png?url'),
+  'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.png?url')
+};
+
 const cache = new Map();
+
+const pickDensity = (key) => {
+  if (!META_IMPORTS_2X[key]) return 1;
+  const dpr = typeof window === 'undefined' ? 1 : (window.devicePixelRatio || 1);
+  return dpr >= HIGH_DPI_THRESHOLD ? DENSITY_2X : 1;
+};
+
+// 2x 图集的度量折算回 CSS px（字号越小，取整误差带来的偏移越明显，
+// 因此保留小数而不是 Math.round，交给调用方现有的取整逻辑处理）
+const toCssMetrics = (meta) => {
+  const half = (value) => value / 2;
+  const glyphs = {};
+  for (const [code, glyph] of Object.entries(meta.glyphs)) {
+    glyphs[code] = {
+      x: half(glyph.x),
+      y: half(glyph.y),
+      w: half(glyph.w),
+      h: half(glyph.h),
+      adv: half(glyph.adv)
+    };
+  }
+  return {
+    lineHeight: half(meta.lineHeight),
+    ascent: half(meta.ascent),
+    glyphs
+  };
+};
 
 // 加载指定字体族/字号的图集（含位图与字形度量），重复调用返回同一实例
 export const loadSigmaAtlas = (size, family = 'light') => {
   const key = family + '-' + Number(size);
-  if (cache.has(key)) return cache.get(key);
+  const density = pickDensity(key);
+  const cacheKey = key + '@' + density;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
   const promise = (async () => {
-    const metaLoader = META_IMPORTS[key];
-    const pngLoader = PNG_IMPORTS[key];
+    const metaLoader = (density === DENSITY_2X ? META_IMPORTS_2X : META_IMPORTS)[key];
+    const pngLoader = (density === DENSITY_2X ? PNG_IMPORTS_2X : PNG_IMPORTS)[key];
     if (!metaLoader || !pngLoader) throw new Error('no atlas for ' + key);
-    const meta = (await metaLoader()).default;
+    const raw = (await metaLoader()).default;
     const url = (await pngLoader()).default;
     const image = await new Promise((resolve, reject) => {
       const img = new Image();
@@ -41,17 +97,19 @@ export const loadSigmaAtlas = (size, family = 'light') => {
       img.onerror = () => reject(new Error('failed to load atlas image'));
       img.src = url;
     });
+    const metrics = density === DENSITY_2X ? toCssMetrics(raw) : raw;
     const atlas = {
       size: Number(size),
       family,
-      lineHeight: meta.lineHeight,
-      ascent: meta.ascent,
-      glyphs: meta.glyphs,
+      density,
+      lineHeight: metrics.lineHeight,
+      ascent: metrics.ascent,
+      glyphs: metrics.glyphs,
       image
     };
     return atlas;
   })();
-  cache.set(key, promise);
+  cache.set(cacheKey, promise);
   return promise;
 };
 
@@ -123,7 +181,7 @@ export const truncateSigmaText = (atlas, text, maxWidth, ctx = null) => {
 const tintCache = new Map();
 const getTintedAtlas = (atlas, color) => {
   if (!color || color === '#ffffff') return atlas.image;
-  const key = atlas.size + '|' + color;
+  const key = atlas.size + '|' + atlas.density + '|' + color;
   if (tintCache.has(key)) return tintCache.get(key);
   const canvas = document.createElement('canvas');
   canvas.width = atlas.image.width;
@@ -137,10 +195,12 @@ const getTintedAtlas = (atlas, color) => {
   return canvas;
 };
 
-// 与 Slick TrueTypeFont.drawString 一致：按 advance 逐字形贴图，(x, y) 为文本左上角
+// 与 Slick TrueTypeFont.drawString 一致：按 advance 逐字形贴图，(x, y) 为文本左上角。
+// 度量是 CSS px，位图是 atlas.density 倍密度，取源矩形时乘回去。
 export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#ffffff') => {
   if (!atlas || !text) return 0;
   const source = getTintedAtlas(atlas, color);
+  const density = atlas.density || 1;
   const prevAlpha = ctx.globalAlpha;
   if (alpha !== 1) ctx.globalAlpha = prevAlpha * alpha;
   let penX = x;
@@ -148,7 +208,9 @@ export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#fffff
     const code = ch.codePointAt(0);
     const glyph = atlas.glyphs[code];
     if (glyph) {
-      ctx.drawImage(source, glyph.x, glyph.y, glyph.w, glyph.h, penX, y, glyph.w, glyph.h);
+      ctx.drawImage(source,
+        glyph.x * density, glyph.y * density, glyph.w * density, glyph.h * density,
+        penX, y, glyph.w, glyph.h);
       penX += glyph.adv;
       continue;
     }

@@ -75,11 +75,21 @@ const displayText = (atlasValue, width) => {
 
 const prepareCanvas = (width, height) => {
   const canvas = canvasRef.value;
-  canvas.width = Math.max(1, Math.round(width));
-  canvas.height = Math.max(1, Math.round(height));
+  // 背景缓冲按设备像素分配：高 DPI 下 1x 缓冲会被浏览器整体放大，文字发虚/带锯齿。
+  // CSS 尺寸由 canvasStyle 决定，这里只改后备分辨率。
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.max(1, Math.round(width * dpr));
+  const pixelHeight = Math.max(1, Math.round(height * dpr));
+  // 跑马灯每帧都会进来，尺寸没变就别重建（重建会清空缓冲并重分配）
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
   const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  // 图集密度与屏幕一致时按原版硬边 1:1 贴图；不一致（dpr=1.5 配 2x 图集）才重采样
+  ctx.imageSmoothingEnabled = (atlas.value?.density || 1) !== dpr;
   return ctx;
 };
 
