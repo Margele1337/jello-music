@@ -159,6 +159,8 @@ let stopSpectrumFullscreenWatch = null;
 let spectrumDisplayListenersBound = false;
 let spectrumAnchorGuard = false;
 let spectrumGeometryKey = '';
+// 窗口当前尺寸所依据的 DIP 系数：分辨率/缩放变化时靠它把窗口同比换算过去
+let spectrumDipScale = 0;
 
 // 频谱几何基准：1080p 物理像素。sigmarebase 把条形像素高硬编码成「游戏窗口高/1080」，
 // 只在 1080p 下正确；这里改为按当前显示器的物理高度等比缩放，1080p 仍是原值，
@@ -186,15 +188,48 @@ const toDipScale = (display, pixelScale) => {
     return factor > 0 ? pixelScale / factor : pixelScale;
 };
 
-const pushSpectrumGeometry = () => {
-    if (!spectrumWindow || spectrumWindow.isDestroyed()) return;
-    let display;
+// 取窗口当前所在的显示器（窗口异常时退回主屏）
+const getSpectrumDisplay = () => {
     try {
-        display = screen.getDisplayMatching(spectrumWindow.getBounds());
+        return screen.getDisplayMatching(spectrumWindow.getBounds());
     } catch (error) {
-        display = screen.getPrimaryDisplay();
+        return screen.getPrimaryDisplay();
     }
+};
+
+// 显示器分辨率/缩放变化后，按 DIP 系数把窗口同比缩放。
+// 渲染端条高按「物理像素 × 分辨率系数」绘制，窗口尺寸却走 DIP：只下发系数不缩放窗口，
+// 换分辨率后条形会按新比例放大而窗口尺寸不变，结果就是大量条形顶到窗口上沿被截断。
+const rescaleSpectrumWindow = (display, dipScale) => {
+    if (!spectrumWindow || spectrumWindow.isDestroyed()) return;
+    const lastDipScale = spectrumDipScale;
+    spectrumDipScale = dipScale;
+    if (!(lastDipScale > 0) || !Number.isFinite(lastDipScale)) return;
+    const ratio = dipScale / lastDipScale;
+    if (!(ratio > 0) || Math.abs(ratio - 1) < 0.005) return;
+
+    const { x, y, width, height } = spectrumWindow.getBounds();
+    const area = display.workArea;
+    const nextWidth = Math.min(Math.round(width * ratio), area.width);
+    const nextHeight = Math.min(Math.round(height * ratio), area.height);
+    if (nextWidth === width && nextHeight === height) return;
+
+    spectrumAnchorGuard = true;
+    try {
+        spectrumWindow.setBounds({ x, y, width: nextWidth, height: nextHeight });
+    } finally {
+        spectrumAnchorGuard = false;
+    }
+    // 尺寸跟着显示器变了，下次启动要以新系数为基准继续迁移
+    store.set('spectrumGeometryDipScale', dipScale);
+};
+
+// 改分辨率、改缩放、跨屏拖动都走这里：窗口尺寸同步 + 下发渲染端系数
+const applySpectrumGeometry = () => {
+    if (!spectrumWindow || spectrumWindow.isDestroyed()) return;
+    const display = getSpectrumDisplay();
     const scale = getSpectrumGeometryScale(display);
+    rescaleSpectrumWindow(display, toDipScale(display, scale));
     const key = `${scale}|${display.size.width}x${display.size.height}`;
     if (key === spectrumGeometryKey) return;
     spectrumGeometryKey = key;
@@ -249,7 +284,7 @@ const bindSpectrumDisplayListeners = () => {
     spectrumDisplayListenersBound = true;
     const reanchor = () => {
         anchorSpectrumWindow();
-        pushSpectrumGeometry();
+        applySpectrumGeometry();
     };
     screen.on('display-metrics-changed', reanchor);
     screen.on('display-added', reanchor);
@@ -267,7 +302,7 @@ export function stopSpectrumFullscreenWatcher() {
 // 频谱窗口渲染进程挂载后调用：补发当前显示器的分辨率系数（loadURL 前发的会被丢弃）
 export function syncSpectrumGeometry() {
     spectrumGeometryKey = '';
-    pushSpectrumGeometry();
+    applySpectrumGeometry();
 }
 
 export function createLyricsWindow() {
@@ -359,49 +394,55 @@ export function createLyricsWindow() {
 
 export function createSpectrumWindow() {
     const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
     const savedConfig = store.get('settings') || {};
+    const savedPosition = store.get('spectrumWindowPosition') || {};
+
+    // 目标显示器按已保存的位置判断。多屏分辨率/缩放不一致时，用主屏系数建窗会与渲染端
+    // （渲染端取窗口所在屏）打架，条形被放大或压扁，所以这里要和渲染端取同一块屏。
+    const targetDisplay = (Number.isFinite(savedPosition.x) && Number.isFinite(savedPosition.y))
+        ? screen.getDisplayNearestPoint({ x: savedPosition.x, y: savedPosition.y })
+        : primaryDisplay;
+    const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
 
     // 分辨率系数：物理像素相对 1080p；窗口尺寸走 DIP，所以要先除以系统缩放
-    const pixelScale = getSpectrumGeometryScale(primaryDisplay);
-    const dipScale = toDipScale(primaryDisplay, pixelScale);
+    const pixelScale = getSpectrumGeometryScale(targetDisplay);
+    const dipScale = toDipScale(targetDisplay, pixelScale);
     const defaultHeight = Math.round(SPECTRUM_BASE_WINDOW_HEIGHT * dipScale);
-    const savedPosition = store.get('spectrumWindowPosition') || {};
-    const savedSize = store.get('spectrumWindowSize') || {
+    const savedSizeRaw = store.get('spectrumWindowSize');
+    const savedSize = savedSizeRaw || {
         width: screenWidth,
         height: defaultHeight
     };
 
-    // 换过分辨率/缩放后按系数迁移已保存的尺寸，避免沿用 1080p 时代的大小导致条形被截断
-    const storedScale = store.get('spectrumGeometryScale');
+    // 换过分辨率/缩放后按系数迁移已保存的尺寸，避免沿用旧尺寸导致条形被截断。
+    // 用 DIP 系数（物理系数 ÷ 系统缩放）而不是物理系数：只改分辨率时两者等价，
+    // 只改 Windows 缩放时才能保持窗口的物理高度不变。
+    const storedDipScale = store.get('spectrumGeometryDipScale');
     let width = savedSize.width || screenWidth;
     let height = savedSize.height || defaultHeight;
     let scaleRatio = 1;
-    if (Number.isFinite(storedScale) && storedScale > 0) {
-        scaleRatio = pixelScale / storedScale;
-    } else if (Math.abs(height - SPECTRUM_BASE_WINDOW_HEIGHT) <= 2) {
-        // 老版本没记录系数：高度仍是写死的默认 280，说明是 1080p 时代的整屏默认窗口，按新系数放大
-        scaleRatio = pixelScale;
+    if (Number.isFinite(storedDipScale) && storedDipScale > 0) {
+        scaleRatio = dipScale / storedDipScale;
+    } else if (savedSizeRaw && Math.abs(height - SPECTRUM_BASE_WINDOW_HEIGHT) <= 2) {
+        // 老版本没记录系数：高度仍是写死的默认 280，说明是 1080p@100% 时代的整屏默认窗口。
+        // 必须同时有历史尺寸才成立——全新安装时 defaultHeight 恰好也是 280，会被误当成遗留值放大一倍
+        scaleRatio = dipScale;
     }
     if (scaleRatio !== 1) {
         width = Math.round(width * scaleRatio);
         height = Math.round(height * scaleRatio);
     }
 
-    let x = savedPosition.x ?? 0;
-    let y = savedPosition.y ?? (screenHeight - height);
     width = Math.min(width, screenWidth);
     height = Math.min(height, screenHeight);
-    store.set('spectrumGeometryScale', pixelScale);
+    // 旧版本记的是物理系数，这里清掉，避免留下语义相近的脏键
+    if (store.has('spectrumGeometryScale')) store.delete('spectrumGeometryScale');
+    store.set('spectrumGeometryDipScale', dipScale);
 
-    // 位置无效时锚定屏幕底部
-    const isValidPosition = x !== undefined && y !== undefined &&
-        x >= 0 && x <= screenWidth &&
-        y >= 0 && y <= screenHeight;
-    if (!isValidPosition) {
-        x = 0;
-        y = screenHeight - height;
-    }
+    // 位置夹到目标显示器工作区内，越界就贴左下角
+    const area = targetDisplay.workArea;
+    let x = Math.min(Math.max(savedPosition.x ?? area.x, area.x), area.x + area.width - width);
+    let y = Math.min(Math.max(savedPosition.y ?? (area.y + area.height - height), area.y), area.y + area.height - 1);
 
     spectrumWindow = new BrowserWindow({
         width: width,
@@ -430,18 +471,22 @@ export function createSpectrumWindow() {
         }
     });
 
+    // 建窗尺寸已经按目标显示器的 DIP 系数算好，先记下来，避免首次同步时再被缩放一次
+    spectrumDipScale = dipScale;
+
     spectrumWindow.on('resize', () => {
         anchorSpectrumWindow();
         persistSpectrumWindowBounds();
     });
     spectrumWindow.on('move', () => {
         persistSpectrumWindowBounds();
-        pushSpectrumGeometry();
+        applySpectrumGeometry();
     });
     mainWindow.spectrumWindow = spectrumWindow;
     spectrumWindow.on('closed', () => {
         mainWindow.spectrumWindow = null;
         spectrumGeometryKey = '';
+        spectrumDipScale = 0;
     });
 
     bindSpectrumDisplayListeners();
