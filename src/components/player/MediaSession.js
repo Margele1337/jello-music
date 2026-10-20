@@ -32,6 +32,7 @@ export default function useMediaSession() {
   };
   
   // 更新媒体会话信息
+  let mediaSessionToken = 0;
   const changeMediaSession = (song) => {
     if (!("mediaSession" in navigator) || !navigator.mediaSession) return;
 
@@ -46,8 +47,11 @@ export default function useMediaSession() {
     };
 
     const updateMediaSession = async () => {
+      // 快速切歌时旧封面探测可能后返回：用递增 token 丢弃过期结果，避免错封面覆盖新 metadata
+      const token = ++mediaSessionToken;
       try {
         const artworkSrc = await checkImageAccessibility(song.img || defaultArtwork);
+        if (token !== mediaSessionToken) return;
         navigator.mediaSession.metadata = new MediaMetadata({
           title: song.name,
           artist: song.author,
@@ -58,7 +62,7 @@ export default function useMediaSession() {
         console.error("Failed to update media session metadata:", error);
       }
     };
-    
+
     updateMediaSession();
   };
 

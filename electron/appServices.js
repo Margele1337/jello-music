@@ -4,6 +4,7 @@ import http from 'http';
 import { spawn } from 'child_process';
 import log from 'electron-log';
 import Store from 'electron-store';
+import treeKill from 'tree-kill';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
 import fs from 'fs';
@@ -38,13 +39,17 @@ export function createWindow() {
     width = Math.min(width, screenWidth);
     height = Math.min(height, screenHeight);
 
-    const isValidPosition = x !== undefined && y !== undefined &&
-        x >= 0 && x <= screenWidth &&
-        y >= 0 && y <= screenHeight;
-
-    if (!isValidPosition) {
+    // 多显示器：保存的位置可能落在副屏（负坐标或超出主屏宽度），用 getDisplayMatching
+    // 找最近显示器并夹到其工作区内；只有完全没有保存过位置时才回退到主屏居中
+    const hasSavedPosition = Number.isFinite(x) && Number.isFinite(y);
+    if (!hasSavedPosition) {
         x = Math.floor((screenWidth - width) / 2);
         y = Math.floor((screenHeight - height) / 2);
+    } else {
+        const display = screen.getDisplayMatching({ x, y, width, height });
+        const area = display.workArea;
+        x = Math.min(Math.max(x, area.x), area.x + area.width - width);
+        y = Math.min(Math.max(y, area.y), area.y + area.height - height);
     }
 
     mainWindow = new BrowserWindow({
@@ -328,15 +333,19 @@ export function createLyricsWindow() {
     width = Math.min(width, screenWidth);
     height = Math.min(height, screenHeight);
 
-    // 检查位置是否有效
-    const isValidPosition = x !== undefined && y !== undefined &&
-        x >= 0 && x <= screenWidth &&
-        y >= 0 && y <= screenHeight;
+    // 检查位置是否有效：仅要求坐标存在（多屏下副屏坐标可能为负或超出主屏宽度，同样是合法的）
+    const hasSavedPosition = Number.isFinite(x) && Number.isFinite(y);
 
-    // 如果位置无效，设置默认位置
-    if (!isValidPosition) {
+    // 如果从未保存过位置，设置默认位置（主屏底部）
+    if (!hasSavedPosition) {
         x = Math.floor((screenWidth - width) / 2);
         y = screenHeight - height;
+    } else {
+        // 已保存位置：夹取到最近显示器的工作区，防止显示器移除/缩放变化后窗口飞出屏幕
+        const display = screen.getDisplayMatching({ x, y, width, height });
+        const area = display.workArea;
+        x = Math.min(Math.max(x, area.x), area.x + area.width - width);
+        y = Math.min(Math.max(y, area.y), area.y + area.height - height);
     }
 
     lyricsWindow = new BrowserWindow({
@@ -525,11 +534,14 @@ export function createKeystrokesWindow() {
     const width = 170;
     const height = 260;
 
+    // 复刻原版位置：左下角（贴工作区左边缘 x=10，下沿对齐工作区底部）
+    const { workArea } = screen.getPrimaryDisplay();
+
     keystrokesWindow = new BrowserWindow({
         width,
         height,
-        x: 0,
-        y: 0,
+        x: workArea.x + 10,
+        y: workArea.y + workArea.height - height,
         frame: false,
         transparent: true,
         resizable: false,
@@ -1111,21 +1123,27 @@ label: t('show-dock'),
             label: t('prev-track'),
             icon: getIconPath('prev.png', 'menu'),
                         click: () => {
-                mainWindow.webContents.send('play-previous-track');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('play-previous-track');
+                }
             }
         },
         {
             label: t('pause'),
             icon: getIconPath('play.png', 'menu'),
             click: () => {
-                mainWindow.webContents.send('toggle-play-pause');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('toggle-play-pause');
+                }
             }
         },
         {
             label: t('next-track'),
             icon: getIconPath('next.png', 'menu'),
             click: () => {
-                mainWindow.webContents.send('play-next-track');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('play-next-track');
+                }
             }
         },
         { type: 'separator' },
@@ -1289,12 +1307,25 @@ export function createTouchBar(mainWindow) {
 
 // 启动 API 服务器
 // 探测本机 6521 端口是否已经有兼容的 API 在运行（例如 dev 环境或上一个实例）
-// 有 HTTP 响应就视为可用：直接复用，避免"第二个 API 抢端口失败"导致的启动报错
-const API_PROBE_URL = 'http://127.0.0.1:6521/';
+// 校验响应内容（/register/dev 返回的 JSON 结构），避免把占用端口的其它 HTTP
+// 程序误判为本项目 API —— 否则复用错误的"服务"会导致所有音乐请求静默失败。
+const API_PROBE_URL = 'http://127.0.0.1:6521/register/dev';
 const probeApiServer = (timeoutMs = 1500) => new Promise((resolve) => {
     const request = http.get(API_PROBE_URL, { timeout: timeoutMs }, (response) => {
-        response.resume();
-        resolve(true);
+        let body = '';
+        response.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 64 * 1024) response.destroy(); // 防御：异常大响应直接判定不匹配
+        });
+        response.on('end', () => {
+            try {
+                const json = JSON.parse(body);
+                resolve(typeof json === 'object' && json !== null && 'status' in json && 'data' in json);
+            } catch (_) {
+                resolve(false);
+            }
+        });
+        response.on('error', () => resolve(false));
     });
     request.on('timeout', () => {
         request.destroy();
@@ -1315,7 +1346,8 @@ export function startApiServer() {
                     apiPath = path.join(process.resourcesPath, '../api', 'app_win.exe');
                     break;
                 case 'darwin':
-                    apiPath = path.join(process.resourcesPath, '../api', 'app_macos');
+                    // Apple Silicon 的包名是 app_macos_arm64（见子模块 pkgmacos-arm64 脚本）
+                    apiPath = path.join(process.resourcesPath, '../api', process.arch === 'arm64' ? 'app_macos_arm64' : 'app_macos');
                     break;
                 case 'linux':
                     apiPath = path.join(process.resourcesPath, '../api', 'app_linux');
@@ -1395,8 +1427,10 @@ export function startApiServer() {
 // 停止 API 服务器
 export function stopApiServer() {
     if (apiProcess) {
-        process.kill(apiProcess.pid, 'SIGKILL');
+        // 杀整个进程树（避免子进程残留），并在进程已退出时静默降级
+        const { pid } = apiProcess;
         apiProcess = null;
+        treeKill(pid, 'SIGKILL', () => {});
     }
 }
 

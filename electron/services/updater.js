@@ -99,6 +99,8 @@ export function setupAutoUpdater(mainWindow) {
         }).then(result => {
             if (result.response === 0) {
                 app.isQuitting = true;
+                // 告知 main.js 的 before-quit 不要强制 app.exit(0)，否则会抢在安装器启动前杀掉进程
+                globalThis.JELLO_QUIT_FOR_INSTALL = true;
                 autoUpdater.quitAndInstall(true, true);
             }
         });

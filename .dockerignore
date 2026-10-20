@@ -1,0 +1,6 @@
+.git
+node_modules
+dist
+dist_electron
+*.log
+.DS_Store

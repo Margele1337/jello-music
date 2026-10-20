@@ -41,7 +41,8 @@ export function useHelpers(t) {
   };
   const desktopLyrics = (visible) => {
     if (!isElectron()) return;
-    window.electron.ipcRenderer.send(visible ? 'show-desktop-lyrics' : 'hide-desktop-lyrics');
+    // 旧通道 show/hide-desktop-lyrics 既不在 preload 白名单、主进程也无监听，改走统一的 desktop-lyrics-action
+    window.electron.ipcRenderer.send('desktop-lyrics-action', visible ? 'display-lyrics' : 'close-lyrics');
   };
   const throttle = (fn, delay) => {
     let timer = null;

@@ -1,4 +1,6 @@
 import { app, ipcMain, globalShortcut, dialog, Notification, shell, session, powerSaveBlocker, nativeImage, screen } from 'electron';
+// 迁移必须先于其它模块 import 执行：本模块在被求值时会立即拷贝旧数据（见其顶部注释）
+import './migrateLegacyUserData.js';
 import {
     createWindow, createTray, createTouchBar, startApiServer,
     stopApiServer,
@@ -19,27 +21,9 @@ import { openLogPath, exportLog } from './services/logHelper.js';
 import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
 import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokeHandler } from './services/globalKeyService.js';
 import Store from 'electron-store';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { t } from './language/i18n.js';
-
-// 从旧版（MoeKoe-NextGen）迁移用户数据：设置、登录态、窗口位置等
-const migrateLegacyUserData = () => {
-    try {
-        const newDir = app.getPath('userData');
-        if (path.basename(newDir) !== 'Jello Music') return;
-        if (fs.existsSync(path.join(newDir, 'config.json'))) return; // 已迁移过
-        const legacyDir = path.join(path.dirname(newDir), 'MoeKoe-NextGen');
-        if (!fs.existsSync(legacyDir)) return;
-        fs.mkdirSync(newDir, { recursive: true });
-        fs.cpSync(legacyDir, newDir, { recursive: true, force: false, errorOnExist: false });
-        console.log('[Migration] 已迁移旧版用户数据:', legacyDir, '->', newDir);
-    } catch (error) {
-        console.error('[Migration] 迁移旧版用户数据失败:', error);
-    }
-};
-migrateLegacyUserData();
 
 let mainWindow = null;
 let blockerId = null;
@@ -198,7 +182,8 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 if (settings?.preventAppSuspension === 'on') {
-    blockerId = powerSaveBlocker.start('prevent-display-sleep');
+    // 设置语义是「阻止系统休眠/挂起」，不是「保持屏幕常亮」
+    blockerId = powerSaveBlocker.start('prevent-app-suspension');
 }
 
 if (settings?.highDpi === 'on') {
@@ -228,7 +213,10 @@ app.on('before-quit', () => {
         stopApiServer();
                 stopSpectrumFullscreenWatcher();
         apiService.stop();
-        app.exit(0);
+        // quitAndInstall 期间不能强制 app.exit(0)：electron-updater 需要自然退出流程来拉起安装器
+        if (!globalThis.JELLO_QUIT_FOR_INSTALL) {
+            app.exit(0);
+        }
     });
 });
 // 关闭所有窗口
@@ -330,6 +318,7 @@ ipcMain.on('server-lyrics', (event, lyricsData) => {
 
 // 监听桌面歌词操作
 ipcMain.on('desktop-lyrics-action', (event, action) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     switch (action) {
         case 'previous-song':
             mainWindow.webContents.send('play-previous-track');
@@ -369,6 +358,7 @@ const syncDesktopLyricsSetting = (value) => {
 
 // 监听桌面频谱操作
 ipcMain.on('desktop-spectrum-action', (event, action) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     switch (action) {
         case 'display-spectrum':
             if (!mainWindow.spectrumWindow) createSpectrumWindow();
@@ -418,7 +408,7 @@ const syncDesktopKeystrokesSetting = (value) => {
 };
 
 ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (lyricsWindow) {
         lyricsWindow.setIgnoreMouseEvents(ignore, { forward: true });
     }
@@ -432,7 +422,7 @@ ipcMain.on('set-spectrum-ignore-mouse-events', (event, ignore) => {
 });
 
 ipcMain.on('window-drag', (event, { x, y, width, height }) => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (!lyricsWindow) return
     const bounds = lyricsWindow.getBounds();
     const nextBounds = {
@@ -447,7 +437,7 @@ ipcMain.on('window-drag', (event, { x, y, width, height }) => {
 })
 
 ipcMain.on('spectrum-window-drag', (event, { x, y, width, height }) => {
-    const spectrumWindow = mainWindow.spectrumWindow;
+    const spectrumWindow = mainWindow?.spectrumWindow;
     if (!spectrumWindow) return
     const bounds = spectrumWindow.getBounds();
     const nextBounds = {
@@ -462,7 +452,7 @@ ipcMain.on('spectrum-window-drag', (event, { x, y, width, height }) => {
 })
 
 ipcMain.on('lyrics-window-fixed-size', (event, { width, height, fixed }) => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (!lyricsWindow) return
     if (fixed) {
         lyricsWindow.setMaximumSize(Math.round(width), Math.round(height));
@@ -537,7 +527,7 @@ ipcMain.handle('sigma-window-get-bounds', () => {
 });
 
 ipcMain.handle('lyrics-window-pointer-state', () => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (!lyricsWindow) return null
     return {
         cursor: screen.getCursorScreenPoint(),
@@ -546,6 +536,7 @@ ipcMain.handle('lyrics-window-pointer-state', () => {
 })
 
 ipcMain.on('play-pause-action', (event, playing, currentTime) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     const lyricsWindow = mainWindow.lyricsWindow;
     if (lyricsWindow) {
         lyricsWindow.webContents.send('playing-status', playing);
@@ -564,6 +555,7 @@ ipcMain.on('open-url', (event, url) => {
 })
 
 ipcMain.on('set-tray-title', (event, title) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     createTray(mainWindow, t('now-playing') + title);
     mainWindow.setTitle(title);
     void customTrayMenuService.refresh();
@@ -581,5 +573,17 @@ ipcMain.handle('open-log-path', async (e) => {
 ipcMain.handle('export-log', async (e) => {
     try { return await exportLog(); }
     catch (err) { return { error: err }; }
+});
+
+// preload 暴露了 showOpenDialog，主进程必须注册 handler，否则渲染端调用必 reject
+ipcMain.handle('show-open-dialog', async (_event, options) => {
+    try {
+        const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+        return win
+            ? await dialog.showOpenDialog(win, options || {})
+            : await dialog.showOpenDialog(options || {});
+    } catch (err) {
+        return { canceled: true, error: String(err) };
+    }
 });
 

@@ -20,3 +20,13 @@
   CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\${PRODUCT_NAME}.exe"
   SetShellVarContext all
 !macroend
+
+; Uninstall: 清理 customInstall 自建的内容（桌面快捷方式与 jello:// 协议注册）
+!macro customUninstall
+  DeleteRegKey HKCR "jello"
+  SetShellVarContext all
+  Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
+  SetShellVarContext current
+  Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
+  SetShellVarContext all
+!macroend

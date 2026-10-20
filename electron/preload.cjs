@@ -32,10 +32,12 @@ const SEND_CHANNELS = new Set([
     'spectrum-data',
     'spectrum-hud-ready',
     'spectrum-setting-update',
+    'spectrum-window-drag',
     'tray-menu-action',
     'tray-menu-hide',
     'tray-menu-ready',
     'tray-menu-rendered',
+    'update-current-lyrics',
     'update-statusbar-image',
     'window-drag'
 ]);

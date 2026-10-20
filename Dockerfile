@@ -13,6 +13,8 @@ RUN node -e "const fs = require('fs'); const filePath = './package.json'; \
                delete packageJson.dependencies.electron; \
              } \
              fs.writeFileSync(filePath, JSON.stringify(packageJson, null, 2));"
+# postinstall 会执行 tools/patch-api.cjs，必须在 npm install 之前拷入（api 子模块不在则脚本自动跳过）
+COPY tools ./tools
 RUN npm install
 COPY . .
 RUN npm run build:docker

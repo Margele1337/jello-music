@@ -114,7 +114,8 @@ export const share = (songName, id, type = 0, songDesc = '') => {
     text = `你的好友@${userName}分享了${songDesc}《${songName}》给你,快去听听吧! ${shareUrl}`;
 
     navigator.clipboard.writeText(text);
-    $message.success(
+    // $message 由 MessagePlugin 挂载，可选链兜底（插件未就绪时不至于抛 ReferenceError）
+    window.$message?.success(
         i18n.global.t('kou-ling-yi-fu-zhi,kuai-ba-ge-qu-fen-xiang-gei-peng-you-ba')
     );
 };

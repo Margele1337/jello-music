@@ -89,10 +89,11 @@ httpClient.interceptors.response.use(
             }
         } else if (error.request) {
             console.error('No response received:', error.request);
-            $message.error('服务器未响应,请稍后再试!');
+            // $message 由 MessagePlugin 挂载，挂载前的早期请求用可选链兜底，避免 ReferenceError 掩盖真实错误
+            window.$message?.error('服务器未响应,请稍后再试!');
         } else {
             console.error('Error:', error.message);
-            $message.error('请求错误,请稍后再试!');
+            window.$message?.error('请求错误,请稍后再试!');
         }
         return Promise.reject(error);
     }
