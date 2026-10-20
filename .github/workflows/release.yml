@@ -122,6 +122,5 @@ jobs:
           draft: false # 这里更新下状态
           files: |
             ./dist_electron/*.exe
-            ./dist_electron/*.zip
             ./dist_electron/*.blockmap
             ./dist_electron/latest*.yml
