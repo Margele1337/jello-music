@@ -56,8 +56,16 @@ function syncDesktopShortcutIcon() {
         return;
     }
 
+    // 按版本戳记：只有应用版本变化（升级后）才重建快捷方式，避免每次启动都重建
+    const version = app.getVersion();
+    const stampPath = path.join(app.getPath('userData'), 'desktop-shortcut-version.txt');
+    let prevVersion = '';
+    try { prevVersion = fs.readFileSync(stampPath, 'utf8').trim(); } catch { /* 首次或被删 */ }
+    if (prevVersion === version) return;
+
     const iconPath = getDesktopShortcutIconPath();
     createShortcut(app.getPath('exe'), shortcutPath, path.basename(exePath), iconPath);
+    try { fs.writeFileSync(stampPath, version); } catch { /* 写入失败不影响主流程 */ }
     // refreshIconCache();
 }
 

@@ -46,11 +46,12 @@ export function setupAutoUpdater(mainWindow) {
     // 检查更新错误
     autoUpdater.on('error', (error) => {
         console.error('Update check failed:', error.message);
+        // 把常见网络/可达性错误映射到已本地化的文案，避免直接弹英文 error.message
+        const msg = error?.message || '';
+        const isNetwork = /ETIMEDOUT|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|getaddrinfo|network|socket/i.test(msg);
         dialog.showMessageBox({
             type: 'error',
-            message: error.message.includes('ETIMEDOUT')
-                ? t('update-timeout')
-                : (error.message || t('update-failed'))
+            message: isNetwork ? t('update-timeout') : (t('update-failed') + (msg ? `\n${msg}` : ''))
         });
     });
     // 检查到新版本

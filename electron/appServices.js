@@ -1641,22 +1641,15 @@ export function registerProtocolHandler(mainWindow) {
         protocolMainWindow = mainWindow;
     }
 
-    // 注册协议
-    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath);
+    // 注册协议：开发模式要带应用根目录参数，否则点 jello:// 链接会启动裸 electron（空白窗口）
+    const devArgs = isDev ? [path.resolve(__dirname, '..')] : [];
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, devArgs);
 
     // 处理启动参数
     handleArgv(process.argv);
 
-    // 处理第二个实例的启动参数
-    app.on('second-instance', (event, commandLine) => {
-        if (protocolMainWindow) {
-    if (protocolMainWindow.isMinimized()) protocolMainWindow.restore();
-    // 主窗口是隐藏播放宿主：把 Sigma 窗口带到前台
-    const sigmaWin = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
-    revealSigmaWindow(sigmaWin);
-            handleArgv(commandLine);
-        }
-    });
+    // second-instance 统一由 main.js 的顶层 handler 处理（含 --settings 与 revealSigmaWindow），
+    // 这里不再重复注册，避免每次唤起执行两遍
 
     // 在macOS平台特别处理open-url事件
     if (process.platform === 'darwin') {
