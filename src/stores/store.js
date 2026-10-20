@@ -43,7 +43,9 @@ export const MoeAuthStore = defineStore('MoeData', {
         }
     },
     getters: {
-        isAuthenticated: (state) => !!state.UserInfo && !!state.UserInfo, // 是否已登录
+        // 原写法是 !!state.UserInfo && !!state.UserInfo（复制粘贴笔误）：
+        // UserInfo 存在但 token 为空也算已登录。以 token 为准。
+        isAuthenticated: (state) => !!state.UserInfo?.token, // 是否已登录
     },
     persist: {
         enabled: true,

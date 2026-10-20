@@ -46,7 +46,8 @@ const INVOKE_CHANNELS = new Set([
     'consume-pending-settings',
     'get-app-version',
     'lyrics-window-pointer-state',
-    'sigma-window-get-bounds'
+    'sigma-window-get-bounds',
+    'test-proxy'
 ]);
 
 const RECEIVE_CHANNELS = new Set([

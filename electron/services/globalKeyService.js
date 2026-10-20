@@ -8,7 +8,8 @@
  * 会导致其它进程的 WH_KEYBOARD_LL 钩子收不到按键（表现为"游戏内不亮"）。
  * 因此 Windows 改用 GetAsyncKeyState 轮询（koffi 调 user32），不依赖钩子，游戏内同样有效。
  */
-const POLL_INTERVAL_MS = 8;
+const POLL_INTERVAL_MS = 16;
+const RSHIFT_POLL_INTERVAL_MS = 30;
 const RSHIFT_VK = 0xa1;
 
 // 轮询目标：VK → KeyStrokes 键位 id
@@ -23,9 +24,11 @@ const POLL_TARGETS = [
 
 let started = false;
 let suspended = false;
+let keystrokesEnabled = false; // KeyStrokes 覆盖层是否开启：WASD/鼠标轮询按需启停
 let keystrokeHandler = null;
 let onRightShiftHandler = null;
-let pollTimer = null;
+let rshiftTimer = null;
+let keyTimer = null;
 let pollState = { rshift: false };
 let uiohook = null;
 
@@ -47,31 +50,54 @@ const triggerRightShift = () => {
 };
 
 // ===== Windows：GetAsyncKeyState 轮询 =====
+// 拆成两个定时器：
+// - RSHIFT（Sigma 呼出热键）：常驻但 30ms 足够（人手按键沿约 20-50ms）
+// - WASD/鼠标（KeyStrokes 展示）：仅在覆盖层开启时轮询，关闭即停
+// 旧实现 8ms 一档全量常驻（125Hz × 8 次跨 FFI 调用），笔记本上持续耗电
+let isKeyDown = null; // initPolling 时赋值：vk → 是否按下
+
+const pollTargetsTick = () => {
+    if (!isKeyDown) return;
+    for (const target of POLL_TARGETS) {
+        const down = isKeyDown(target.vk);
+        if (down !== pollState[target.vk]) {
+            pollState[target.vk] = down;
+            emitKeystroke(target.id, down);
+        }
+    }
+};
+
+const applyKeystrokesEnabled = () => {
+    if (process.platform !== 'win32') return;
+    const want = started && keystrokesEnabled && !!isKeyDown;
+    if (want && !keyTimer) {
+        keyTimer = setInterval(pollTargetsTick, POLL_INTERVAL_MS);
+    } else if (!want && keyTimer) {
+        clearInterval(keyTimer);
+        keyTimer = null;
+    }
+};
+
 const initPolling = (koffi) => {
     const user32 = koffi.load('user32.dll');
     const getAsyncKeyState = user32.func('short __stdcall GetAsyncKeyState(int vKey)');
-    const isDown = (vk) => (getAsyncKeyState(vk) & 0x8000) !== 0;
+    isKeyDown = (vk) => (getAsyncKeyState(vk) & 0x8000) !== 0;
 
     // 先记录当前状态，避免启动时把"本来就没按下"当成一次松开事件
     for (const target of POLL_TARGETS) {
-        pollState[target.vk] = isDown(target.vk);
+        pollState[target.vk] = isKeyDown(target.vk);
     }
-    pollState.rshift = isDown(RSHIFT_VK);
+    pollState.rshift = isKeyDown(RSHIFT_VK);
 
-    pollTimer = setInterval(() => {
-        for (const target of POLL_TARGETS) {
-            const down = isDown(target.vk);
-            if (down !== pollState[target.vk]) {
-                pollState[target.vk] = down;
-                emitKeystroke(target.id, down);
-            }
-        }
-        const rshift = isDown(RSHIFT_VK);
+    rshiftTimer = setInterval(() => {
+        const rshift = isKeyDown(RSHIFT_VK);
         if (rshift !== pollState.rshift) {
             pollState.rshift = rshift;
             if (rshift && !suspended) triggerRightShift();
         }
-    }, POLL_INTERVAL_MS);
+    }, RSHIFT_POLL_INTERVAL_MS);
+
+    applyKeystrokesEnabled();
 };
 
 // ===== 其它平台：uiohook 低级钩子 =====
@@ -95,22 +121,28 @@ const initUiohook = async () => {
             if (!suspended) triggerRightShift();
             return;
         }
-        emitKeystroke(TRACKED_KEYS[event.keycode], true);
+        if (keystrokesEnabled) emitKeystroke(TRACKED_KEYS[event.keycode], true);
     });
     uIOhook.on('keyup', (event) => {
-        emitKeystroke(TRACKED_KEYS[event.keycode], false);
+        if (keystrokesEnabled) emitKeystroke(TRACKED_KEYS[event.keycode], false);
     });
     uIOhook.on('mousedown', (event) => {
-        emitKeystroke(TRACKED_MOUSE_BUTTONS[event.button], true);
+        if (keystrokesEnabled) emitKeystroke(TRACKED_MOUSE_BUTTONS[event.button], true);
     });
     uIOhook.on('mouseup', (event) => {
-        emitKeystroke(TRACKED_MOUSE_BUTTONS[event.button], false);
+        if (keystrokesEnabled) emitKeystroke(TRACKED_MOUSE_BUTTONS[event.button], false);
     });
     uIOhook.start();
 };
 
 export function setGlobalKeySuspended(flag) {
     suspended = !!flag;
+}
+
+// KeyStrokes 覆盖层开关：WASD/鼠标轮询只在开启时跑（RSHIFT 热键不受影响）
+export function setKeystrokesEnabled(flag) {
+    keystrokesEnabled = !!flag;
+    applyKeystrokesEnabled();
 }
 
 export function setKeystrokeHandler(handler) {
@@ -144,9 +176,10 @@ export function initGlobalKeyListener({ onRightShift } = {}) {
 export function stopGlobalKeyListener() {
     if (!started) return;
     started = false;
-    if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
+    applyKeystrokesEnabled();
+    if (rshiftTimer) {
+        clearInterval(rshiftTimer);
+        rshiftTimer = null;
     }
     try {
         uiohook?.stop();

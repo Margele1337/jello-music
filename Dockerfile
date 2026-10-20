@@ -28,8 +28,14 @@ RUN apk add --no-cache nginx
 
 # Copy API code
 COPY ./api ./api
-# Install API dependencies
+# api 是 git 子模块（见 .gitmodules）：干净 clone 后是空目录，后面 npm install / node app.js
+# 全部会以含糊的方式失败。这里提前给出明确报错。
 WORKDIR /app/api
+RUN if [ ! -f package.json ]; then \
+      echo "ERROR: api 子模块未初始化。请先执行: git submodule update --init --recursive"; \
+      exit 1; \
+    fi
+# Install API dependencies
 RUN npm install --production
 # Reset WORKDIR to /app
 WORKDIR /app 

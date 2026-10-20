@@ -16,7 +16,18 @@ class ApiService {
     start() {
         if (this.wsServer) return;
         try {
-            this.wsServer = new WebSocketServer({ port: 6520 });
+            // 只绑回环地址：默认会监听所有网卡，局域网任意设备都能连上
+            // 读取歌词/播放状态并发送控制指令
+            this.wsServer = new WebSocketServer({
+                port: 6520,
+                host: '127.0.0.1',
+                // 浏览器对 WebSocket 没有同源限制：任意网页都可以连 ws://127.0.0.1:6520。
+                // 拒绝携带页面 Origin 的连接（本地工具类客户端正常不会带 Origin）
+                verifyClient: (info) => {
+                    const origin = info.req?.headers?.origin;
+                    return !origin;
+                }
+            });
         } catch (error) {
             // 端口被占用（EADDRINUSE）等启动失败：降级为不可用，避免未捕获异常导致进程僵死
             console.error('WebSocket 服务器启动失败:', error);

@@ -118,7 +118,7 @@
 
 <script setup>
 import { ref, reactive, computed } from 'vue';
-import { get } from '../utils/request';
+import { get, post } from '../utils/request';
 import { MoeAuthStore } from '../stores/store';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -208,7 +208,14 @@ const emailLogin = async () => {
   }
   isEmailLoginLoading.value = true;
   try {
-    const response = await get(`/login?username=${encodeURIComponent(emailForm.email)}&password=${encodeURIComponent(emailForm.password)}`);
+    // 密码走 POST 请求体而不是 URL 查询参数：
+    // GET 的 URL 会进入 nginx access log / 侧车日志 / 各级代理日志，
+    // 且自定义 API 基址（远程部署）时密码会随 URL 明文外发。
+    // 侧车用 app.use() 注册路由，POST body 参数与 query 同样生效。
+    const response = await post('/login', {
+        username: emailForm.email,
+        password: emailForm.password
+    });
     if (response.status === 1 || response.code === 200) {
       handleLoginSuccess(response);
     } else {
@@ -237,7 +244,8 @@ const sendCaptcha = async () => {
   }
   isSendingCaptcha.value = true;
   try {
-    const response = await get(`/captcha/sent?mobile=${phoneForm.mobile}`);
+    // 手机号同样避免进 URL（各级访问日志都会记录完整 query）
+    const response = await post('/captcha/sent', { mobile: phoneForm.mobile });
     if (response.status === 1) {
       $message.success(t('yan-zheng-ma-yi-fa-song'));
       countdown.value = 60;

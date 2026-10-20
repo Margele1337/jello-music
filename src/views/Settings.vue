@@ -861,43 +861,25 @@ const testProxyConnection = async () => {
     proxyForm.testStatus = 'testing';
 
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-        const proxyUrl = new URL(proxyForm.url.trim());
-        const fetchOptions = {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/json',
-                'Proxy-Authorization': `Basic ${btoa(`${proxyUrl.username || ''}:${proxyUrl.password || ''}`)}`,
-            },
-            signal: controller.signal,
-            agent: {
-                protocol: proxyUrl.protocol,
-                host: proxyUrl.hostname,
-                port: proxyUrl.port,
-                auth: proxyUrl.username && proxyUrl.password ?
-                    `${proxyUrl.username}:${proxyUrl.password}` : undefined
+        // 浏览器 fetch 不支持 agent，Proxy-Authorization 又是 forbidden header，
+        // 渲染进程里测不了代理；走主进程（独立 session + setProxy）才能真正验证。
+        if (window.electron?.ipcRenderer?.invoke) {
+            const result = await window.electron.ipcRenderer.invoke('test-proxy', proxyForm.url.trim());
+            if (result?.ok) {
+                proxyForm.testResult = t('dai-li-lian-jie-cheng-gong') + result.ip;
+                proxyForm.testStatus = 'success';
+            } else {
+                proxyForm.testResult = t('dai-li-lian-jie-shi-bai') + (result?.error || '');
+                proxyForm.testStatus = 'error';
             }
-        };
-
-        const response = await fetch('https://api.ipify.org?format=json', fetchOptions);
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-            const data = await response.json();
-            proxyForm.testResult = t('dai-li-lian-jie-cheng-gong') + data.ip;
-            proxyForm.testStatus = 'success';
-        } else {
-            proxyForm.testResult = t('dai-li-lian-jie-shi-bai') + response.statusText;
-            proxyForm.testStatus = 'error';
+            return;
         }
+
+        // Web 版（浏览器/PWA）环境无法验证代理：如实提示，不再给出「假成功」
+        proxyForm.testResult = t('proxy-test-browser-unsupported');
+        proxyForm.testStatus = 'error';
     } catch (error) {
-        if (error.name === 'AbortError') {
-            proxyForm.testResult = t('lian-jie-chao-shi');
-        } else {
-            proxyForm.testResult = t('lian-jie-cuo-wu') + error.message;
-        }
+        proxyForm.testResult = t('lian-jie-cuo-wu') + error.message;
         proxyForm.testStatus = 'error';
     } finally {
         proxyForm.testing = false;
@@ -967,7 +949,9 @@ const displayShortcut = (key) => {
         'nummult': 'Num*',
         'numdiv': 'Num/',
     };
-    let display = shortcuts.value[key];
+    // 先转义用户输入再做映射：keys 的替换值是可信的 HTML 常量（<i> 图标），
+    // 但快捷键字符串本身来自 settings，不转义会让其中的 <script>/onerror 等进入 v-html
+    let display = escapeHtml(String(shortcuts.value[key] ?? ''));
     Object.keys(keys).forEach(k => {
         display = display.replace(k, keys[k]);
     });

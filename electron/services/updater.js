@@ -46,6 +46,9 @@ export function setupAutoUpdater(mainWindow) {
     // 检查更新错误
     autoUpdater.on('error', (error) => {
         console.error('Update check failed:', error.message);
+        // 静默检查（应用启动时的后台检查）不弹窗：feed 源是 GitHub，
+        // 网络不可达时每次启动都弹错误框会严重打扰用户
+        if (silentCheck) return;
         // 把常见网络/可达性错误映射到已本地化的文案，避免直接弹英文 error.message
         const msg = error?.message || '';
         const isNetwork = /ETIMEDOUT|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|getaddrinfo|network|socket/i.test(msg);

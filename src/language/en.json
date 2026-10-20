@@ -160,5 +160,6 @@
   "an-zhuang-cha-jian-shi-bai": "Failed to install plugin",
   "an-zhuang-cha-jian-chu-cuo": "Error installing plugin",
   "cha-jian-bao": "Plugin archive",
-  "wei-zhi-cuo-wu": "Unknown error"
+  "wei-zhi-cuo-wu": "Unknown error",
+  "proxy-test-browser-unsupported": "Proxy cannot be verified in the browser environment (test works in the desktop app)"
 }

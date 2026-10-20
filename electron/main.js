@@ -1,4 +1,4 @@
-import { app, ipcMain, globalShortcut, dialog, Notification, shell, session, powerSaveBlocker, nativeImage, screen } from 'electron';
+import { app, ipcMain, globalShortcut, dialog, Notification, shell, session, net, powerSaveBlocker, nativeImage, screen } from 'electron';
 // 迁移必须先于其它模块 import 执行：本模块在被求值时会立即拷贝旧数据（见其顶部注释）
 import './migrateLegacyUserData.js';
 import {
@@ -19,7 +19,7 @@ import customTrayMenuService from './services/customTrayMenuService.js';
 import { setupDesktopShortcutIcon } from './services/desktopShortcutIcon.js';
 import { openLogPath, exportLog } from './services/logHelper.js';
 import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
-import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokeHandler } from './services/globalKeyService.js';
+import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokesEnabled, setKeystrokeHandler } from './services/globalKeyService.js';
 import Store from 'electron-store';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -128,6 +128,10 @@ app.on('ready', () => {
             setupAutoUpdater(mainWindow);
             checkForUpdates(true);
             initGlobalKeyListener({ onRightShift: () => toggleSigmaWindowFromHotkey() });
+            // 启动时就开着 KeyStrokes 覆盖层：WASD/鼠标轮询也要启起来
+            if (store.get('settings')?.desktopKeystrokes === 'on') {
+                setKeystrokesEnabled(true);
+            }
             setKeystrokeHandler((payload) => {
                 const win = getKeystrokesWindow();
                 if (win && !win.isDestroyed()) {
@@ -210,13 +214,24 @@ app.on('before-quit', () => {
         statusBarLyricsService.cleanup();
         customTrayMenuService.cleanup();
 
-        stopApiServer();
-                stopSpectrumFullscreenWatcher();
+        stopSpectrumFullscreenWatcher();
         apiService.stop();
         // quitAndInstall 期间不能强制 app.exit(0)：electron-updater 需要自然退出流程来拉起安装器
-        if (!globalThis.JELLO_QUIT_FOR_INSTALL) {
-            app.exit(0);
+        if (globalThis.JELLO_QUIT_FOR_INSTALL) {
+            stopApiServer();
+            return;
         }
+        // 等侧车进程树真正被杀掉后再退出：否则先 app.exit(0) 会让侧车子进程变孤儿
+        // 继续占住 6521，下次启动被端口探测误判为「已有服务」而复用旧版本侧车。
+        // kill 回调 + 超时兜底，避免退出被拖住。
+        let exited = false;
+        const finishExit = () => {
+            if (exited) return;
+            exited = true;
+            app.exit(0);
+        };
+        stopApiServer(finishExit);
+        setTimeout(finishExit, 1200);
     });
 });
 // 关闭所有窗口
@@ -265,7 +280,17 @@ ipcMain.on('save-settings', (event, settings) => {
         });
     }
 });
-ipcMain.on('clear-settings', (event) => {
+ipcMain.on('clear-settings', async (event) => {
+    // 清空全部用户数据（含登录态、窗口位置、全部偏好）不可撤销，必须二次确认
+    const result = await dialog.showMessageBox({
+        type: 'warning',
+        title: t('hint'),
+        message: t('clear-settings-confirm'),
+        buttons: [t('ok'), t('cancel')],
+        cancelId: 1,
+        defaultId: 1,
+    });
+    if (result.response !== 0) return;
     store.clear();
     session.defaultSession.clearCache();
     session.defaultSession.clearStorageData();
@@ -388,11 +413,14 @@ ipcMain.on('desktop-keystrokes-action', (event, action) => {
     switch (action) {
         case 'display-keystrokes':
             if (!getKeystrokesWindow()) createKeystrokesWindow();
+            // WASD/鼠标轮询只在覆盖层开启时跑，关闭即停（省电）
+            setKeystrokesEnabled(true);
             syncDesktopKeystrokesSetting('on');
             break;
         case 'close-keystrokes': {
             const win = getKeystrokesWindow();
             if (win) win.close();
+            setKeystrokesEnabled(false);
             syncDesktopKeystrokesSetting('off');
             break;
         }
@@ -551,6 +579,20 @@ ipcMain.on('play-pause-action', (event, playing, currentTime) => {
 })
 
 ipcMain.on('open-url', (event, url) => {
+    // 与 externalLinkHandler 的白名单保持一致：渲染端 JS 可以直接调用本通道，
+    // 若不校验，页面里任何脚本（含被注入的第三方脚本）都能借 shell.openExternal
+    // 打开 file://、UNC 路径、ms-msdt: 等危险协议执行本地程序
+    if (typeof url !== 'string') return;
+    let target;
+    try {
+        target = new URL(url);
+    } catch {
+        return;
+    }
+    if (!['http:', 'https:', 'mailto:', 'tel:'].includes(target.protocol)) {
+        console.warn('[main] 已拒绝非白名单协议的外链打开请求:', target.protocol);
+        return;
+    }
     shell.openExternal(url);
 })
 
@@ -573,6 +615,33 @@ ipcMain.handle('open-log-path', async (e) => {
 ipcMain.handle('export-log', async (e) => {
     try { return await exportLog(); }
     catch (err) { return { error: err }; }
+});
+
+// 代理测试：渲染进程的 fetch 不支持 agent，Proxy-Authorization 也是 forbidden header，
+// 旧实现其实走的是直连、永远显示本机真实 IP（误报「代理成功」）。
+// 挪到主进程，用独立 session 的 setProxy 真正通过代理发请求验证。
+ipcMain.handle('test-proxy', async (_event, proxyUrl) => {
+    try {
+        const u = new URL(String(proxyUrl || ''));
+        if (!['http:', 'https:'].includes(u.protocol)) {
+            return { ok: false, error: '仅支持 http/https 代理' };
+        }
+        const rules = u.username
+            ? `${u.protocol}//${u.username}:${u.password}@${u.host}`
+            : `${u.protocol}//${u.host}`;
+        const ses = session.fromPartition(`proxy-test-${Date.now()}`);
+        try {
+            await ses.setProxy({ proxyRules: rules });
+            const response = await net.fetch('https://api.ipify.org?format=json', { session: ses });
+            if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+            const data = await response.json();
+            return { ok: true, ip: data.ip };
+        } finally {
+            try { ses.closeAllConnections?.(); } catch (_) { /* ignore */ }
+        }
+    } catch (error) {
+        return { ok: false, error: String(error?.message || error) };
+    }
 });
 
 // preload 暴露了 showOpenDialog，主进程必须注册 handler，否则渲染端调用必 reject

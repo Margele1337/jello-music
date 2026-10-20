@@ -160,5 +160,6 @@
   "an-zhuang-cha-jian-shi-bai": "플러그인 설치 실패",
   "an-zhuang-cha-jian-chu-cuo": "플러그인 설치 중 오류",
   "cha-jian-bao": "플러그인 패키지",
-  "wei-zhi-cuo-wu": "알 수 없는 오류"
+  "wei-zhi-cuo-wu": "알 수 없는 오류",
+  "proxy-test-browser-unsupported": "브라우저 환경에서는 프록시를 검증할 수 없습니다(데스크톱 앱에서 테스트 가능)"
 }
