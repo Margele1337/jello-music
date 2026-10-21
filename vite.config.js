@@ -9,7 +9,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       devOptions: {
-        enabled: true,
+        // 桌面端用 file:// 加载，Service Worker 根本无法注册（非 secure context）；
+        // 开着只会在 dev（localhost）注册并缓存，污染开发环境且与生产行为不一致
+        enabled: false,
         suppressWarnings: true,
         suppressErrors: true,
         logLevel: 'silent',
@@ -29,7 +31,9 @@ export default defineConfig({
                 maxAgeSeconds: 60 * 60 * 24 * 1
               },
               cacheableResponse: {
-                statuses: [0, 200]
+                // status 0 是跨域 opaque 响应（含失败/空响应），缓存它会把错误内容当
+                // 有效数据缓存一整天，只缓存明确的 200
+                statuses: [200]
               }
             }
           },
@@ -88,7 +92,8 @@ export default defineConfig({
   },
   base: '',
   server: {
-    host: true,
+    // 只绑本机回环：host: true 会让局域网内任何设备都能访问开发服务器
+    host: '127.0.0.1',
     port: 8080, // 将开发服务器端口设置为8080，确保与其他服务兼容
   },
   resolve: {

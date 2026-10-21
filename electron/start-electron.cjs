@@ -7,7 +7,17 @@ const path = require('path');
 // 从 process.env 中删除该变量
 delete process.env.ELECTRON_RUN_AS_NODE;
 
-const electronPath = path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'electron.exe');
+const electronPath = (() => {
+    const distDir = path.join(__dirname, '..', 'node_modules', 'electron', 'dist');
+    switch (process.platform) {
+        case 'darwin':
+            return path.join(distDir, 'Electron.app', 'Contents', 'MacOS', 'Electron');
+        case 'win32':
+            return path.join(distDir, 'electron.exe');
+        default:
+            return path.join(distDir, 'electron');
+    }
+})();
 const args = ['.'];
 
 const child = spawn(electronPath, args, {

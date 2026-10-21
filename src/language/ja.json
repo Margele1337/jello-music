@@ -160,5 +160,6 @@
   "an-zhuang-cha-jian-shi-bai": "プラグインのインストールに失敗しました",
   "an-zhuang-cha-jian-chu-cuo": "プラグインのインストール中にエラー",
   "cha-jian-bao": "プラグインパッケージ",
-  "wei-zhi-cuo-wu": "不明なエラー"
+  "wei-zhi-cuo-wu": "不明なエラー",
+  "proxy-test-browser-unsupported": "ブラウザ環境ではプロキシを検証できません（デスクトップ版で検証可能）"
 }

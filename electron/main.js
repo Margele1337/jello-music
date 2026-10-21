@@ -1,4 +1,6 @@
-import { app, ipcMain, globalShortcut, dialog, Notification, shell, session, powerSaveBlocker, nativeImage, screen } from 'electron';
+import { app, ipcMain, globalShortcut, dialog, Notification, shell, session, net, powerSaveBlocker, nativeImage, screen } from 'electron';
+// 迁移必须先于其它模块 import 执行：本模块在被求值时会立即拷贝旧数据（见其顶部注释）
+import './migrateLegacyUserData.js';
 import {
     createWindow, createTray, createTouchBar, startApiServer,
     stopApiServer,
@@ -17,29 +19,11 @@ import customTrayMenuService from './services/customTrayMenuService.js';
 import { setupDesktopShortcutIcon } from './services/desktopShortcutIcon.js';
 import { openLogPath, exportLog } from './services/logHelper.js';
 import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
-import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokeHandler } from './services/globalKeyService.js';
+import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokesEnabled, setKeystrokeHandler } from './services/globalKeyService.js';
 import Store from 'electron-store';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { t } from './language/i18n.js';
-
-// 从旧版（MoeKoe-NextGen）迁移用户数据：设置、登录态、窗口位置等
-const migrateLegacyUserData = () => {
-    try {
-        const newDir = app.getPath('userData');
-        if (path.basename(newDir) !== 'Jello Music') return;
-        if (fs.existsSync(path.join(newDir, 'config.json'))) return; // 已迁移过
-        const legacyDir = path.join(path.dirname(newDir), 'MoeKoe-NextGen');
-        if (!fs.existsSync(legacyDir)) return;
-        fs.mkdirSync(newDir, { recursive: true });
-        fs.cpSync(legacyDir, newDir, { recursive: true, force: false, errorOnExist: false });
-        console.log('[Migration] 已迁移旧版用户数据:', legacyDir, '->', newDir);
-    } catch (error) {
-        console.error('[Migration] 迁移旧版用户数据失败:', error);
-    }
-};
-migrateLegacyUserData();
 
 let mainWindow = null;
 let blockerId = null;
@@ -144,6 +128,10 @@ app.on('ready', () => {
             setupAutoUpdater(mainWindow);
             checkForUpdates(true);
             initGlobalKeyListener({ onRightShift: () => toggleSigmaWindowFromHotkey() });
+            // 启动时就开着 KeyStrokes 覆盖层：WASD/鼠标轮询也要启起来
+            if (store.get('settings')?.desktopKeystrokes === 'on') {
+                setKeystrokesEnabled(true);
+            }
             setKeystrokeHandler((payload) => {
                 const win = getKeystrokesWindow();
                 if (win && !win.isDestroyed()) {
@@ -198,7 +186,8 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 if (settings?.preventAppSuspension === 'on') {
-    blockerId = powerSaveBlocker.start('prevent-display-sleep');
+    // 设置语义是「阻止系统休眠/挂起」，不是「保持屏幕常亮」
+    blockerId = powerSaveBlocker.start('prevent-app-suspension');
 }
 
 if (settings?.highDpi === 'on') {
@@ -225,10 +214,24 @@ app.on('before-quit', () => {
         statusBarLyricsService.cleanup();
         customTrayMenuService.cleanup();
 
-        stopApiServer();
-                stopSpectrumFullscreenWatcher();
+        stopSpectrumFullscreenWatcher();
         apiService.stop();
-        app.exit(0);
+        // quitAndInstall 期间不能强制 app.exit(0)：electron-updater 需要自然退出流程来拉起安装器
+        if (globalThis.JELLO_QUIT_FOR_INSTALL) {
+            stopApiServer();
+            return;
+        }
+        // 等侧车进程树真正被杀掉后再退出：否则先 app.exit(0) 会让侧车子进程变孤儿
+        // 继续占住 6521，下次启动被端口探测误判为「已有服务」而复用旧版本侧车。
+        // kill 回调 + 超时兜底，避免退出被拖住。
+        let exited = false;
+        const finishExit = () => {
+            if (exited) return;
+            exited = true;
+            app.exit(0);
+        };
+        stopApiServer(finishExit);
+        setTimeout(finishExit, 1200);
     });
 });
 // 关闭所有窗口
@@ -277,7 +280,17 @@ ipcMain.on('save-settings', (event, settings) => {
         });
     }
 });
-ipcMain.on('clear-settings', (event) => {
+ipcMain.on('clear-settings', async (event) => {
+    // 清空全部用户数据（含登录态、窗口位置、全部偏好）不可撤销，必须二次确认
+    const result = await dialog.showMessageBox({
+        type: 'warning',
+        title: t('hint'),
+        message: t('clear-settings-confirm'),
+        buttons: [t('ok'), t('cancel')],
+        cancelId: 1,
+        defaultId: 1,
+    });
+    if (result.response !== 0) return;
     store.clear();
     session.defaultSession.clearCache();
     session.defaultSession.clearStorageData();
@@ -330,6 +343,7 @@ ipcMain.on('server-lyrics', (event, lyricsData) => {
 
 // 监听桌面歌词操作
 ipcMain.on('desktop-lyrics-action', (event, action) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     switch (action) {
         case 'previous-song':
             mainWindow.webContents.send('play-previous-track');
@@ -369,6 +383,7 @@ const syncDesktopLyricsSetting = (value) => {
 
 // 监听桌面频谱操作
 ipcMain.on('desktop-spectrum-action', (event, action) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     switch (action) {
         case 'display-spectrum':
             if (!mainWindow.spectrumWindow) createSpectrumWindow();
@@ -398,11 +413,14 @@ ipcMain.on('desktop-keystrokes-action', (event, action) => {
     switch (action) {
         case 'display-keystrokes':
             if (!getKeystrokesWindow()) createKeystrokesWindow();
+            // WASD/鼠标轮询只在覆盖层开启时跑，关闭即停（省电）
+            setKeystrokesEnabled(true);
             syncDesktopKeystrokesSetting('on');
             break;
         case 'close-keystrokes': {
             const win = getKeystrokesWindow();
             if (win) win.close();
+            setKeystrokesEnabled(false);
             syncDesktopKeystrokesSetting('off');
             break;
         }
@@ -418,7 +436,7 @@ const syncDesktopKeystrokesSetting = (value) => {
 };
 
 ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (lyricsWindow) {
         lyricsWindow.setIgnoreMouseEvents(ignore, { forward: true });
     }
@@ -432,7 +450,7 @@ ipcMain.on('set-spectrum-ignore-mouse-events', (event, ignore) => {
 });
 
 ipcMain.on('window-drag', (event, { x, y, width, height }) => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (!lyricsWindow) return
     const bounds = lyricsWindow.getBounds();
     const nextBounds = {
@@ -447,7 +465,7 @@ ipcMain.on('window-drag', (event, { x, y, width, height }) => {
 })
 
 ipcMain.on('spectrum-window-drag', (event, { x, y, width, height }) => {
-    const spectrumWindow = mainWindow.spectrumWindow;
+    const spectrumWindow = mainWindow?.spectrumWindow;
     if (!spectrumWindow) return
     const bounds = spectrumWindow.getBounds();
     const nextBounds = {
@@ -462,7 +480,7 @@ ipcMain.on('spectrum-window-drag', (event, { x, y, width, height }) => {
 })
 
 ipcMain.on('lyrics-window-fixed-size', (event, { width, height, fixed }) => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (!lyricsWindow) return
     if (fixed) {
         lyricsWindow.setMaximumSize(Math.round(width), Math.round(height));
@@ -537,7 +555,7 @@ ipcMain.handle('sigma-window-get-bounds', () => {
 });
 
 ipcMain.handle('lyrics-window-pointer-state', () => {
-    const lyricsWindow = mainWindow.lyricsWindow;
+    const lyricsWindow = mainWindow?.lyricsWindow;
     if (!lyricsWindow) return null
     return {
         cursor: screen.getCursorScreenPoint(),
@@ -546,6 +564,7 @@ ipcMain.handle('lyrics-window-pointer-state', () => {
 })
 
 ipcMain.on('play-pause-action', (event, playing, currentTime) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     const lyricsWindow = mainWindow.lyricsWindow;
     if (lyricsWindow) {
         lyricsWindow.webContents.send('playing-status', playing);
@@ -560,10 +579,25 @@ ipcMain.on('play-pause-action', (event, playing, currentTime) => {
 })
 
 ipcMain.on('open-url', (event, url) => {
+    // 与 externalLinkHandler 的白名单保持一致：渲染端 JS 可以直接调用本通道，
+    // 若不校验，页面里任何脚本（含被注入的第三方脚本）都能借 shell.openExternal
+    // 打开 file://、UNC 路径、ms-msdt: 等危险协议执行本地程序
+    if (typeof url !== 'string') return;
+    let target;
+    try {
+        target = new URL(url);
+    } catch {
+        return;
+    }
+    if (!['http:', 'https:', 'mailto:', 'tel:'].includes(target.protocol)) {
+        console.warn('[main] 已拒绝非白名单协议的外链打开请求:', target.protocol);
+        return;
+    }
     shell.openExternal(url);
 })
 
 ipcMain.on('set-tray-title', (event, title) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     createTray(mainWindow, t('now-playing') + title);
     mainWindow.setTitle(title);
     void customTrayMenuService.refresh();
@@ -581,5 +615,44 @@ ipcMain.handle('open-log-path', async (e) => {
 ipcMain.handle('export-log', async (e) => {
     try { return await exportLog(); }
     catch (err) { return { error: err }; }
+});
+
+// 代理测试：渲染进程的 fetch 不支持 agent，Proxy-Authorization 也是 forbidden header，
+// 旧实现其实走的是直连、永远显示本机真实 IP（误报「代理成功」）。
+// 挪到主进程，用独立 session 的 setProxy 真正通过代理发请求验证。
+ipcMain.handle('test-proxy', async (_event, proxyUrl) => {
+    try {
+        const u = new URL(String(proxyUrl || ''));
+        if (!['http:', 'https:'].includes(u.protocol)) {
+            return { ok: false, error: '仅支持 http/https 代理' };
+        }
+        const rules = u.username
+            ? `${u.protocol}//${u.username}:${u.password}@${u.host}`
+            : `${u.protocol}//${u.host}`;
+        const ses = session.fromPartition(`proxy-test-${Date.now()}`);
+        try {
+            await ses.setProxy({ proxyRules: rules });
+            const response = await net.fetch('https://api.ipify.org?format=json', { session: ses });
+            if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+            const data = await response.json();
+            return { ok: true, ip: data.ip };
+        } finally {
+            try { ses.closeAllConnections?.(); } catch (_) { /* ignore */ }
+        }
+    } catch (error) {
+        return { ok: false, error: String(error?.message || error) };
+    }
+});
+
+// preload 暴露了 showOpenDialog，主进程必须注册 handler，否则渲染端调用必 reject
+ipcMain.handle('show-open-dialog', async (_event, options) => {
+    try {
+        const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+        return win
+            ? await dialog.showOpenDialog(win, options || {})
+            : await dialog.showOpenDialog(options || {});
+    } catch (err) {
+        return { canceled: true, error: String(err) };
+    }
 });
 

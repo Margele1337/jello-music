@@ -32,10 +32,12 @@ const SEND_CHANNELS = new Set([
     'spectrum-data',
     'spectrum-hud-ready',
     'spectrum-setting-update',
+    'spectrum-window-drag',
     'tray-menu-action',
     'tray-menu-hide',
     'tray-menu-ready',
     'tray-menu-rendered',
+    'update-current-lyrics',
     'update-statusbar-image',
     'window-drag'
 ]);
@@ -44,7 +46,8 @@ const INVOKE_CHANNELS = new Set([
     'consume-pending-settings',
     'get-app-version',
     'lyrics-window-pointer-state',
-    'sigma-window-get-bounds'
+    'sigma-window-get-bounds',
+    'test-proxy'
 ]);
 
 const RECEIVE_CHANNELS = new Set([

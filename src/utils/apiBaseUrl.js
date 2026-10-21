@@ -21,6 +21,14 @@ export function validateApiBaseUrl(input) {
         return { ok: false, value: '', error: '仅支持 http:// 或 https://' };
     }
 
+    // 非本机地址必须 https：所有请求都会携带 Authorization（token/userid/dfid/mid/mac 等），
+    // 明文 http 指向远程服务器等于把登录凭据与设备指纹明文外发，也会经停各级代理日志
+    const host = url.hostname.toLowerCase();
+    const isLocal = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
+    if (!isLocal && url.protocol !== 'https:') {
+        return { ok: false, value: '', error: '非本机地址必须使用 https://，明文 http 会泄露登录凭据' };
+    }
+
     return { ok: true, value: raw.replace(/\/+$/, '') };
 }
 

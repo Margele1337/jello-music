@@ -4,6 +4,7 @@ import http from 'http';
 import { spawn } from 'child_process';
 import log from 'electron-log';
 import Store from 'electron-store';
+import treeKill from 'tree-kill';
 import { fileURLToPath } from 'url';
 import isDev from 'electron-is-dev';
 import fs from 'fs';
@@ -38,13 +39,17 @@ export function createWindow() {
     width = Math.min(width, screenWidth);
     height = Math.min(height, screenHeight);
 
-    const isValidPosition = x !== undefined && y !== undefined &&
-        x >= 0 && x <= screenWidth &&
-        y >= 0 && y <= screenHeight;
-
-    if (!isValidPosition) {
+    // 多显示器：保存的位置可能落在副屏（负坐标或超出主屏宽度），用 getDisplayMatching
+    // 找最近显示器并夹到其工作区内；只有完全没有保存过位置时才回退到主屏居中
+    const hasSavedPosition = Number.isFinite(x) && Number.isFinite(y);
+    if (!hasSavedPosition) {
         x = Math.floor((screenWidth - width) / 2);
         y = Math.floor((screenHeight - height) / 2);
+    } else {
+        const display = screen.getDisplayMatching({ x, y, width, height });
+        const area = display.workArea;
+        x = Math.min(Math.max(x, area.x), area.x + area.width - width);
+        y = Math.min(Math.max(y, area.y), area.y + area.height - height);
     }
 
     mainWindow = new BrowserWindow({
@@ -77,6 +82,9 @@ export function createWindow() {
     if (store.get('maximize')) {
         mainWindow.maximize();
     }
+    // 之前只有 get 没有 set：最大化状态从不落盘，退出后无法恢复
+    mainWindow.on('maximize', () => store.set('maximize', true));
+    mainWindow.on('unmaximize', () => store.set('maximize', false));
 
     if (isDev) {
         mainWindow.loadURL('http://localhost:8080');
@@ -328,15 +336,19 @@ export function createLyricsWindow() {
     width = Math.min(width, screenWidth);
     height = Math.min(height, screenHeight);
 
-    // 检查位置是否有效
-    const isValidPosition = x !== undefined && y !== undefined &&
-        x >= 0 && x <= screenWidth &&
-        y >= 0 && y <= screenHeight;
+    // 检查位置是否有效：仅要求坐标存在（多屏下副屏坐标可能为负或超出主屏宽度，同样是合法的）
+    const hasSavedPosition = Number.isFinite(x) && Number.isFinite(y);
 
-    // 如果位置无效，设置默认位置
-    if (!isValidPosition) {
+    // 如果从未保存过位置，设置默认位置（主屏底部）
+    if (!hasSavedPosition) {
         x = Math.floor((screenWidth - width) / 2);
         y = screenHeight - height;
+    } else {
+        // 已保存位置：夹取到最近显示器的工作区，防止显示器移除/缩放变化后窗口飞出屏幕
+        const display = screen.getDisplayMatching({ x, y, width, height });
+        const area = display.workArea;
+        x = Math.min(Math.max(x, area.x), area.x + area.width - width);
+        y = Math.min(Math.max(y, area.y), area.y + area.height - height);
     }
 
     lyricsWindow = new BrowserWindow({
@@ -525,11 +537,14 @@ export function createKeystrokesWindow() {
     const width = 170;
     const height = 260;
 
+    // 复刻原版位置：左下角（贴工作区左边缘 x=10，下沿对齐工作区底部）
+    const { workArea } = screen.getPrimaryDisplay();
+
     keystrokesWindow = new BrowserWindow({
         width,
         height,
-        x: 0,
-        y: 0,
+        x: workArea.x + 10,
+        y: workArea.y + workArea.height - height,
         frame: false,
         transparent: true,
         resizable: false,
@@ -1073,8 +1088,10 @@ export function openSettingsWindow(mainWindow) {
 
 // 创建托盘图标及菜单
 export function createTray(mainWindow, title = '') {
-    if (tray && title) {
-        tray.setToolTip(title);
+    // 只要托盘已存在就复用：旧判据是 `tray && title`，title 为空串（无标题音源 /
+    // i18n 缺失）时会再 new 一个 Tray，旧的不 destroy → 托盘堆图标 + 监听器泄漏
+    if (tray && !tray.isDestroyed()) {
+        if (title) tray.setToolTip(title);
         return tray;
     }
 
@@ -1111,21 +1128,27 @@ label: t('show-dock'),
             label: t('prev-track'),
             icon: getIconPath('prev.png', 'menu'),
                         click: () => {
-                mainWindow.webContents.send('play-previous-track');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('play-previous-track');
+                }
             }
         },
         {
             label: t('pause'),
             icon: getIconPath('play.png', 'menu'),
             click: () => {
-                mainWindow.webContents.send('toggle-play-pause');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('toggle-play-pause');
+                }
             }
         },
         {
             label: t('next-track'),
             icon: getIconPath('next.png', 'menu'),
             click: () => {
-                mainWindow.webContents.send('play-next-track');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('play-next-track');
+                }
             }
         },
         { type: 'separator' },
@@ -1289,18 +1312,52 @@ export function createTouchBar(mainWindow) {
 
 // 启动 API 服务器
 // 探测本机 6521 端口是否已经有兼容的 API 在运行（例如 dev 环境或上一个实例）
-// 有 HTTP 响应就视为可用：直接复用，避免"第二个 API 抢端口失败"导致的启动报错
-const API_PROBE_URL = 'http://127.0.0.1:6521/';
+// 校验响应内容（/register/dev 返回的 JSON 结构），避免把占用端口的其它 HTTP
+// 程序误判为本项目 API —— 否则复用错误的"服务"会导致所有音乐请求静默失败。
+const API_PROBE_URL = 'http://127.0.0.1:6521/register/dev';
 const probeApiServer = (timeoutMs = 1500) => new Promise((resolve) => {
     const request = http.get(API_PROBE_URL, { timeout: timeoutMs }, (response) => {
-        response.resume();
-        resolve(true);
+        let body = '';
+        response.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 64 * 1024) response.destroy(); // 防御：异常大响应直接判定不匹配
+        });
+        response.on('end', () => {
+            try {
+                const json = JSON.parse(body);
+                resolve(typeof json === 'object' && json !== null && 'status' in json && 'data' in json);
+            } catch (_) {
+                resolve(false);
+            }
+        });
+        response.on('error', () => resolve(false));
     });
     request.on('timeout', () => {
         request.destroy();
         resolve(false);
     });
     request.on('error', () => resolve(false));
+});
+
+// 轮询等待侧车就绪：以「端口探测成功」为准，不再依赖 stdout 的关键字。
+// stdout 分包时 'running' 可能被拆到两个 chunk 之间而永远匹配不上，
+// 单靠它会让 Promise 永不 resolve（应用无窗口、无报错地卡死）。
+const waitForApiReady = (timeoutMs = 15000, intervalMs = 300) => new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const tick = () => {
+        probeApiServer(800).then((ready) => {
+            if (ready) {
+                resolve(true);
+                return;
+            }
+            if (Date.now() >= deadline) {
+                resolve(false);
+                return;
+            }
+            setTimeout(tick, intervalMs);
+        });
+    };
+    tick();
 });
 
 export function startApiServer() {
@@ -1315,7 +1372,8 @@ export function startApiServer() {
                     apiPath = path.join(process.resourcesPath, '../api', 'app_win.exe');
                     break;
                 case 'darwin':
-                    apiPath = path.join(process.resourcesPath, '../api', 'app_macos');
+                    // Apple Silicon 的包名是 app_macos_arm64（见子模块 pkgmacos-arm64 脚本）
+                    apiPath = path.join(process.resourcesPath, '../api', process.arch === 'arm64' ? 'app_macos_arm64' : 'app_macos');
                     break;
                 case 'linux':
                     apiPath = path.join(process.resourcesPath, '../api', 'app_linux');
@@ -1341,13 +1399,21 @@ export function startApiServer() {
         const proxyUrl = savedConfig?.proxyUrl;
         const dataSource = savedConfig?.dataSource || 'concept';
 
-        probeApiServer().then((alreadyRunning) => {
+        probeApiServer().then(async (alreadyRunning) => {
             if (alreadyRunning) {
                 log.info('API 端口 6521 已有服务在运行，复用现有实例（不再启动第二个）');
                 console.log('API 已在运行，复用现有实例');
                 resolve();
                 return;
             }
+
+            // 多次 resolve/reject 只会生效一次：stdout 关键字、端口探测、进程退出三者竞争
+            let settled = false;
+            const settle = (fn, value) => {
+                if (settled) return;
+                settled = true;
+                fn(value);
+            };
 
             const Args = [];
             if (dataSource === 'concept') {
@@ -1362,42 +1428,85 @@ export function startApiServer() {
                 }
             }
             Args.push('--port=6521');
-            apiProcess = spawn(apiPath, Args, { windowsHide: true });
+            let apiProcessSpawned = null;
+            try {
+                apiProcessSpawned = spawn(apiPath, Args, { windowsHide: true });
+                apiProcess = apiProcessSpawned;
+            } catch (error) {
+                log.error('启动 API 失败:', error);
+                settle(reject, error);
+                return;
+            }
 
-            apiProcess.stdout.on('data', (data) => {
-                log.info(`API输出: ${data}`);
-                if (data.toString().includes('running')) {
+            // 累积 stdout：关键字可能被分包拆开，单 chunk 匹配会漏判
+            let stdoutBuffer = '';
+            apiProcessSpawned.stdout.on('data', (data) => {
+                const text = data.toString();
+                log.info(`API输出: ${text}`);
+                stdoutBuffer += text;
+                if (stdoutBuffer.length > 64 * 1024) stdoutBuffer = stdoutBuffer.slice(-4096);
+                if (stdoutBuffer.includes('running')) {
                     console.log('API服务器已启动');
-                    resolve();
+                    settle(resolve);
                 }
             });
 
-            apiProcess.stderr.on('data', (data) => {
-                log.error(`API 错误: ${data}`);
-                if (String(data).includes('EADDRINUSE')) {
+            // stderr 只记日志，不作为失败判据：
+            // 很多运行时把普通日志/告警写 stderr（Node 的 warning、Go/Python 的日志），
+            // 一旦无条件 reject，侧车打个告警就会导致应用完全无法启动。
+            apiProcessSpawned.stderr.on('data', (data) => {
+                const text = String(data);
+                log.error(`API stderr: ${text}`);
+                if (text.includes('EADDRINUSE')) {
                     log.error('端口 6521 被其它程序占用：请关闭占用该端口的程序（或重复运行的实例）后重试');
                 }
-                reject(data);
             });
 
-            apiProcess.on('close', (code) => {
-                log.info(`API 关闭，退出码: ${code}`);
-            });
-
-            apiProcess.on('error', (error) => {
+            apiProcessSpawned.on('error', (error) => {
                 log.error('启动 API 失败:', error);
-                reject(error);
+                settle(reject, error);
             });
+
+            apiProcessSpawned.on('exit', (code, signal) => {
+                log.info(`API 退出，code=${code} signal=${signal ?? ''}`);
+                if (apiProcess === apiProcessSpawned) apiProcess = null;
+                // 进程在就绪前就退出 = 真正的启动失败
+                settle(reject, new Error(`API 进程提前退出（code=${code}，signal=${signal ?? 'none'}）`));
+            });
+
+            // 兜底判据：轮询 6521 直到可达，超时才算失败
+            const ready = await waitForApiReady();
+            if (ready) {
+                settle(resolve);
+                return;
+            }
+            settle(reject, new Error('API 服务启动超时：15 秒内 6521 端口未就绪'));
         });
     });
 }
 
 // 停止 API 服务器
-export function stopApiServer() {
-    if (apiProcess) {
-        process.kill(apiProcess.pid, 'SIGKILL');
-        apiProcess = null;
+// onDone 用于让调用方等进程树真正被杀掉后再退出：
+// 否则主进程会先 app.exit(0)，侧车的子进程变孤儿继续占住 6521，
+// 下次启动就会被端口探测误判为「已有服务」而复用旧版本侧车。
+export function stopApiServer(onDone) {
+    const done = typeof onDone === 'function' ? onDone : () => {};
+    if (!apiProcess) {
+        done();
+        return;
     }
+    // 杀整个进程树（避免子进程残留），并在进程已退出时静默降级
+    const { pid } = apiProcess;
+    apiProcess = null;
+    let called = false;
+    const finish = () => {
+        if (called) return;
+        called = true;
+        done();
+    };
+    treeKill(pid, 'SIGKILL', finish);
+    // 兜底：进程已消失时 tree-kill 可能不回调
+    setTimeout(finish, 1000);
 }
 
 // 注册快捷键
@@ -1405,6 +1514,13 @@ export function registerShortcut() {
     try {
         const settings = store.get('settings');
         globalShortcut.unregisterAll();
+        // 快捷键触发时主窗口可能已销毁（未判空会抛 TypeError 且被 uncaughtException 吞掉，
+        // 表现为快捷键静默失效），统一走带判空的转发
+        const sendToMainWindow = (channel) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send(channel);
+            }
+        };
         let clickFunc = () => { app.isQuitting = true; };
         if (process.platform === 'darwin') {
             app.on('before-quit', clickFunc);
@@ -1433,56 +1549,56 @@ export function registerShortcut() {
             globalShortcut.register('CmdOrCtrl+Shift+S', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('play-previous-track');
+        clickFunc = () => sendToMainWindow('play-previous-track');
         if (settings?.shortcuts?.prevTrack) {
             globalShortcut.register(settings?.shortcuts?.prevTrack, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+Left', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('play-next-track');
+        clickFunc = () => sendToMainWindow('play-next-track');
         if (settings?.shortcuts?.nextTrack) {
             globalShortcut.register(settings?.shortcuts?.nextTrack, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+Right', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('volume-up');
+        clickFunc = () => sendToMainWindow('volume-up');
         if (settings?.shortcuts?.volumeUp) {
             globalShortcut.register(settings?.shortcuts?.volumeUp, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+Up', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('volume-down');
+        clickFunc = () => sendToMainWindow('volume-down');
         if (settings?.shortcuts?.volumeDown) {
             globalShortcut.register(settings?.shortcuts?.volumeDown, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+Down', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('toggle-play-pause');
+        clickFunc = () => sendToMainWindow('toggle-play-pause');
         if (settings?.shortcuts?.playPause) {
             globalShortcut.register(settings?.shortcuts?.playPause, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+Space', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('toggle-mute');
+        clickFunc = () => sendToMainWindow('toggle-mute');
         if (settings?.shortcuts?.mute) {
             globalShortcut.register(settings?.shortcuts?.mute, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+M', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('toggle-like');
+        clickFunc = () => sendToMainWindow('toggle-like');
         if (settings?.shortcuts?.like) {
             globalShortcut.register(settings?.shortcuts?.like, clickFunc);
         } else if (!settings?.shortcuts) {
             globalShortcut.register('Alt+CommandOrControl+L', clickFunc);
         }
 
-        clickFunc = () => mainWindow.webContents.send('toggle-mode');
+        clickFunc = () => sendToMainWindow('toggle-mode');
         if (settings?.shortcuts?.mode) {
             globalShortcut.register(settings?.shortcuts?.mode, clickFunc);
         } else if (!settings?.shortcuts) {
@@ -1490,6 +1606,7 @@ export function registerShortcut() {
         }
 
         clickFunc = () => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
             if (mainWindow.lyricsWindow) {
                 mainWindow.lyricsWindow.close();
                 mainWindow.lyricsWindow = null;
@@ -1510,6 +1627,7 @@ export function registerShortcut() {
         }
 
         clickFunc = () => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
             if (mainWindow.spectrumWindow) {
                 mainWindow.spectrumWindow.close();
                 mainWindow.spectrumWindow = null;
@@ -1607,22 +1725,15 @@ export function registerProtocolHandler(mainWindow) {
         protocolMainWindow = mainWindow;
     }
 
-    // 注册协议
-    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath);
+    // 注册协议：开发模式要带应用根目录参数，否则点 jello:// 链接会启动裸 electron（空白窗口）
+    const devArgs = isDev ? [path.resolve(__dirname, '..')] : [];
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, devArgs);
 
     // 处理启动参数
     handleArgv(process.argv);
 
-    // 处理第二个实例的启动参数
-    app.on('second-instance', (event, commandLine) => {
-        if (protocolMainWindow) {
-    if (protocolMainWindow.isMinimized()) protocolMainWindow.restore();
-    // 主窗口是隐藏播放宿主：把 Sigma 窗口带到前台
-    const sigmaWin = sigmaWindow && !sigmaWindow.isDestroyed() ? sigmaWindow : createSigmaWindow();
-    revealSigmaWindow(sigmaWin);
-            handleArgv(commandLine);
-        }
-    });
+    // second-instance 统一由 main.js 的顶层 handler 处理（含 --settings 与 revealSigmaWindow），
+    // 这里不再重复注册，避免每次唤起执行两遍
 
     // 在macOS平台特别处理open-url事件
     if (process.platform === 'darwin') {

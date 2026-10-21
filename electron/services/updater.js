@@ -46,11 +46,15 @@ export function setupAutoUpdater(mainWindow) {
     // 检查更新错误
     autoUpdater.on('error', (error) => {
         console.error('Update check failed:', error.message);
+        // 静默检查（应用启动时的后台检查）不弹窗：feed 源是 GitHub，
+        // 网络不可达时每次启动都弹错误框会严重打扰用户
+        if (silentCheck) return;
+        // 把常见网络/可达性错误映射到已本地化的文案，避免直接弹英文 error.message
+        const msg = error?.message || '';
+        const isNetwork = /ETIMEDOUT|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|getaddrinfo|network|socket/i.test(msg);
         dialog.showMessageBox({
             type: 'error',
-            message: error.message.includes('ETIMEDOUT')
-                ? t('update-timeout')
-                : (error.message || t('update-failed'))
+            message: isNetwork ? t('update-timeout') : (t('update-failed') + (msg ? `\n${msg}` : ''))
         });
     });
     // 检查到新版本
@@ -99,6 +103,8 @@ export function setupAutoUpdater(mainWindow) {
         }).then(result => {
             if (result.response === 0) {
                 app.isQuitting = true;
+                // 告知 main.js 的 before-quit 不要强制 app.exit(0)，否则会抢在安装器启动前杀掉进程
+                globalThis.JELLO_QUIT_FOR_INSTALL = true;
                 autoUpdater.quitAndInstall(true, true);
             }
         });

@@ -24,7 +24,8 @@ export const getBrowserLocale = () => {
     return 'zh-CN';
   }
   const lang = browserLang.split('-')[0];
-  return Object.keys(messages).includes(lang) ? lang : 'ja';
+  // 未知语言回退到简体中文（原实现误回退到日语）
+  return Object.keys(messages).includes(lang) ? lang : 'zh-CN';
 };
 
 const defaultLocale = JSON.parse(localStorage.getItem('settings'))?.['language'] || getBrowserLocale();

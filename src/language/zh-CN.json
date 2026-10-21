@@ -160,5 +160,6 @@
   "an-zhuang-cha-jian-shi-bai": "安装插件失败",
   "an-zhuang-cha-jian-chu-cuo": "安装插件时出错",
   "cha-jian-bao": "插件包",
-  "wei-zhi-cuo-wu": "未知错误"
+  "wei-zhi-cuo-wu": "未知错误",
+  "proxy-test-browser-unsupported": "浏览器环境无法验证代理是否生效（桌面版可测）"
 }
