@@ -4,7 +4,6 @@ const { autoUpdater } = electronUpdater;
 import { t } from '../language/i18n.js';
 
 let silentCheck = false;
-let suppressUpdateAvailableDialog = 0;
 autoUpdater.autoDownload = false; // 自动下载更新
 autoUpdater.autoInstallOnAppQuit = false; // 自动安装更新
 // 开发环境模拟打包状态（仅开发期覆盖，避免影响生产环境的 app.isPackaged 判断）
@@ -23,14 +22,6 @@ function showUpdateUnavailableMessage() {
         message: t('non-update'),
         buttons: [t('ok')]
     });
-}
-async function checkForUpdatesSilently() {
-    suppressUpdateAvailableDialog += 1;
-    try {
-        return await autoUpdater.checkForUpdates();
-    } finally {
-        suppressUpdateAvailableDialog -= 1;
-    }
 }
 
 // 设置更新服务器地址
@@ -59,9 +50,6 @@ export function setupAutoUpdater(mainWindow) {
     });
     // 检查到新版本
     autoUpdater.on('update-available', (info) => {
-        if (suppressUpdateAvailableDialog > 0) {
-            return;
-        }
         const notes = info.releaseNotes?.replace(/<[^>]*>/g, '') || t('no-release-notes');
         const msg = t('new-version-msg').replace('{version}', info.version).replace('{notes}', notes);
         dialog.showMessageBox({
@@ -89,11 +77,15 @@ export function setupAutoUpdater(mainWindow) {
     });
     // 更新下载进度
     autoUpdater.on('download-progress', (progressObj) => {
+        // 主窗口是隐藏的播放宿主，通常存活；但静默更新期间它可能已被销毁，判空防崩
+        if (!mainWindow || mainWindow.isDestroyed()) return;
         mainWindow.setProgressBar(progressObj.percent / 100);
     });
     // 更新下载完成
     autoUpdater.on('update-downloaded', () => {
-        mainWindow.setProgressBar(-1);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.setProgressBar(-1);
+        }
         dialog.showMessageBox({
             type: 'info',
             title: t('update-ready'),

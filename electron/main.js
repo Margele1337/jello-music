@@ -280,22 +280,17 @@ ipcMain.on('save-settings', (event, settings) => {
         });
     }
 });
-ipcMain.on('clear-settings', async (event) => {
-    // 清空全部用户数据（含登录态、窗口位置、全部偏好）不可撤销，必须二次确认
-    const result = await dialog.showMessageBox({
-        type: 'warning',
-        title: t('hint'),
-        message: t('clear-settings-confirm'),
-        buttons: [t('ok'), t('cancel')],
-        cancelId: 1,
-        defaultId: 1,
-    });
-    if (result.response !== 0) return;
+// 清空全部用户数据（含登录态、窗口位置、全部偏好与本地缓存）：
+// 设置页「恢复出厂设置」按钮的执行端。是否执行由渲染端 $modal.confirm
+// 二次确认（复用既有六语言文案 ni-que-ren-hui-fu-chu-chang），主进程直接执行并返回结果。
+// 清除后需重启应用，才能回到干净的全新状态。
+ipcMain.handle('clear-settings', () => {
     store.clear();
     session.defaultSession.clearCache();
     session.defaultSession.clearStorageData();
     const userDataPath = app.getPath('userData');
     shell.openPath(userDataPath);
+    return true;
 });
 ipcMain.on('custom-shortcut', (event) => {
     registerShortcut();
@@ -620,6 +615,8 @@ ipcMain.handle('export-log', async (e) => {
 // 代理测试：渲染进程的 fetch 不支持 agent，Proxy-Authorization 也是 forbidden header，
 // 旧实现其实走的是直连、永远显示本机真实 IP（误报「代理成功」）。
 // 挪到主进程，用独立 session 的 setProxy 真正通过代理发请求验证。
+// session.fromPartition 按 partition 名缓存复用：用固定名字，反复测试不会累积 session。
+const PROXY_TEST_PARTITION = 'proxy-test';
 ipcMain.handle('test-proxy', async (_event, proxyUrl) => {
     try {
         const u = new URL(String(proxyUrl || ''));
@@ -629,7 +626,7 @@ ipcMain.handle('test-proxy', async (_event, proxyUrl) => {
         const rules = u.username
             ? `${u.protocol}//${u.username}:${u.password}@${u.host}`
             : `${u.protocol}//${u.host}`;
-        const ses = session.fromPartition(`proxy-test-${Date.now()}`);
+        const ses = session.fromPartition(PROXY_TEST_PARTITION);
         try {
             await ses.setProxy({ proxyRules: rules });
             const response = await net.fetch('https://api.ipify.org?format=json', { session: ses });

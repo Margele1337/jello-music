@@ -52,6 +52,12 @@
                     </button>
                 </div>
             </div>
+            <div class="factory-reset-container">
+                <button class="factory-reset-button" @click="factoryReset">
+                    <i class="fas fa-trash-alt"></i>
+                    {{ $t('hui-fu-chu-chang-she-zhi') }}
+                </button>
+            </div>
             <div class="version-info">
                 <p>© Jello Music</p>
                 <span>V{{ appVersion }} - {{ platform }}</span>
@@ -1185,6 +1191,24 @@ const resetSection = async (index) => {
     window.$modal.alert(`「${section.title}」已恢复默认设置`);
 };
 
+// 恢复出厂设置：清空全部用户数据（含登录态、窗口位置、全部偏好与本地缓存）。
+// 与 resetSection（按分类恢复默认）不同：此操作不可撤销，二次确认后由主进程执行，
+// 需重启应用回到全新状态。主进程执行后打开用户数据目录，方便残留文件交接。
+const factoryReset = async () => {
+    if (!isElectron()) {
+        window.$modal.alert(t('fei-ke-hu-duan-huan-jing-wu-fa-qi-yong'));
+        return;
+    }
+    const confirmed = await window.$modal.confirm(t('ni-que-ren-hui-fu-chu-chang'));
+    if (!confirmed) return;
+    try {
+        await window.electron.ipcRenderer.invoke('clear-settings');
+        window.$modal.alert(t('hui-fu-chu-chang-she-zhi-cheng-gong'));
+    } catch (error) {
+        console.error('[Settings] 恢复出厂设置失败:', error);
+    }
+};
+
 let deferredPrompt;
 if (!isElectron()) {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -1693,6 +1717,32 @@ $shadow-medium: rgba(0, 0, 0, 0.18);
 
     &:hover {
         background-color: #e53935;
+    }
+}
+
+.factory-reset-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 6px;
+}
+
+.factory-reset-button {
+    // 与「重置当前分类的红底按钮」区分层级：更高危的全局操作用描边样式
+    background: transparent;
+    color: #f44336;
+    border: 1px solid rgba(244, 67, 54, 0.55);
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    &:hover {
+        background: rgba(244, 67, 54, 0.08);
+        border-color: #f44336;
     }
 }
 

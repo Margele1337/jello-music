@@ -43,6 +43,7 @@ const SEND_CHANNELS = new Set([
 ]);
 
 const INVOKE_CHANNELS = new Set([
+    'clear-settings',
     'consume-pending-settings',
     'get-app-version',
     'lyrics-window-pointer-state',
