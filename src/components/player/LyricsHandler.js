@@ -316,19 +316,21 @@ export default function useLyricsHandler(t) {
         if (!lyricsData.value || lyricsData.value.length === 0) return -1;
 
         const currentTimeMs = currentTime * 1000;
-        for (let index = 0; index < lyricsData.value.length; index++) {
-            const lineData = lyricsData.value[index];
-            const nextLineData = lyricsData.value[index + 1];
-            const firstChar = lineData.characters[0];
-            const nextFirstChar = nextLineData?.characters[0];
-
-            if (
-                firstChar && nextFirstChar &&
-                currentTimeMs >= firstChar.startTime &&
-                currentTimeMs <= nextFirstChar.startTime
-            ) return index + 1;
+        const lines = lyricsData.value;
+        for (let index = 0; index < lines.length; index++) {
+            const firstChar = lines[index]?.characters?.[0];
+            if (!firstChar) continue;
+            const nextFirstChar = lines[index + 1]?.characters?.[0];
+            // 命中条件说明当前时间落在「本行起点 ~ 下一行起点」之间 → 本行就是当前行。
+            // 旧实现这里 return index + 1（差一行），滚动到的是下一句；
+            // 最后一行没有 nextFirstChar，旧实现靠兜底 return length-1 蒙对。
+            if (currentTimeMs >= firstChar.startTime
+                && (!nextFirstChar || currentTimeMs < nextFirstChar.startTime)) {
+                return index;
+            }
         }
-        return lyricsData.value.length - 1;
+        // 还没到第一行起点：停在第一行（调用方会滚到首行）
+        return 0;
     };
 
     // 获取当前行歌词文本

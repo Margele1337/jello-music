@@ -301,7 +301,11 @@ const phoneLogin = async (selectedUserId = null) => {
 // 统一处理登录成功
 const handleLoginSuccess = (response) => {
     MoeAuth.setData({ UserInfo: response.data || response });
-    router.push(route.query.redirect || '/library');
+    // 应用内已经没有 /library 路由（主界面下线），旧代码 push('/library') 只会得到
+    // "No match found for location with path '/library'" 警告并中止导航。
+    // 这里按当前窗口回到有效路由：Sigma 窗口回 /sigma，主窗口回 /。
+    const isSigmaWindow = window.location.hash.replace(/^#\/?/, '').split('?')[0] === 'sigma';
+    router.push(route.query.redirect || (isSigmaWindow ? '/sigma' : '/'));
     $message.success(t('deng-lu-cheng-gong'));
 };
 

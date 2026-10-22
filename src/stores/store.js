@@ -2,11 +2,19 @@ import { defineStore } from 'pinia';
 import axios from 'axios';
 import { getApiBaseUrl } from '../utils/apiBaseUrl';
 
-// 用于设备注册的独立 axios 实例（不带拦截器，避免循环依赖）
+// 用于设备注册的独立 axios 实例（不带业务拦截器，避免循环依赖）
+// baseURL 同样不固化：设置页改 API 地址后立即生效，不用重启应用。
 const registerDeviceApi = axios.create({
-    baseURL: getApiBaseUrl(),
     timeout: 10000,
 });
+
+registerDeviceApi.interceptors.request.use(
+    config => {
+        config.baseURL = getApiBaseUrl();
+        return config;
+    },
+    error => Promise.reject(error)
+);
 
 export const MoeAuthStore = defineStore('MoeData', {
     state: () => ({

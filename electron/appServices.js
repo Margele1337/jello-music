@@ -169,6 +169,8 @@ let spectrumAnchorGuard = false;
 let spectrumGeometryKey = '';
 // 窗口当前尺寸所依据的 DIP 系数：分辨率/缩放变化时靠它把窗口同比换算过去
 let spectrumDipScale = 0;
+// 用户是否手动拖动过频谱窗口：手动位置优先，之后不再强制贴底（重新锁定时复位）
+let spectrumUserMoved = false;
 
 // 频谱几何基准：1080p 物理像素。sigmarebase 把条形像素高硬编码成「游戏窗口高/1080」，
 // 只在 1080p 下正确；这里改为按当前显示器的物理高度等比缩放，1080p 仍是原值，
@@ -274,9 +276,27 @@ const getSpectrumAnchorBottom = () => {
     return anchorArea.y + anchorArea.height;
 };
 
+// 当前窗口位置是否正好是贴底锚定位置：用于区分「我们自己锚定」与「用户手动拖动」
+const isSpectrumAtAnchor = () => {
+    if (!spectrumWindow || spectrumWindow.isDestroyed()) return true;
+    const bounds = spectrumWindow.getBounds();
+    const anchorY = getSpectrumAnchorBottom() - bounds.height;
+    return Math.abs(bounds.y - anchorY) <= 2;
+};
+
 const anchorSpectrumWindow = () => {
     if (spectrumAnchorGuard || !spectrumWindow || spectrumWindow.isDestroyed()) return;
     const bounds = spectrumWindow.getBounds();
+    const area = screen.getDisplayMatching(bounds).workArea;
+    if (spectrumUserMoved) {
+        // 用户自定义过位置：只夹回工作区内，不再强制贴底（否则拖完的位置会被拉回去）
+        const x = Math.min(Math.max(bounds.x, area.x), area.x + area.width - bounds.width);
+        const y = Math.min(Math.max(bounds.y, area.y), area.y + area.height - bounds.height);
+        if (x !== bounds.x || y !== bounds.y) {
+            spectrumWindow.setBounds({ x, y, width: bounds.width, height: bounds.height });
+        }
+        return;
+    }
     const y = getSpectrumAnchorBottom() - bounds.height;
     if (bounds.y === y) return;
     spectrumAnchorGuard = true;
@@ -286,6 +306,16 @@ const anchorSpectrumWindow = () => {
         spectrumAnchorGuard = false;
     }
 };
+
+// 重新锁定频谱：清除用户自定义位置，回到贴底锚定
+export function resetSpectrumManualPosition() {
+    spectrumUserMoved = false;
+    if (store.get('spectrumUserMoved') === true) {
+        store.set('spectrumUserMoved', false);
+    }
+    anchorSpectrumWindow();
+    persistSpectrumWindowBounds();
+}
 
 const bindSpectrumDisplayListeners = () => {
     if (spectrumDisplayListenersBound) return;
@@ -382,7 +412,10 @@ export function createLyricsWindow() {
     lyricsWindow.on('move', persistLyricsWindowBounds);
     mainWindow.lyricsWindow = lyricsWindow;
     lyricsWindow.on('closed', () => {
-        mainWindow.lyricsWindow = null;
+        // 主窗口可能已销毁（退出流程中），判空避免 TypeError
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.lyricsWindow = null;
+        }
     });
 
     if (isDev) {
@@ -485,6 +518,8 @@ export function createSpectrumWindow() {
 
     // 建窗尺寸已经按目标显示器的 DIP 系数算好，先记下来，避免首次同步时再被缩放一次
     spectrumDipScale = dipScale;
+    // 恢复上次用户手动拖动过的位置（未拖动过则维持贴底锚定）
+    spectrumUserMoved = store.get('spectrumUserMoved') === true;
 
     spectrumWindow.on('resize', () => {
         anchorSpectrumWindow();
@@ -492,11 +527,19 @@ export function createSpectrumWindow() {
     });
     spectrumWindow.on('move', () => {
         persistSpectrumWindowBounds();
+        // 区分「系统贴底锚定」与「用户手动拖动」：位置不是贴底目标 → 用户拖的，记住它
+        if (!spectrumUserMoved && !isSpectrumAtAnchor()) {
+            spectrumUserMoved = true;
+            store.set('spectrumUserMoved', true);
+        }
         applySpectrumGeometry();
     });
     mainWindow.spectrumWindow = spectrumWindow;
     spectrumWindow.on('closed', () => {
-        mainWindow.spectrumWindow = null;
+        // 主窗口可能已销毁（退出流程中），判空避免 TypeError
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.spectrumWindow = null;
+        }
         spectrumGeometryKey = '';
         spectrumDipScale = 0;
     });
@@ -1229,6 +1272,11 @@ label: t('show-dock'),
     return tray;
 }
 
+// TouchBar 的 IPC 监听器引用：createTouchBar 可能被多次调用（重建 TouchBar / 切换账号），
+// 匿名 handler 无法摘除 → 监听器会无限累积。这里保留引用，重建前先摘掉旧的。
+let touchBarPlayPauseHandler = null;
+let touchBarLyricsHandler = null;
+
 // 创建 TouchBar
 export function createTouchBar(mainWindow) {
     const ICON_SIZE = 16;
@@ -1294,18 +1342,28 @@ export function createTouchBar(mainWindow) {
 
     mainWindow.setTouchBar(touchBar);
 
+    // 重建前先摘掉上一轮的监听器，避免多次创建 TouchBar 时无限累积
+    if (touchBarPlayPauseHandler) {
+        ipcMain.removeListener('play-pause-action', touchBarPlayPauseHandler);
+    }
+    if (touchBarLyricsHandler) {
+        ipcMain.removeListener('update-current-lyrics', touchBarLyricsHandler);
+    }
+
     // 监听播放状态变化
-    ipcMain.on("play-pause-action", (event, playing) => {
+    touchBarPlayPauseHandler = (event, playing) => {
         isPlaying = playing;
         playPauseButton.icon = iconPath(isPlaying ? "pause" : "play");
-    });
+    };
+    ipcMain.on('play-pause-action', touchBarPlayPauseHandler);
 
     // 监听歌词更新
-    ipcMain.on("update-current-lyrics", (event, currentLyric) => {
+    touchBarLyricsHandler = (event, currentLyric) => {
         if (currentLyric) {
             lyricsLabel.label = currentLyric;
         }
-    });
+    };
+    ipcMain.on('update-current-lyrics', touchBarLyricsHandler);
 
     return touchBar;
 }
@@ -1438,6 +1496,23 @@ export function startApiServer() {
                 return;
             }
 
+            // 侧车在「就绪之后」崩溃：此时启动流程早已 resolve，settle(reject) 变成空操作，
+            // 用户侧表现为「所有请求失败但毫无提示」。这里补一个本地化错误框，
+            // 让用户知道是 API 侧车挂了，而不是应用本身坏了。
+            let apiReady = false;
+            const notifyApiCrashed = (code, signal) => {
+                if (!apiReady) return; // 启动阶段的失败由 main.js 的 api-error 弹窗负责
+                apiReady = false;
+                const detail = `code=${code}${signal ? ` signal=${signal}` : ''}`;
+                log.error(`API 运行期崩溃: ${detail}`);
+                Promise.resolve(dialog.showMessageBox({
+                    type: 'error',
+                    title: t('error'),
+                    message: `${t('api-crashed')}\n${detail}`,
+                    buttons: [t('ok')]
+                })).catch(() => { /* 弹窗失败不影响主流程 */ });
+            };
+
             // 累积 stdout：关键字可能被分包拆开，单 chunk 匹配会漏判
             let stdoutBuffer = '';
             apiProcessSpawned.stdout.on('data', (data) => {
@@ -1447,6 +1522,7 @@ export function startApiServer() {
                 if (stdoutBuffer.length > 64 * 1024) stdoutBuffer = stdoutBuffer.slice(-4096);
                 if (stdoutBuffer.includes('running')) {
                     console.log('API服务器已启动');
+                    apiReady = true;
                     settle(resolve);
                 }
             });
@@ -1470,13 +1546,15 @@ export function startApiServer() {
             apiProcessSpawned.on('exit', (code, signal) => {
                 log.info(`API 退出，code=${code} signal=${signal ?? ''}`);
                 if (apiProcess === apiProcessSpawned) apiProcess = null;
-                // 进程在就绪前就退出 = 真正的启动失败
+                // 就绪后崩溃 → 弹本地化错误框；就绪前退出 = 真正的启动失败
+                notifyApiCrashed(code, signal);
                 settle(reject, new Error(`API 进程提前退出（code=${code}，signal=${signal ?? 'none'}）`));
             });
 
             // 兜底判据：轮询 6521 直到可达，超时才算失败
             const ready = await waitForApiReady();
             if (ready) {
+                apiReady = true;
                 settle(resolve);
                 return;
             }
@@ -1510,6 +1588,8 @@ export function stopApiServer(onDone) {
 }
 
 // 注册快捷键
+// macOS 走 before-quit 标记退出状态，这里保存引用以便重新注册时摘掉旧监听器
+let macBeforeQuitHandler = null;
 export function registerShortcut() {
     try {
         const settings = store.get('settings');
@@ -1523,7 +1603,14 @@ export function registerShortcut() {
         };
         let clickFunc = () => { app.isQuitting = true; };
         if (process.platform === 'darwin') {
-            app.on('before-quit', clickFunc);
+            // macOS 没有全局快捷键退出，改为在 before-quit 时标记退出状态。
+            // registerShortcut 可能被多次调用（切换快捷键等），每次都 app.on 会让监听器
+            // 无限累积，这里先摘掉上一轮的再挂新的。
+            if (macBeforeQuitHandler) {
+                app.removeListener('before-quit', macBeforeQuitHandler);
+            }
+            macBeforeQuitHandler = clickFunc;
+            app.on('before-quit', macBeforeQuitHandler);
         } else {
             clickFunc = () => {
                 app.isQuitting = true;
@@ -1759,7 +1846,16 @@ function handleArgv(argv) {
 
 // 处理URL
 function handleUrl(url) {
-    const urlObj = new URL(url);
+    // 深链来自外部（浏览器/其它应用的 jello:// 链接），内容不可控：
+    // 畸形 URL 会让 new URL 抛异常，而本函数在 second-instance 同步链路里被调用，
+    // 异常一路冒到 uncaughtException 后，唤起/协议处理的其余逻辑全部丢失。
+    let urlObj;
+    try {
+        urlObj = new URL(url);
+    } catch (error) {
+        console.warn('[protocol] 忽略无法解析的深链:', url, error?.message);
+        return;
+    }
 
     // 提取所有参数并更新全局变量
     hash = urlObj.searchParams.get("hash") || "";

@@ -5,8 +5,9 @@ import { getApiBaseUrl } from './apiBaseUrl';
 import { handleRiskResponse } from './riskVerify';
 
 // 创建一个 axios 实例
+// baseURL 不在这里固化：用户在设置页改 API 地址后无需重启应用即可生效
+// （每个请求在拦截器里重新读取当前值）。
 const httpClient = axios.create({
-    baseURL: getApiBaseUrl(),
     timeout: 10000,
     headers: {
         'Content-Type': 'application/json',
@@ -17,6 +18,9 @@ const httpClient = axios.create({
 // 请求拦截器
 httpClient.interceptors.request.use(
     config => {
+        // 动态取当前 API 基址：设置页保存后立即生效
+        config.baseURL = getApiBaseUrl();
+
         const MoeAuth = MoeAuthStore();
         const token = MoeAuth.UserInfo?.token;
         const userid = MoeAuth.UserInfo?.userid;

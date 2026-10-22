@@ -161,5 +161,9 @@
   "an-zhuang-cha-jian-chu-cuo": "安装插件时出错",
   "cha-jian-bao": "插件包",
   "wei-zhi-cuo-wu": "未知错误",
-  "proxy-test-browser-unsupported": "浏览器环境无法验证代理是否生效（桌面版可测）"
+  "proxy-test-browser-unsupported": "浏览器环境无法验证代理是否生效（桌面版可测）",
+  "fen-xiang-cheng-gong": "分享链接已复制到剪贴板",
+  "cai-ni-xi-huan": "猜你喜欢",
+  "mei-ri-tui-jian": "每日推荐",
+  "wo-xi-huan": "我喜欢"
 }

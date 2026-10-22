@@ -161,5 +161,9 @@
   "an-zhuang-cha-jian-chu-cuo": "플러그인 설치 중 오류",
   "cha-jian-bao": "플러그인 패키지",
   "wei-zhi-cuo-wu": "알 수 없는 오류",
-  "proxy-test-browser-unsupported": "브라우저 환경에서는 프록시를 검증할 수 없습니다(데스크톱 앱에서 테스트 가능)"
+  "proxy-test-browser-unsupported": "브라우저 환경에서는 프록시를 검증할 수 없습니다(데스크톱 앱에서 테스트 가능)",
+  "fen-xiang-cheng-gong": "공유 링크가 클립보드에 복사되었습니다",
+  "cai-ni-xi-huan": "추천",
+  "mei-ri-tui-jian": "데일리 추천",
+  "wo-xi-huan": "내 좋아요"
 }

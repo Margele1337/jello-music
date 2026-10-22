@@ -11,13 +11,20 @@ export default function useProgressBar(audio, resetLyricsHighlight) {
     const activeProgressBar = ref(null);
     const climaxPoints = ref([]);
 
-    // 格式化时间
-    const formatTime = (seconds) => {
-        if (seconds > 1000) seconds = seconds / 1000;
-        const minutes = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
+    // 格式化时间（单位：秒）
+    // 旧实现靠「> 1000 就当毫秒」的启发式猜单位，导致两种错乱：
+    //   - 时长超过 1000 秒（16 分 40 秒以上）的歌曲会显示成 0:01
+    //   - 毫秒值小于 1000 时又被当成秒，显示成几十秒
+    // 现在把单位写进函数名：秒用 formatSeconds，毫秒用 formatDurationMs。
+    const formatSeconds = (seconds) => {
+        const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+        const minutes = Math.floor(safe / 60);
+        const secs = Math.floor(safe % 60);
         return `${minutes}:${secs.toString().padStart(2, '0')}`;
     };
+
+    // 格式化时长（单位：毫秒，如 song.timeLength）
+    const formatDurationMs = (ms) => formatSeconds((Number(ms) || 0) / 1000);
 
     // 获取歌曲高潮点
     const getMusicHighlights = async (hash) => {
@@ -73,7 +80,7 @@ export default function useProgressBar(audio, resetLyricsHighlight) {
             // 更新时间提示
             tooltipPosition.value = offsetX;
             const time = (percentage / 100) * audio.duration;
-            tooltipTime.value = formatTime(time);
+            tooltipTime.value = formatSeconds(time);
         }
     };
 
@@ -133,7 +140,7 @@ export default function useProgressBar(audio, resetLyricsHighlight) {
 
         const percentage = (offsetX / progressBar.offsetWidth);
         const time = percentage * audio.duration;
-        tooltipTime.value = formatTime(time);
+        tooltipTime.value = formatSeconds(time);
 
         showTimeTooltip.value = true;
     };
@@ -152,7 +159,9 @@ export default function useProgressBar(audio, resetLyricsHighlight) {
         tooltipPosition,
         tooltipTime,
         climaxPoints,
-        formatTime,
+        formatTime: formatSeconds,
+        formatSeconds,
+        formatDurationMs,
         getMusicHighlights,
         onProgressDragStart,
         updateProgressFromEvent,

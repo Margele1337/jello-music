@@ -161,5 +161,9 @@
   "an-zhuang-cha-jian-chu-cuo": "Error installing plugin",
   "cha-jian-bao": "Plugin archive",
   "wei-zhi-cuo-wu": "Unknown error",
-  "proxy-test-browser-unsupported": "Proxy cannot be verified in the browser environment (test works in the desktop app)"
+  "proxy-test-browser-unsupported": "Proxy cannot be verified in the browser environment (test works in the desktop app)",
+  "fen-xiang-cheng-gong": "Share link copied to clipboard",
+  "cai-ni-xi-huan": "For You",
+  "mei-ri-tui-jian": "Daily Picks",
+  "wo-xi-huan": "My Favorites"
 }

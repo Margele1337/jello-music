@@ -783,6 +783,8 @@ onMounted(() => {
 
 const showShortcutModal = ref(false);
 const recordingKey = ref('');
+// 录制快捷键前的原值：中途关闭弹窗时用来还原占位文案
+let recordingPrevValue = '';
 const shortcuts = ref({});
 const proxyForm = reactive({ url: '', testing: false, testResult: '', testStatus: '' });
 const apiBaseUrlForm = reactive({ url: '', testing: false, testResult: '', testStatus: '' });
@@ -930,7 +932,15 @@ const openShortcutSettings = () => {
 
 const closeShortcutSettings = () => {
     showShortcutModal.value = false;
+    // 中途关闭：把占位文案还原成原来的快捷键，
+    // 否则保存时会被快捷键格式校验判为「无效的快捷键设置」而无法保存。
+    if (recordingKey.value && shortcuts.value[recordingKey.value] === t('qing-an-xia-xiu-shi-jian')) {
+        shortcuts.value[recordingKey.value] = recordingPrevValue;
+    }
     recordingKey.value = '';
+    // 中途关闭弹窗时必须摘掉 keydown 监听器：
+    // 旧实现只在录制成功/组件卸载时移除，反复「开始录制 → 关闭」会不断累积监听器。
+    window.removeEventListener('keydown', recordShortcut);
 };
 
 const displayShortcut = (key) => {
@@ -966,6 +976,7 @@ const displayShortcut = (key) => {
 
 const startRecording = (key) => {
     recordingKey.value = key;
+    recordingPrevValue = shortcuts.value[key] || '';
     shortcuts.value[key] = t('qing-an-xia-xiu-shi-jian');
     window.addEventListener('keydown', recordShortcut);
 };

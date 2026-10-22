@@ -248,7 +248,7 @@ const getCurrentLineIndex = (currentTime) => {
 };
 
 const progressBar = useProgressBar(audio, resetLyricsHighlight);
-const { progressWidth, isProgressDragging, showTimeTooltip, tooltipPosition, tooltipTime, climaxPoints, formatTime, getMusicHighlights, onProgressDragStart, updateProgressFromEvent, updateTimeTooltip, hideTimeTooltip } = progressBar;
+const { progressWidth, isProgressDragging, showTimeTooltip, tooltipPosition, tooltipTime, climaxPoints, formatSeconds, formatDurationMs, getMusicHighlights, onProgressDragStart, updateProgressFromEvent, updateTimeTooltip, hideTimeTooltip } = progressBar;
 
 const playbackMode = usePlaybackMode(t, audio);
 const { playbackModes, currentPlaybackModeIndex, currentPlaybackMode, playedSongsStack, currentStackIndex, togglePlaybackMode, setPlaybackMode } = playbackMode;
@@ -565,6 +565,16 @@ const handleAutoSwitch = () => {
     }
 };
 
+// 复位连续失败计数：一旦有歌曲成功播放，失败连续计数就清零。
+// 旧实现只在「达到上限」的分支里归零，计数实际变成了应用生命周期累计值 ——
+// 累计 5 次自动切歌后，后续所有失败都不再自动切换。
+const resetAutoSwitchCount = () => {
+    if (autoSwitchCount !== 0) {
+        console.log('[PlayerEngine] 播放成功，复位自动切换计数');
+        autoSwitchCount = 0;
+    }
+};
+
 // 清除自动切换定时器的函数
 const clearAutoSwitchTimer = () => {
     if (autoSwitchTimer) {
@@ -629,8 +639,9 @@ const retryMissingLyrics = () => {
 };
 
 // 计算属性
-const formattedCurrentTime = computed(() => formatTime(currentTime.value));
-const formattedDuration = computed(() => formatTime(currentSong.value?.timeLength || 0));
+const formattedCurrentTime = computed(() => formatSeconds(currentTime.value));
+// timeLength 单位是毫秒，不能直接和 audio.currentTime（秒）相除
+const formattedDuration = computed(() => formatDurationMs(currentSong.value?.timeLength || 0));
 
 // 判断是否有多种歌词模式（同时有翻译和音译）
 const hasMultiLyricsMode = computed(() => {
@@ -709,6 +720,7 @@ const playSong = async (song) => {
                 await playPromise;
                 console.log('[PlayerEngine] 成功开始播放歌曲');
                 playing.value = true;
+                resetAutoSwitchCount();
             }
         } catch (playError) {
             if(playError.name.includes('NotSupportedError')) {
@@ -722,6 +734,7 @@ const playSong = async (song) => {
             try {
                 await audio.play();
                 playing.value = true;
+                resetAutoSwitchCount();
             } catch (retryError) {
                 console.error('[PlayerEngine] 重试播放失败:', retryError);
                 window.$modal.alert(t('bo-fang-shi-bai'));
@@ -1487,7 +1500,11 @@ onMounted(() => {
         const savedProgress = localStorage.getItem('player_progress');
         audio.currentTime = savedProgress;
         console.log('[PlayerEngine] 恢复播放进度:', savedProgress);
-        progressWidth.value = (audio.currentTime / currentSong.value.timeLength) * 100;
+        // timeLength 是毫秒，audio.currentTime 是秒：直接相除会让进度条只有真实值的 1/1000
+        const totalMs = Number(currentSong.value?.timeLength) || 0;
+        if (totalMs > 0) {
+            progressWidth.value = (audio.currentTime * 1000 / totalMs) * 100;
+        }
     }
 
     // 恢复播放速度设置

@@ -116,6 +116,6 @@ export const share = (songName, id, type = 0, songDesc = '') => {
     navigator.clipboard.writeText(text);
     // $message 由 MessagePlugin 挂载，可选链兜底（插件未就绪时不至于抛 ReferenceError）
     window.$message?.success(
-        i18n.global.t('kou-ling-yi-fu-zhi,kuai-ba-ge-qu-fen-xiang-gei-peng-you-ba')
+        i18n.global.t('fen-xiang-cheng-gong')
     );
 };

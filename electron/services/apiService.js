@@ -34,6 +34,9 @@ class ApiService {
             this.wsServer = null;
             return;
         }
+        this.wsServer.on('listening', () => {
+            console.log('WebSocket server running at ws://127.0.0.1:6520');
+        });
         this.wsServer.on('error', (error) => {
             console.error('WebSocket 服务器错误:', error);
             try {
@@ -85,7 +88,7 @@ class ApiService {
             });
         });
 
-        console.log('WebSocket server running at ws://127.0.0.1:6520');
+        console.log('WebSocket 服务已启动（端口 6520）');
     }
 
     stop() {

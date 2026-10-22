@@ -161,5 +161,9 @@
   "an-zhuang-cha-jian-chu-cuo": "プラグインのインストール中にエラー",
   "cha-jian-bao": "プラグインパッケージ",
   "wei-zhi-cuo-wu": "不明なエラー",
-  "proxy-test-browser-unsupported": "ブラウザ環境ではプロキシを検証できません（デスクトップ版で検証可能）"
+  "proxy-test-browser-unsupported": "ブラウザ環境ではプロキシを検証できません（デスクトップ版で検証可能）",
+  "fen-xiang-cheng-gong": "共有リンクをクリップボードにコピーしました",
+  "cai-ni-xi-huan": "あなたへのおすすめ",
+  "mei-ri-tui-jian": "デイリーレコメンド",
+  "wo-xi-huan": "お気に入り"
 }

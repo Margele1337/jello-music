@@ -3,6 +3,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { t } from '../language/i18n.js';
 import { openSettingsWindow, getSigmaWindow, createSigmaWindow } from '../appServices.js';
+// 自定义托盘菜单的「检查更新」入口：漏掉这行会在点击时抛 ReferenceError，
+// 异常被 uncaughtException 吞掉 → 表现为「点了没反应，也没有任何提示」。
+import { checkForUpdates } from './updater.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TRAY_MENU_WIDTH = 300;

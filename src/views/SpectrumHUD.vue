@@ -285,7 +285,15 @@ onMounted(() => {
   window.electron.ipcRenderer.send('spectrum-hud-ready')
 
   document.addEventListener('dblclick', (e) => {
-    if (!e.target.closest('.spectrum-info')) { locked.value = !locked.value; applyLock() }
+    if (!e.target.closest('.spectrum-info')) {
+      locked.value = !locked.value
+      applyLock()
+      // 通知主进程：重新锁定时窗口回到贴底位置（清掉此前手动拖动的位置）
+      window.electron?.ipcRenderer?.send('spectrum-setting-update', {
+        key: 'spectrumLocked',
+        value: locked.value ? 'on' : 'off'
+      })
+    }
   })
 })
 
@@ -313,6 +321,9 @@ body { background: transparent; overflow: hidden; }
 .spectrum-canvas {
   position: absolute; inset: 0;
   display: block;
+  /* -webkit-app-region 不继承：canvas 铺满整个窗口，不显式继承的话默认 none，
+     会把父级 .spectrum-hud.hud-editing 的 drag 区域整块挡住 → 解锁后拖不动窗口 */
+  -webkit-app-region: inherit;
 }
 
 .spectrum-info {

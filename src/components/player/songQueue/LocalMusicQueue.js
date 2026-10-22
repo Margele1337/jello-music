@@ -216,8 +216,7 @@ export default function useLocalMusicQueue(t, musicQueueStore, currentSong, time
             return { song };
         } catch (error) {
             console.error('[SongQueue] 获取本地音乐地址出错:', error);
-            currentSong.value.author = currentSong.value.name = '获取本地音乐失败';
-            // if (musicQueueStore.queue.length === 0) return { error: true };
+            // 提示用户「稍后自动切换下一首」（原先上面那句硬编码中文的赋值是死代码，会被这一行覆盖）
             currentSong.value.author = t('3-miao-hou-zi-dong-qie-huan-xia-yi-shou');
 
             // 返回需要切换到下一首的标志，而不是直接调用playSongFromQueue

@@ -7,7 +7,7 @@ import {
     registerShortcut,
     createLyricsWindow, setThumbarButtons,
     registerProtocolHandler, sendHashAfterLoad, getTray,
-    createSpectrumWindow, stopSpectrumFullscreenWatcher, syncSpectrumGeometry,
+    createSpectrumWindow, stopSpectrumFullscreenWatcher, syncSpectrumGeometry, resetSpectrumManualPosition,
     createKeystrokesWindow, closeKeystrokesWindow, getKeystrokesWindow,
     createSigmaWindow, closeSigmaWindow, getSigmaWindow, restoreSigmaWindow, moveSigmaWindow,
     finishSigmaDrag, applySigmaAnimatePosition, finishSigmaAnimate, openSettingsWindow,
@@ -272,6 +272,12 @@ app.on('will-quit', () => {
     globalShortcut.unregisterAll();
 });
 ipcMain.on('save-settings', (event, settings) => {
+    // 渲染端可能传 null / 数组 / 字符串：直接 store.set 会把整份设置清空或写成非法结构。
+    // 只接受普通对象，其余一律拒绝。
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        console.warn('[main] 忽略非法的 save-settings 参数:', typeof settings, Array.isArray(settings));
+        return;
+    }
     store.set('settings', settings);
     if (['on', 'off'].includes(settings?.autoStart)) {
         app.setLoginItemSettings({
@@ -329,6 +335,10 @@ ipcMain.on('spectrum-setting-update', (_event, { key, value }) => {
     const spectrumWindow = mainWindow?.spectrumWindow;
     if (spectrumWindow) {
         spectrumWindow.webContents.send('spectrum-setting-changed', { key, value });
+    }
+    // 重新锁定频谱 = 回到贴底锚定，清掉此前手动拖动的位置
+    if (key === 'spectrumLocked' && value === 'on') {
+        resetSpectrumManualPosition();
     }
 });
 

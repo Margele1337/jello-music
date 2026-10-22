@@ -119,6 +119,8 @@ let hasDragMoved = false
 let resizeState = null
 let hoverPollingTimer = null
 let hoverPollingPending = false
+// 5ms 进度估算定时器：卸载时必须清理，否则组件销毁后仍以 200Hz 空转
+let playbackTimer = null
 const currentLineStyle = computed(() => ({
     transform: `translateX(${currentLineScrollX.value}px)`
 }))
@@ -601,7 +603,8 @@ onMounted(() => {
     document.addEventListener('mousemove', onDrag)
     document.addEventListener('mouseup', endDrag)
     fontSize.value = parseInt(localStorage.getItem('lyrics-font-size') || '32')
-    setInterval(() => { isPlaying.value && (currentTime.value += 5) }, 5)
+    // 5ms 定时器估算播放进度：句柄要留着，卸载时清掉（否则组件销毁后仍以 200Hz 空转）
+    playbackTimer = setInterval(() => { isPlaying.value && (currentTime.value += 5) }, 5)
 })
 
 const onDrag = (event) => {
@@ -672,6 +675,10 @@ const endDrag = () => {
 
 onBeforeUnmount(() => {
     stopHoverPolling()
+    if (playbackTimer) {
+        clearInterval(playbackTimer)
+        playbackTimer = null
+    }
     window.removeEventListener('storage', handleStorageChange)
     document.removeEventListener('mousemove', checkMousePosition)
     document.removeEventListener('mouseleave', handleMouseLeave)
