@@ -20,6 +20,9 @@ const { TouchBarLabel, TouchBarButton, TouchBarGroup, TouchBarSpacer } = TouchBa
 let mainWindow = null;
 let apiProcess = null;
 let tray = null;
+// TouchBar 的 IPC 监听器引用：重复创建 TouchBar 时先摘除旧的，避免重复注册
+let touchBarPlayPauseHandler = null;
+let touchBarLyricsHandler = null;
 
 // 创建主窗口
 export function createWindow() {
@@ -380,9 +383,9 @@ export function createLyricsWindow() {
 
     lyricsWindow.on('resize', persistLyricsWindowBounds);
     lyricsWindow.on('move', persistLyricsWindowBounds);
-    mainWindow.lyricsWindow = lyricsWindow;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.lyricsWindow = lyricsWindow;
     lyricsWindow.on('closed', () => {
-        mainWindow.lyricsWindow = null;
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.lyricsWindow = null;
     });
 
     if (isDev) {
@@ -494,9 +497,9 @@ export function createSpectrumWindow() {
         persistSpectrumWindowBounds();
         applySpectrumGeometry();
     });
-    mainWindow.spectrumWindow = spectrumWindow;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.spectrumWindow = spectrumWindow;
     spectrumWindow.on('closed', () => {
-        mainWindow.spectrumWindow = null;
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.spectrumWindow = null;
         spectrumGeometryKey = '';
         spectrumDipScale = 0;
     });
@@ -1232,7 +1235,6 @@ label: t('show-dock'),
 // 创建 TouchBar
 export function createTouchBar(mainWindow) {
     const ICON_SIZE = 16;
-
     let isPlaying = false;
 
     const iconPath = (iconName) => {
@@ -1294,18 +1296,26 @@ export function createTouchBar(mainWindow) {
 
     mainWindow.setTouchBar(touchBar);
 
-    // 监听播放状态变化
-    ipcMain.on("play-pause-action", (event, playing) => {
+    // 监听播放状态变化 / 歌词更新。
+    // 用可移除的具名 handler：createTouchBar 若被再次调用（设置里重开 TouchBar），
+    // 旧的匿名监听器无法摘除，会重复注册、越积越多（MaxListenersExceededWarning + 重复回调）。
+    if (touchBarPlayPauseHandler) {
+        ipcMain.removeListener("play-pause-action", touchBarPlayPauseHandler);
+    }
+    if (touchBarLyricsHandler) {
+        ipcMain.removeListener("update-current-lyrics", touchBarLyricsHandler);
+    }
+    touchBarPlayPauseHandler = (event, playing) => {
         isPlaying = playing;
         playPauseButton.icon = iconPath(isPlaying ? "pause" : "play");
-    });
-
-    // 监听歌词更新
-    ipcMain.on("update-current-lyrics", (event, currentLyric) => {
+    };
+    touchBarLyricsHandler = (event, currentLyric) => {
         if (currentLyric) {
             lyricsLabel.label = currentLyric;
         }
-    });
+    };
+    ipcMain.on("play-pause-action", touchBarPlayPauseHandler);
+    ipcMain.on("update-current-lyrics", touchBarLyricsHandler);
 
     return touchBar;
 }
@@ -1469,9 +1479,20 @@ export function startApiServer() {
 
             apiProcessSpawned.on('exit', (code, signal) => {
                 log.info(`API 退出，code=${code} signal=${signal ?? ''}`);
+                const wasRunning = settled;
                 if (apiProcess === apiProcessSpawned) apiProcess = null;
                 // 进程在就绪前就退出 = 真正的启动失败
                 settle(reject, new Error(`API 进程提前退出（code=${code}，signal=${signal ?? 'none'}）`));
+                // 已就绪之后侧车才退出 = 运行期崩溃：用户侧表现为所有音乐请求失败，
+                // 但没有任何提示（会被当成自己的网络问题），必须明确告知
+                if (wasRunning && !app.isQuitting) {
+                    dialog.showMessageBox({
+                        type: 'error',
+                        title: t('error'),
+                        message: t('api-crashed'),
+                        buttons: [t('ok')]
+                    });
+                }
             });
 
             // 兜底判据：轮询 6521 直到可达，超时才算失败
@@ -1759,7 +1780,15 @@ function handleArgv(argv) {
 
 // 处理URL
 function handleUrl(url) {
-    const urlObj = new URL(url);
+    // 深链 URL 畸形时 new URL 会抛异常：本函数在 second-instance 同步链路里被调用，
+    // 异常会一路冒到进程级 uncaughtException（只打日志），导致唤起应用的后续逻辑全丢
+    let urlObj;
+    try {
+        urlObj = new URL(url);
+    } catch (error) {
+        console.error('[Protocol] 无效的 jello:// 链接:', url, error);
+        return;
+    }
 
     // 提取所有参数并更新全局变量
     hash = urlObj.searchParams.get("hash") || "";

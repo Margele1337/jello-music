@@ -1,12 +1,11 @@
 // src/services/request.js
 import axios from 'axios';
 import { MoeAuthStore } from '../stores/store';
-import { getApiBaseUrl } from './apiBaseUrl';
+import { getApiBaseUrl, DEFAULT_API_BASE_URL } from './apiBaseUrl';
 import { handleRiskResponse } from './riskVerify';
 
 // 创建一个 axios 实例
 const httpClient = axios.create({
-    baseURL: getApiBaseUrl(),
     timeout: 10000,
     headers: {
         'Content-Type': 'application/json',
@@ -17,6 +16,9 @@ const httpClient = axios.create({
 // 请求拦截器
 httpClient.interceptors.request.use(
     config => {
+        // baseURL 不写死在 create 里：否则设置里改了 API 地址必须重启应用才生效。
+        // 每次请求动态取（失败时回退默认值）
+        config.baseURL = getApiBaseUrl() || DEFAULT_API_BASE_URL;
         const MoeAuth = MoeAuthStore();
         const token = MoeAuth.UserInfo?.token;
         const userid = MoeAuth.UserInfo?.userid;

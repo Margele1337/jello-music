@@ -3,9 +3,13 @@ import axios from 'axios';
 import { getApiBaseUrl } from '../utils/apiBaseUrl';
 
 // 用于设备注册的独立 axios 实例（不带拦截器，避免循环依赖）
+// baseURL 动态取：设置里改了 API 地址不用重启也能生效
 const registerDeviceApi = axios.create({
-    baseURL: getApiBaseUrl(),
     timeout: 10000,
+});
+registerDeviceApi.interceptors.request.use((config) => {
+    config.baseURL = getApiBaseUrl();
+    return config;
 });
 
 export const MoeAuthStore = defineStore('MoeData', {

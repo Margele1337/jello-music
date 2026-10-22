@@ -272,6 +272,12 @@ app.on('will-quit', () => {
     globalShortcut.unregisterAll();
 });
 ipcMain.on('save-settings', (event, settings) => {
+    // 渲染端传 null/非对象会把整份设置清空（store.set 直接覆盖），
+    // 之后所有 settings?.xxx 读 undefined，功能被重置且难以定位
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        console.error('[main] 拒绝保存无效的 settings:', typeof settings);
+        return;
+    }
     store.set('settings', settings);
     if (['on', 'off'].includes(settings?.autoStart)) {
         app.setLoginItemSettings({
