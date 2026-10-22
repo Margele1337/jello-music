@@ -1275,10 +1275,9 @@ label: t('show-dock'),
     return tray;
 }
 
-// TouchBar 的 IPC 监听器引用：createTouchBar 可能被多次调用（重建 TouchBar / 切换账号），
+// TouchBar 的 IPC 监听器引用见文件顶部（touchBarPlayPauseHandler / touchBarLyricsHandler）：
+// createTouchBar 可能被多次调用（重建 TouchBar / 切换账号），
 // 匿名 handler 无法摘除 → 监听器会无限累积。这里保留引用，重建前先摘掉旧的。
-let touchBarPlayPauseHandler = null;
-let touchBarLyricsHandler = null;
 
 // 创建 TouchBar
 export function createTouchBar(mainWindow) {
@@ -1548,21 +1547,11 @@ export function startApiServer() {
 
             apiProcessSpawned.on('exit', (code, signal) => {
                 log.info(`API 退出，code=${code} signal=${signal ?? ''}`);
-                const wasRunning = settled;
                 if (apiProcess === apiProcessSpawned) apiProcess = null;
-                // 就绪后崩溃 → 弹本地化错误框；就绪前退出 = 真正的启动失败
+                // 就绪后崩溃 → 弹本地化错误框（notifyApiCrashed 内含 isQuitting 守卫）；
+                // 就绪前退出 = 真正的启动失败，由 settle(reject) 交给 main.js 弹 api-error
                 notifyApiCrashed(code, signal);
                 settle(reject, new Error(`API 进程提前退出（code=${code}，signal=${signal ?? 'none'}）`));
-                // 已就绪之后侧车才退出 = 运行期崩溃：用户侧表现为所有音乐请求失败，
-                // 但没有任何提示（会被当成自己的网络问题），必须明确告知
-                if (wasRunning && !app.isQuitting) {
-                    dialog.showMessageBox({
-                        type: 'error',
-                        title: t('error'),
-                        message: t('api-crashed'),
-                        buttons: [t('ok')]
-                    });
-                }
             });
 
             // 兜底判据：轮询 6521 直到可达，超时才算失败

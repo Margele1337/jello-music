@@ -19,7 +19,7 @@ const httpClient = axios.create({
 httpClient.interceptors.request.use(
     config => {
         // 动态取当前 API 基址：设置页保存后立即生效
-        config.baseURL = getApiBaseUrl();
+        config.baseURL = getApiBaseUrl() || DEFAULT_API_BASE_URL;
 
         const MoeAuth = MoeAuthStore();
         const token = MoeAuth.UserInfo?.token;
