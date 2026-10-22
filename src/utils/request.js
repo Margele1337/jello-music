@@ -1,7 +1,7 @@
 // src/services/request.js
 import axios from 'axios';
 import { MoeAuthStore } from '../stores/store';
-import { getApiBaseUrl } from './apiBaseUrl';
+import { getApiBaseUrl, DEFAULT_API_BASE_URL } from './apiBaseUrl';
 import { handleRiskResponse } from './riskVerify';
 
 // 创建一个 axios 实例

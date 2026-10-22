@@ -7,6 +7,10 @@ import { getApiBaseUrl } from '../utils/apiBaseUrl';
 const registerDeviceApi = axios.create({
     timeout: 10000,
 });
+registerDeviceApi.interceptors.request.use((config) => {
+    config.baseURL = getApiBaseUrl();
+    return config;
+});
 
 registerDeviceApi.interceptors.request.use(
     config => {
