@@ -410,7 +410,7 @@ export function createLyricsWindow() {
 
     lyricsWindow.on('resize', persistLyricsWindowBounds);
     lyricsWindow.on('move', persistLyricsWindowBounds);
-    mainWindow.lyricsWindow = lyricsWindow;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.lyricsWindow = lyricsWindow;
     lyricsWindow.on('closed', () => {
         // 主窗口可能已销毁（退出流程中），判空避免 TypeError
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -534,7 +534,7 @@ export function createSpectrumWindow() {
         }
         applySpectrumGeometry();
     });
-    mainWindow.spectrumWindow = spectrumWindow;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.spectrumWindow = spectrumWindow;
     spectrumWindow.on('closed', () => {
         // 主窗口可能已销毁（退出流程中），判空避免 TypeError
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1502,6 +1502,7 @@ export function startApiServer() {
             let apiReady = false;
             const notifyApiCrashed = (code, signal) => {
                 if (!apiReady) return; // 启动阶段的失败由 main.js 的 api-error 弹窗负责
+                if (app.isQuitting) return; // 正常退出时侧车是被我们主动杀掉的，不是崩溃
                 apiReady = false;
                 const detail = `code=${code}${signal ? ` signal=${signal}` : ''}`;
                 log.error(`API 运行期崩溃: ${detail}`);
