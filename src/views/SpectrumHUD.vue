@@ -1,5 +1,5 @@
 <template>
-  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }">
+  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }" :style="{ '--info-scale': infoScale }">
     <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
     <div class="spectrum-info" v-show="title || cover">
       <img v-if="cover" class="cover" :src="cover" alt="" />
@@ -41,6 +41,11 @@ const title = ref('')
 const author = ref('')
 const playing = ref(false)
 const locked = ref(true)
+// 封面/歌名信息块缩放（设置「频谱信息大小」，0.8~2）。基准是系统 UI 尺度：
+// CSS px 已含 devicePixelRatio，这里只做用户偏好倍数，不叠分辨率系数
+const INFO_SCALE_MIN = 0.8
+const INFO_SCALE_MAX = 2
+const infoScale = ref(1.25)
 
 // 非响应式频谱数据，避免高频 IPC 触发 Vue 响应式开销
 const levels = new Float32Array(BAR_COUNT)
@@ -262,6 +267,9 @@ onMounted(() => {
       applyLock()
     } else if (key === 'spectrumScale') {
       spectrumScale = parseFloat(value) || 1
+    } else if (key === 'spectrumInfoScale') {
+      const v = parseFloat(value)
+      if (Number.isFinite(v)) infoScale.value = Math.min(INFO_SCALE_MAX, Math.max(INFO_SCALE_MIN, v))
     } else if (key === 'spectrumSigmaSmoothing') {
       const v = Number.parseFloat(value)
       if (Number.isFinite(v)) spectrumSmoothing = Math.min(1, Math.max(0.001, v))
@@ -271,6 +279,10 @@ onMounted(() => {
   const settings = JSON.parse(localStorage.getItem('settings') || '{}')
   locked.value = settings?.spectrumLocked !== 'off'
   spectrumScale = parseFloat(settings?.spectrumScale || '1.0') || 1
+  const savedInfoScale = parseFloat(settings?.spectrumInfoScale || '')
+  if (Number.isFinite(savedInfoScale)) {
+    infoScale.value = Math.min(INFO_SCALE_MAX, Math.max(INFO_SCALE_MIN, savedInfoScale))
+  }
   const savedSmoothing = Number.parseFloat(settings?.spectrumSigmaSmoothing ?? '')
   if (Number.isFinite(savedSmoothing)) spectrumSmoothing = Math.min(1, Math.max(0.001, savedSmoothing))
 
@@ -324,14 +336,16 @@ body { background: transparent; overflow: hidden; }
 
 .spectrum-info {
   position: absolute;
-  left: 14px;
-  bottom: 12px;
+  left: calc(14px * var(--info-scale, 1.25));
+  bottom: calc(12px * var(--info-scale, 1.25));
   display: flex; align-items: center; gap: 10px;
   -webkit-app-region: no-drag;
   pointer-events: none;
-  /* 封面/歌名不随分辨率系数放大：CSS px 已含系统缩放（devicePixelRatio），
-     再乘分辨率系数（4K@150% 为 2.0）会比任务栏等系统 UI 大一圈（封面 192 物理像素，
-     接近任务栏高的 3 倍）。只有频谱条按物理分辨率复刻，信息块保持系统 UI 尺度。 */
+  /* 封面/歌名不随分辨率系数放大：CSS px 已含系统缩放（devicePixelRatio），再乘分辨率
+     系数（4K@150% 为 2.0）会比任务栏等系统 UI 大一圈。只有频谱条按物理分辨率复刻，
+     信息块保持系统 UI 尺度，用户可通过设置「频谱信息大小」调节偏好倍数。 */
+  transform: scale(var(--info-scale, 1.25));
+  transform-origin: left bottom;
 }
 .spectrum-info .cover {
   width: 64px; height: 64px;

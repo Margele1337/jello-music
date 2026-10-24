@@ -74,7 +74,7 @@
                 <h3>{{ getSettingItem(selectionType)?.selectionTitle }}</h3>
                 <input v-if="isFontSelection()" class="font-search" placeholder="搜索字体..."
                     v-model="fontSearch" />
-                <ul v-if="!isFontSelection() && selectionType !== 'audioOutputDevice' && selectionType !== 'spectrumScale' && selectionType !== 'spectrumSigmaSmoothing' && selectionType !== 'spectrumAvDelay'">
+                <ul v-if="!isFontSelection() && selectionType !== 'audioOutputDevice' && selectionType !== 'spectrumScale' && selectionType !== 'spectrumInfoScale' && selectionType !== 'spectrumSigmaSmoothing' && selectionType !== 'spectrumAvDelay'">
                     <li v-for="option in getSettingItem(selectionType)?.options || []" :key="option.value"
                         @click="selectOption(option)">
                         {{ option.displayText }}
@@ -127,6 +127,19 @@
                             <span>1.0</span>
                             <span>2.0</span>
                             <span>3.0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="selectionType === 'spectrumInfoScale'" class="scale-slider-container">
+                    <div class="scale-slider-label">频谱信息大小: {{ spectrumInfoScale.toFixed(2) }}x</div>
+                    <div class="scale-slider-wrapper">
+                        <input type="range" min="0.8" max="2" step="0.05" v-model.number="spectrumInfoScale"
+                            class="scale-slider" @input="previewSpectrumInfoScale" @change="saveSpectrumInfoScale" />
+                        <div class="scale-marks">
+                            <span>0.8</span>
+                            <span>1.25</span>
+                            <span>2.0</span>
                         </div>
                     </div>
                 </div>
@@ -417,6 +430,11 @@ const openSelection = (type, helpLink) => {
         spectrumScale.value = parseFloat(selectedSettings.value.spectrumScale?.value || '1.0') || 1.0;
     }
 
+    if (type === 'spectrumInfoScale') {
+        const saved = parseFloat(selectedSettings.value.spectrumInfoScale?.value ?? '');
+        spectrumInfoScale.value = Number.isFinite(saved) ? Math.min(2, Math.max(0.8, saved)) : 1.25;
+    }
+
     if (type === 'spectrumSigmaSmoothing') {
         const saved = parseFloat(selectedSettings.value.spectrumSigmaSmoothing?.value ?? '');
         spectrumSigmaSmoothing.value = Number.isFinite(saved) ? Math.min(1, Math.max(0.001, saved)) : 0.335;
@@ -672,7 +690,7 @@ const saveSettings = () => {
     if (isElectron()) {
         window.electron.ipcRenderer.send('save-settings', JSON.parse(JSON.stringify(settingsToSave)));
         // 实时通知频谱窗口
-        for (const key of ['spectrumLocked', 'spectrumScale', 'spectrumSigmaSmoothing']) {
+        for (const key of ['spectrumLocked', 'spectrumScale', 'spectrumInfoScale', 'spectrumSigmaSmoothing']) {
             if (key in settingsToSave) {
                 window.electron.ipcRenderer.send('spectrum-setting-update', { key, value: settingsToSave[key] });
             }
@@ -721,6 +739,11 @@ onMounted(() => {
             }
             if (key === 'spectrumScale') {
                 const value = savedSettings[key] || '1.0';
+                selectedSettings.value[key] = { displayText: `${value}x`, value: value };
+                continue;
+            }
+            if (key === 'spectrumInfoScale') {
+                const value = savedSettings[key] || '1.25';
                 selectedSettings.value[key] = { displayText: `${value}x`, value: value };
                 continue;
             }
@@ -1112,6 +1135,7 @@ const clearShortcut = (key) => {
 
 const dpiScale = ref(1.0);
 const spectrumScale = ref(1.0);
+const spectrumInfoScale = ref(1.25);
 const spectrumSigmaSmoothing = ref(0.335);
 const spectrumAvDelay = ref(590);
 
@@ -1126,6 +1150,23 @@ const previewSpectrumScale = () => {
 const saveSpectrumScale = () => {
     const value = spectrumScale.value.toFixed(1);
     selectedSettings.value.spectrumScale = {
+        displayText: `${value}x`,
+        value
+    };
+    saveSettings();
+};
+
+const previewSpectrumInfoScale = () => {
+    if (!isElectron()) return;
+    window.electron.ipcRenderer.send('spectrum-setting-update', {
+        key: 'spectrumInfoScale',
+        value: spectrumInfoScale.value.toFixed(2)
+    });
+};
+
+const saveSpectrumInfoScale = () => {
+    const value = spectrumInfoScale.value.toFixed(2);
+    selectedSettings.value.spectrumInfoScale = {
         displayText: `${value}x`,
         value
     };

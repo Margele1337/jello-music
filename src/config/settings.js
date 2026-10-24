@@ -65,6 +65,15 @@ export const createSettingSections = (t, actions = {}) => computed(() => [
                 label: '频谱幅度'
             },
             {
+                key: 'spectrumInfoScale',
+                defaultValue: '1.25',
+                defaultDisplayText: '1.25x',
+                itemIcon: 'fas fa-image',
+                selectionTitle: '频谱信息大小',
+                available: 'client',
+                label: '频谱信息大小'
+            },
+            {
                 key: 'spectrumSigmaSmoothing',
                 defaultValue: '0.335',
                 defaultDisplayText: '0.335（原版）',
