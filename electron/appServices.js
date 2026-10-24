@@ -14,6 +14,7 @@ import { bindExternalLinkHandler } from './services/externalLinkHandler.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
 import { checkForUpdates } from './services/updater.js';
 import { watchForegroundFullscreen, stopForegroundFullscreenWatcher } from './services/fullscreenWatcher.js';
+import { installSigmaSizeGuard } from './services/sigmaWindowGuard.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const store = new Store();
 const { TouchBarLabel, TouchBarButton, TouchBarGroup, TouchBarSpacer } = TouchBar;
@@ -665,6 +666,12 @@ let sigmaAnimating = false;
 const SIGMA_DOCK_VISIBLE = 40;   // 贴右边缘收起后保留可见的宽度（原版 var8 = parentWidth - 40）
 const SIGMA_RESTORE_MARGIN = 20; // 滑出后距右边缘的间距（原版 var11 = parentWidth - 20 - width）
 
+// 窗口尺寸按设计恒定（min/max 也锁同一值）。拖拽/吸附路径一律用常量而不是
+// getBounds 的实测值：跨缩放比例显示器拖动时 WM_DPICHANGED 可能瞬时改坏
+// 尺寸，若用 bounds.width 回写会把漂移固化。
+const SIGMA_WINDOW_WIDTH = 800;
+const SIGMA_WINDOW_HEIGHT = 600;
+
 // 拖拽中的「右缘是否越过屏幕右缘」信号（连续，1:1 对齐原版
 // MusicPlayer.draw 的 getXA() + getWidthA() > parent.getWidthA()）。
 // 与 sigmaDocked 分开：后者是离散吸附态，前者只描述几何位置。
@@ -864,29 +871,29 @@ export function moveSigmaWindow(x, y, movedX = 0) {
     const bounds = sigmaWindow.getBounds();
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
-    const display = screen.getDisplayMatching({ x: Math.round(x), y: Math.round(y), width: bounds.width, height: bounds.height });
+    const display = screen.getDisplayMatching({ x: Math.round(x), y: Math.round(y), width: SIGMA_WINDOW_WIDTH, height: SIGMA_WINDOW_HEIGHT });
     const area = display.workArea;
     const right = area.x + area.width;
     const bottom = area.y + area.height;
-    const nextY = Math.min(Math.max(Math.round(y), area.y), bottom - bounds.height);
+    const nextY = Math.min(Math.max(Math.round(y), area.y), bottom - SIGMA_WINDOW_HEIGHT);
 
     // 原版第 1 步：精确夹取，无越界余量（见 SIGMA_DOCK_VISIBLE 上方说明）
-    const clampedX = Math.min(Math.max(Math.round(x), area.x), right - bounds.width);
+    const clampedX = Math.min(Math.max(Math.round(x), area.x), right - SIGMA_WINDOW_WIDTH);
 
     // 原版第 2 步：var14 = 200, newHeight - mouseX > 70
-    if (x + bounds.width > right + 200 && movedX > 70) {
+    if (x + SIGMA_WINDOW_WIDTH > right + 200 && movedX > 70) {
         // var15 = desired - xA_clamped - var14；Math.trunc 对应 Java 的 (int) 向零取整
         const pushedX = clampedX + Math.trunc((x - clampedX - 200) * 0.5);
-        setSigmaOverhanging(pushedX + bounds.width > right);
+        setSigmaOverhanging(pushedX + SIGMA_WINDOW_WIDTH > right);
         if (pushedX !== bounds.x || nextY !== bounds.y) {
-            sigmaWindow.setBounds({ x: pushedX, y: nextY, width: bounds.width, height: bounds.height });
+            sigmaWindow.setBounds({ x: pushedX, y: nextY, width: SIGMA_WINDOW_WIDTH, height: SIGMA_WINDOW_HEIGHT });
         }
         return;
     }
 
-    setSigmaOverhanging(clampedX + bounds.width > right);
+    setSigmaOverhanging(clampedX + SIGMA_WINDOW_WIDTH > right);
     if (clampedX !== bounds.x || nextY !== bounds.y) {
-        sigmaWindow.setBounds({ x: clampedX, y: nextY, width: bounds.width, height: bounds.height });
+        sigmaWindow.setBounds({ x: clampedX, y: nextY, width: SIGMA_WINDOW_WIDTH, height: SIGMA_WINDOW_HEIGHT });
     }
 }
 
@@ -898,25 +905,25 @@ export function finishSigmaDrag() {
     const area = display.workArea;
     const right = area.x + area.width;
     const bottom = area.y + area.height;
-    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+    const centerY = Math.round(area.y + (area.height - SIGMA_WINDOW_HEIGHT) / 2);
 
     // 松手：若窗口已在屏幕外（几何越界）→ 吸附收起。
     // 判据是严格 > right，1:1 对齐原版 MusicPlayer.java:309
     // （getXA() + getWidthA() > parent.getWidthA()）。
     // 夹取已无余量，普通拖拽不可能触发这条分支，只有橡皮筋越界才会。
-    if (bounds.x + bounds.width > right) {
+    if (bounds.x + SIGMA_WINDOW_WIDTH > right) {
         setSigmaDocked(true);
         animateSigmaWindow(right - SIGMA_DOCK_VISIBLE, centerY);
         return;
     }
 
     setSigmaDocked(false);
-    const nextX = Math.min(Math.max(bounds.x, area.x), right - bounds.width);
-    const nextY = Math.min(Math.max(bounds.y, area.y), bottom - bounds.height);
+    const nextX = Math.min(Math.max(bounds.x, area.x), right - SIGMA_WINDOW_WIDTH);
+    const nextY = Math.min(Math.max(bounds.y, area.y), bottom - SIGMA_WINDOW_HEIGHT);
     // 未收起：清掉拖拽期的越界信号，之后透明度只跟 sigma-dock-changed 走
     setSigmaOverhanging(false);
     if (nextX !== bounds.x || nextY !== bounds.y) {
-        sigmaWindow.setBounds({ x: nextX, y: nextY, width: bounds.width, height: bounds.height });
+        sigmaWindow.setBounds({ x: nextX, y: nextY, width: SIGMA_WINDOW_WIDTH, height: SIGMA_WINDOW_HEIGHT });
     }
 }
 
@@ -931,10 +938,10 @@ export function restoreSigmaWindow() {
     // 不要用"是否越过右边缘"来判断是否需要滑出：收起动画进行中面板可能还在
     // 屏幕中间（如 x=1100），按几何位置判定会误判成"无需滑出"而直接返回，
     // 面板就卡在中间不动。sigmaDocked 才是权威标志。
-    if (!sigmaDocked && bounds.x + bounds.width <= right) return; // 未在屏幕外，无需滑出
-    const centerY = Math.round(area.y + (area.height - bounds.height) / 2);
+    if (!sigmaDocked && bounds.x + SIGMA_WINDOW_WIDTH <= right) return; // 未在屏幕外，无需滑出
+    const centerY = Math.round(area.y + (area.height - SIGMA_WINDOW_HEIGHT) / 2);
     setSigmaDocked(false);
-    animateSigmaWindow(right - bounds.width - SIGMA_RESTORE_MARGIN, centerY);
+    animateSigmaWindow(right - SIGMA_WINDOW_WIDTH - SIGMA_RESTORE_MARGIN, centerY);
 }
 
 export function createSigmaWindow() {
@@ -945,18 +952,16 @@ export function createSigmaWindow() {
     }
 
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-    const width = 800;
-    const height = 600;
 
     sigmaWindow = new BrowserWindow({
-        width,
-        height,
-        x: Math.max(0, Math.round((screenWidth - width) / 2)),
-        y: Math.max(0, Math.round((screenHeight - height) / 2)),
-        minWidth: width,
-        minHeight: height,
-        maxWidth: width,
-        maxHeight: height,
+        width: SIGMA_WINDOW_WIDTH,
+        height: SIGMA_WINDOW_HEIGHT,
+        x: Math.max(0, Math.round((screenWidth - SIGMA_WINDOW_WIDTH) / 2)),
+        y: Math.max(0, Math.round((screenHeight - SIGMA_WINDOW_HEIGHT) / 2)),
+        minWidth: SIGMA_WINDOW_WIDTH,
+        minHeight: SIGMA_WINDOW_HEIGHT,
+        maxWidth: SIGMA_WINDOW_WIDTH,
+        maxHeight: SIGMA_WINDOW_HEIGHT,
         resizable: false,
         maximizable: false,
         fullscreenable: false,
@@ -986,7 +991,13 @@ export function createSigmaWindow() {
         }
     });
 
+    // 尺寸守卫：跨缩放比例显示器拖动/系统缩放变化时，WM_DPICHANGED 可能绕过
+    // min/max 把窗口物理尺寸改坏（上游 Chromium/Electron 已知问题），这里双层
+    // 校验并自动修复。
+    const disposeSigmaSizeGuard = installSigmaSizeGuard(() => sigmaWindow, SIGMA_WINDOW_WIDTH, SIGMA_WINDOW_HEIGHT);
+
     sigmaWindow.on('closed', () => {
+        disposeSigmaSizeGuard();
         sigmaWindow = null;
         sigmaWindowLoaded = false;
         sigmaDocked = false;
