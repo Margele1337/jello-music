@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo ============================================
-echo   Jello Music - Dev Mode
+echo   Jello Music - Dev Mode (single console)
 echo ============================================
 echo.
 
@@ -12,22 +12,18 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":6521"') do taskkill /F /PID
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8080"') do taskkill /F /PID %%p >nul 2>&1
 
 :: ELECTRON_RUN_AS_NODE is cleared by electron/start-electron.cjs
+:: Electron itself waits for Vite/API readiness before spawning (start-electron.cjs)
 
 echo.
 echo   API  : http://localhost:6521
 echo   Web  : http://localhost:8080
+echo   All three services stream their logs into this one window.
+echo   Press Ctrl+C here to stop everything.
 echo ============================================
 echo.
 
-start "API" /D "%~dp0" cmd /k "npm run api"
-start "Vite" /D "%~dp0" cmd /k "npm run serve"
-
-echo   Waiting for Vite to start...
-timeout /t 4 /nobreak >nul
-
-echo   Starting Electron...
-start "Jello Music" /D "%~dp0" cmd /k "npm run electron:serve"
+call npm run dev
 
 echo.
-echo   Done. Check the 3 terminal windows for status.
-echo   If Electron window doesn't appear, check its terminal for errors.
+echo   Dev session ended.
+pause
