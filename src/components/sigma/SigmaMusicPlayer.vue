@@ -821,11 +821,3 @@ onBeforeUnmount(() => {
   -webkit-app-region: no-drag;
 }
 </style>
-
-<style>
-/* 原版像素图标按最近邻渲染，避免放大后发糊 */
-.sigma-music-player .sigma-small-image,
-.sigma-music-player .sigma-changing-button {
-  image-rendering: pixelated;
-}
-</style>
