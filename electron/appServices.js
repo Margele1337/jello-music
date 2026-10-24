@@ -1179,6 +1179,21 @@ export function openSettingsWindow(mainWindow) {
     return false;
 }
 
+// 重启应用。dev 模式下 vite/api 由 npm run dev（run-p）托管：旧实例退出时包装进程
+// start-electron.cjs 会连带杀掉它们，而 relaunch 只能重启 Electron 本身，新实例
+// 加载不到 8080 会白屏（表现为「点了重启没反应」）——dev 下诚实退出，让开发者
+// 重新 npm run dev。生产环境（打包产物）保持 relaunch 正常重启。
+export const restartApp = () => {
+    app.isQuitting = true;
+    if (isDev) {
+        console.log('[Restart] dev 模式不自动重启（vite/api 随旧实例退出），请重新 npm run dev');
+        app.quit();
+        return;
+    }
+    app.relaunch();
+    app.quit();
+};
+
 // 创建托盘图标及菜单
 export function createTray(mainWindow, title = '') {
     // 只要托盘已存在就复用：旧判据是 `tray && title`，title 为空串（无标题音源 /
@@ -1269,9 +1284,7 @@ label: t('show-dock'),
             label: t('restart-app'),
             icon: getIconPath('restart.png', 'menu'),
             click: () => {
-                app.relaunch();
-                app.isQuitting = true;
-                app.quit();
+                restartApp();
             }
         },
         { type: 'separator' },
