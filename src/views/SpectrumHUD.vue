@@ -13,6 +13,8 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/600.css';
 
 const BAR_COUNT = 114            // 与 sigmarebase renderSpectrum 的 maxWidth 一致
 const SPECTRUM_SMOOTHING = 0.335 // sigmarebase 60fps 平滑系数（onRender2D 里更新 amplitudes）
@@ -70,6 +72,12 @@ let blurredCover = null
 let blurredCoverStrip = null
 
 let coverLoadToken = 0
+
+// 部分上游接口给的是 150px 小图（或 {size} 模板未替换），显示尺寸已是 120 物理像素，
+// 小图放大会出现可见锯齿——统一提升到 480
+const bumpCoverUrl = (url) => typeof url === 'string'
+  ? url.replace('/150/', '/480/').replace('{size}', '480')
+  : url;
 
 const loadCover = (url) => {
   if (!url) {
@@ -233,9 +241,12 @@ onMounted(() => {
         pendingSnap = false
       }
     }
-    if (data.cover != null && data.cover !== cover.value) {
-      cover.value = data.cover
-      loadCover(data.cover)
+    if (data.cover != null) {
+      const url = bumpCoverUrl(data.cover)
+      if (url !== cover.value) {
+        cover.value = url
+        loadCover(url)
+      }
     }
     if (data.title != null) title.value = data.title
     if (data.author != null) author.value = data.author
@@ -338,18 +349,18 @@ body { background: transparent; overflow: hidden; }
   position: absolute;
   left: calc(14px * var(--info-scale, 1.25));
   bottom: calc(12px * var(--info-scale, 1.25));
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: calc(10px * var(--info-scale, 1.25));
   -webkit-app-region: no-drag;
   pointer-events: none;
-  /* 封面/歌名不随分辨率系数放大：CSS px 已含系统缩放（devicePixelRatio），再乘分辨率
-     系数（4K@150% 为 2.0）会比任务栏等系统 UI 大一圈。只有频谱条按物理分辨率复刻，
-     信息块保持系统 UI 尺度，用户可通过设置「频谱信息大小」调节偏好倍数。 */
-  transform: scale(var(--info-scale, 1.25));
-  transform-origin: left bottom;
+  /* 各元素尺寸用 calc 直接算最终大小，不用 transform: scale ——
+     transform 会把 64px 栅格位图整体放大（封面锯齿/文字发虚），
+     原生尺寸让浏览器按最终物理分辨率重新光栅化。
+     倍数不叠分辨率系数：CSS px 已含系统缩放（devicePixelRatio）。 */
 }
 .spectrum-info .cover {
-  width: 64px; height: 64px;
-  border-radius: 10px;
+  width: calc(64px * var(--info-scale, 1.25));
+  height: calc(64px * var(--info-scale, 1.25));
+  border-radius: calc(10px * var(--info-scale, 1.25));
   object-fit: cover;
   box-shadow: 0 2px 10px rgba(0,0,0,0.5);
 }
@@ -358,11 +369,16 @@ body { background: transparent; overflow: hidden; }
   text-shadow: 0 1px 3px rgba(0,0,0,0.7);
 }
 .spectrum-info .title {
-  color: #fff; font-size: 15px; font-weight: 600;
+  color: #fff;
+  font-family: 'JetBrains Mono', 'Microsoft YaHei', sans-serif;
+  font-size: calc(15px * var(--info-scale, 1.25));
+  font-weight: 600;
   white-space: nowrap; max-width: 40vw; overflow: hidden; text-overflow: ellipsis;
 }
 .spectrum-info .author {
-  color: rgba(255,255,255,0.75); font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  font-family: 'JetBrains Mono', 'Microsoft YaHei', sans-serif;
+  font-size: calc(12px * var(--info-scale, 1.25));
   white-space: nowrap; max-width: 40vw; overflow: hidden; text-overflow: ellipsis;
 }
 </style>

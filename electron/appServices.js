@@ -13,7 +13,7 @@ import { t } from './language/i18n.js';
 import { bindExternalLinkHandler } from './services/externalLinkHandler.js';
 import customTrayMenuService from './services/customTrayMenuService.js';
 import { checkForUpdates } from './services/updater.js';
-import { watchForegroundFullscreen, stopForegroundFullscreenWatcher } from './services/fullscreenWatcher.js';
+import { watchForegroundFullscreen, stopForegroundFullscreenWatcher, getForegroundFullscreenState } from './services/fullscreenWatcher.js';
 import { installSigmaSizeGuard } from './services/sigmaWindowGuard.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const store = new Store();
@@ -692,6 +692,8 @@ const setSigmaOverhanging = (overhanging) => {
 const setSigmaDocked = (docked) => {
     if (sigmaDocked === docked) return;
     sigmaDocked = docked;
+    // 收起 = 用户明确不再需要面板在前：立即撤掉呼出时的置顶（全屏保持也随之结束）
+    if (docked) unpinSigmaWindow();
     if (sigmaWindow && !sigmaWindow.isDestroyed()) {
         sigmaWindow.webContents.send('sigma-dock-changed', docked);
     }
@@ -1003,6 +1005,10 @@ export function createSigmaWindow() {
 
     sigmaWindow.on('closed', () => {
         disposeSigmaSizeGuard();
+        if (sigmaRaiseTimer) {
+            clearTimeout(sigmaRaiseTimer);
+            sigmaRaiseTimer = null;
+        }
         sigmaWindow = null;
         sigmaWindowLoaded = false;
         sigmaDocked = false;
@@ -1042,18 +1048,38 @@ export function getSigmaWindow() {
 
 // 把 Sigma 窗口临时提到最前（呼出瞬间置顶，不常驻）。
 // 用普通置顶层级即可，随后 600ms 降回，避免长期压住其它应用。
+// 例外：前台是全屏应用（典型：游戏）时，降回会让面板立刻沉到全屏窗口后面，
+// 看起来像「呼出没反应」——此时保持置顶，直到全屏退出或用户再次收起。
+let sigmaRaiseTimer = null;
+
+const unpinSigmaWindow = () => {
+    if (sigmaRaiseTimer) {
+        clearTimeout(sigmaRaiseTimer);
+        sigmaRaiseTimer = null;
+    }
+    if (sigmaWindow && !sigmaWindow.isDestroyed()) {
+        sigmaWindow.setAlwaysOnTop(false);
+    }
+};
+
 export const raiseSigmaWindow = (win) => {
     if (!win || win.isDestroyed()) return;
     win.setAlwaysOnTop(true);
     win.show();
     win.moveTop();
     win.focus();
-    // 置顶只是「叫到前面」，一段时间后降回普通层级，避免长期压住其它应用
-    setTimeout(() => {
-        if (sigmaWindow && !sigmaWindow.isDestroyed()) {
-            sigmaWindow.setAlwaysOnTop(false);
+    if (sigmaRaiseTimer) clearTimeout(sigmaRaiseTimer);
+    const dropWhenSafe = () => {
+        sigmaRaiseTimer = null;
+        if (!sigmaWindow || sigmaWindow.isDestroyed()) return;
+        if (getForegroundFullscreenState().fullscreen) {
+            // 全屏还在前台：降回等于隐身，继续等（500ms 后再查）
+            sigmaRaiseTimer = setTimeout(dropWhenSafe, 500);
+            return;
         }
-    }, 600);
+        sigmaWindow.setAlwaysOnTop(false);
+    };
+    sigmaRaiseTimer = setTimeout(dropWhenSafe, 600);
 };
 
 // 吸附到右侧收起位（共用逻辑：快捷键与托盘切换收起）
@@ -1090,7 +1116,9 @@ const toggleSigmaDocked = (force = false) => {
     dockSigmaWindow();
 };
 
-// RSHIFT 全局热键：与托盘菜单同一套逻辑，共用 toggleSigmaDocked
+// RSHIFT 全局热键：与托盘菜单同一套逻辑，共用 toggleSigmaDocked。
+// 呼出（滑出）后必须置顶：否则面板只是滑出来了，仍压在别的窗口/全屏游戏
+// 后面，表现就是「按了右 Shift 没反应」。
 export function toggleSigmaWindowFromHotkey() {
     if (!sigmaWindow || sigmaWindow.isDestroyed()) {
         const win = createSigmaWindow();
@@ -1100,6 +1128,9 @@ export function toggleSigmaWindowFromHotkey() {
         return;
     }
     toggleSigmaDocked();
+    if (sigmaWindow && !sigmaWindow.isDestroyed() && !sigmaDocked) {
+        raiseSigmaWindow(sigmaWindow);
+    }
 }
 
 const getIconPath = (iconName, subPath = '') => path.join(

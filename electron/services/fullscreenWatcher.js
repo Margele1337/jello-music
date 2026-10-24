@@ -70,14 +70,17 @@ const probeFullscreen = () => {
         return { fullscreen: false, monitor: null };
     }
 
-    const rect = new api.RECT();
+    // koffi 3.x 的结构体类型不是构造器：`new api.RECT()` 会抛
+    // "TypeError: RECT is not a constructor"，被下方轮询的 try/catch 吞掉后
+    // 探测每 500ms 静默失败一次，全屏 anchoring 全部失效。正确写法是传普通
+    // 对象（koffi 负责 marshalling），已在 tools/sigma-growth-repro 实测验证。
+    const rect = {};
     if (!api.GetWindowRect(hwnd, rect)) {
         return { fullscreen: false, monitor: null };
     }
 
     const monitor = api.MonitorFromWindow(hwnd, 2); // MONITOR_DEFAULTTONEAREST
-    const info = new api.MONITORINFO();
-    info.cbSize = MONITORINFO_SIZE;
+    const info = { cbSize: MONITORINFO_SIZE };
     if (!api.GetMonitorInfo(monitor, info)) {
         return { fullscreen: false, monitor: null };
     }
@@ -143,6 +146,15 @@ export const watchForegroundFullscreen = (callback) => {
     callback(lastState);
     return () => listeners.delete(callback);
 };
+
+// 应用启动即常驻探测（空监听器占位）：RShift 呼出置顶的「全屏保持」判定
+// 需要在频谱窗口（现有唯一订阅方）创建之前就能拿到状态
+export const ensureForegroundFullscreenWatcher = () => {
+    watchForegroundFullscreen(() => {});
+};
+
+// 同步读取当前前台全屏状态（koffi 尚未就绪时返回初始的非全屏态）
+export const getForegroundFullscreenState = () => lastState;
 
 export const stopForegroundFullscreenWatcher = () => {
     listeners.clear();

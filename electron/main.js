@@ -20,6 +20,7 @@ import { setupDesktopShortcutIcon } from './services/desktopShortcutIcon.js';
 import { openLogPath, exportLog } from './services/logHelper.js';
 import { setupAutoUpdater, checkForUpdates } from './services/updater.js';
 import { initGlobalKeyListener, stopGlobalKeyListener, setGlobalKeySuspended, setKeystrokesEnabled, setKeystrokeHandler } from './services/globalKeyService.js';
+import { ensureForegroundFullscreenWatcher } from './services/fullscreenWatcher.js';
 import Store from 'electron-store';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -127,6 +128,8 @@ app.on('ready', () => {
             sendHashAfterLoad(mainWindow);
             setupAutoUpdater(mainWindow);
             checkForUpdates(true);
+            // 全屏探测常驻（RShift 呼出的「全屏保持置顶」判定要在频谱窗口创建前就可用）
+            ensureForegroundFullscreenWatcher();
             initGlobalKeyListener({ onRightShift: () => toggleSigmaWindowFromHotkey() });
             // 启动时就开着 KeyStrokes 覆盖层：WASD/鼠标轮询也要启起来
             if (store.get('settings')?.desktopKeystrokes === 'on') {
