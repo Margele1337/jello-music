@@ -189,9 +189,14 @@ const SPECTRUM_MAX_SCALE = 4;
 const clampSpectrumScale = (scale) =>
     Math.min(SPECTRUM_MAX_SCALE, Math.max(SPECTRUM_MIN_SCALE, scale));
 
-// 相对 1080p 的物理像素缩放系数
+// 相对 1080p 的物理像素缩放系数。
+// 注意 display.size 是 DIP（逻辑像素）：4K@150% 下 size.height=1440 而物理是 2160，
+// 直接除 1080 会把系数算小 1.5 倍，导致窗口只铺 2/3 屏宽、高度不足（频谱显示不全），
+// 也与渲染端 detectDisplayScale（screen.height × devicePixelRatio = 物理高度）不一致。
 const getSpectrumGeometryScale = (display) => {
-    const pixelHeight = display?.size?.height || 0;
+    const factor = display?.scaleFactor;
+    const dipHeight = display?.size?.height || 0;
+    const pixelHeight = dipHeight * (factor > 0 ? factor : 1);
     if (!pixelHeight) return 1;
     return clampSpectrumScale(pixelHeight / SPECTRUM_REFERENCE_HEIGHT);
 };
