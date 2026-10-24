@@ -118,6 +118,41 @@ onUnmounted(() => {
 </style>
 
 <style>
+/* ===== 全局主题变量 =====
+   2.0 界面收敛时，旧 HomeLayout 的 :root 变量块随主界面一并删除，但
+   CustomModal / PlaylistSelectModal / QueueList / Login / Lyrics / Settings
+   仍在引用它们。弹窗类组件挂载在 document.body 下（不在 .blur-glass 子树内，
+   拿不到玻璃变量），因此这里必须用具体值定义 —— :root 能被所有挂载点继承。
+   缺失的典型症状：window.$modal 弹窗按钮 background 落空变透明，
+   白字白底，看起来"没有确认键"。 */
+:root {
+    /* 粉红色主色调 - 用于主要按钮、强调元素 */
+    --primary-color: #FF69B4;
+    /* 浅粉红色辅助色 - 用于次要按钮、列表悬停 */
+    --secondary-color: #FFB6C1;
+    /* 文本颜色 - 用于正文内容 */
+    --text-color: #333;
+    --secondary-text-color: #666;
+    /* 高亮色 - 用于交互元素如按钮、链接 */
+    --color-primary: #ea33e4;
+    --color-primary-light: rgba(255, 105, 180, 0.1);
+    --color-primary-bg: rgba(255, 105, 180, 0.12);
+    /* 半透明背景 - 用于卡片、弹窗面板 */
+    --background-color: rgba(255, 240, 245, 0.72);
+    --background-color-secondary: rgba(255, 230, 240, 0.72);
+    /* 边框颜色 - 用于分隔线、边框 */
+    --border-color: rgba(255, 217, 230, 0.3);
+    /* 悬停颜色 - 用于元素悬停状态 */
+    --hover-color: rgba(255, 233, 242, 0.6);
+    --button-background-color: #f2f2f2;
+    /* 半透明背景 - 用于覆盖层、提示框 */
+    --color-secondary-bg-for-transparent: rgba(209, 209, 214, 0.22);
+    /* 阴影颜色 - 用于卡片、弹窗阴影 */
+    --color-box-shadow: rgba(255, 105, 180, 0.15);
+    /* 玻璃弹窗模糊半径（.rise-active .modal-content 规则消费） */
+    --glass-blur: 14px;
+}
+
 /* ===== Rise 背景公共样式 =====
    只用 :has() 两条：根节点是 body 的子元素，.rise-active ~ body 这种兄弟
    选择器永远匹配不到，已删除。 */
