@@ -1,5 +1,5 @@
 <template>
-  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }" :style="{ '--hud-scale': hudScale }">
+  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }">
     <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
     <div class="spectrum-info" v-show="title || cover">
       <img v-if="cover" class="cover" :src="cover" alt="" />
@@ -23,8 +23,6 @@ const SPECTRUM_SMOOTHING = 0.335 // sigmarebase 60fps 平滑系数（onRender2D 
 const REFERENCE_DISPLAY_HEIGHT = 1080
 const REFERENCE_GAME_HEIGHT = 1009
 const REFERENCE_BAR_RATIO = REFERENCE_GAME_HEIGHT / REFERENCE_DISPLAY_HEIGHT
-const HUD_SCALE_MIN = 0.75
-const HUD_SCALE_MAX = 2
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
@@ -36,7 +34,6 @@ const detectDisplayScale = () => {
 }
 
 let displayScale = detectDisplayScale()
-const hudScale = ref(clamp(displayScale, HUD_SCALE_MIN, HUD_SCALE_MAX))
 
 const canvasRef = ref(null)
 const cover = ref('')
@@ -257,7 +254,6 @@ onMounted(() => {
     if (!Number.isFinite(scale) || scale <= 0) return
     // 主进程掌握窗口实际所在显示器，比 window.screen 更准（多屏 / 跨屏拖动）
     displayScale = clamp(scale, 0.5, 4)
-    hudScale.value = clamp(displayScale, HUD_SCALE_MIN, HUD_SCALE_MAX)
   })
 
   window.electron.ipcRenderer.on('spectrum-setting-changed', (_e, { key, value }) => {
@@ -328,14 +324,14 @@ body { background: transparent; overflow: hidden; }
 
 .spectrum-info {
   position: absolute;
-  left: calc(14px * var(--hud-scale, 1));
-  bottom: calc(12px * var(--hud-scale, 1));
+  left: 14px;
+  bottom: 12px;
   display: flex; align-items: center; gap: 10px;
   -webkit-app-region: no-drag;
   pointer-events: none;
-  /* 高分辨率下封面/文字跟条形一起放大，否则 4K 上只有频谱变大 */
-  transform: scale(var(--hud-scale, 1));
-  transform-origin: left bottom;
+  /* 封面/歌名不随分辨率系数放大：CSS px 已含系统缩放（devicePixelRatio），
+     再乘分辨率系数（4K@150% 为 2.0）会比任务栏等系统 UI 大一圈（封面 192 物理像素，
+     接近任务栏高的 3 倍）。只有频谱条按物理分辨率复刻，信息块保持系统 UI 尺度。 */
 }
 .spectrum-info .cover {
   width: 64px; height: 64px;
