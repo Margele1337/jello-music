@@ -1,16 +1,16 @@
 <template>
   <div class="sigma-changing-button" :style="containerStyle" @click="$emit('click')">
-    <canvas v-if="type !== 3" ref="canvasRef" class="scb-canvas"></canvas>
+    <canvas v-if="type === 0" ref="canvasRef" class="scb-canvas"></canvas>
   </div>
 </template>
 
 <script setup>
 // 对应 sigmarebase: gui/base/elements/impl/button/types/ChangingButton.java
-// repeat.png 为三态横向雪碧图：0=NO_REPEAT / 1=REPEAT / 2=LOOP_CURRENT，透明度 0.35
-// type=3 为魔改版新增的「随机播放」图标（原版没有随机模式），用内联 SVG（矢量，无锯齿）
-//
-// 雪碧图用 canvas 按「最终物理分辨率」绘制（同 SigmaSmallImage）：pixelated 最近邻
-// 在分数 DPI 下会产生 1px/2px 交替条纹（锯齿），高质量重采样到 ceil(css × dpr) 干净
+// 0=NO_REPEAT（顺序，雪碧图帧 0：空心箭头轮廓）
+// 1=REPEAT（列表循环）/ 2=LOOP_CURRENT（单曲循环）/ 3=随机（魔改版新增）
+// 原雪碧图帧 1/2 是「白色药丸底 + 镂空箭头」：27x20 尺寸下白底糊成一条白杠，
+// 且两帧只差几个像素无法区分——改为与随机图标同风格的 Material 矢量轮廓
+// （repeat / repeat_one），四种模式一眼可辨
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import repeatImg from '../../assets/sigma/music/repeat.png';
 
@@ -23,14 +23,21 @@ defineEmits(['click']);
 const canvasRef = ref(null);
 let imgEl = null;
 
-const RANDOM_ICON = `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#fff"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>'
+const svgIcon = (path) => `url("data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#fff">${path}</svg>`
 )}")`;
 
+const ICONS = {
+  1: svgIcon('<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>'),                    // 列表循环 repeat
+  2: svgIcon('<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/>'), // 单曲循环 repeat_one
+  3: svgIcon('<path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>') // 随机 shuffle
+};
+
 const containerStyle = computed(() => {
-  if (props.type === 3) {
+  const icon = ICONS[props.type];
+  if (icon) {
     return {
-      backgroundImage: RANDOM_ICON,
+      backgroundImage: icon,
       backgroundPosition: 'center',
       backgroundSize: 'contain',
       backgroundRepeat: 'no-repeat'
@@ -40,7 +47,7 @@ const containerStyle = computed(() => {
 });
 
 const render = () => {
-  if (props.type === 3) return;
+  if (props.type !== 0) return;
   const canvas = canvasRef.value;
   if (!canvas || !imgEl || !imgEl.complete || !imgEl.naturalWidth) return;
   const rect = canvas.getBoundingClientRect();
