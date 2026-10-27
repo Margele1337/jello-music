@@ -24,7 +24,8 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
+import { getUserPlaylists } from '../../services/api/library.js';
 import { useAuthStore } from '../../stores/auth.js';
 import SigmaText from './SigmaText.vue';
 
@@ -35,17 +36,58 @@ const props = defineProps({
 });
 
 const auth = useAuthStore();
-
-const items = computed(() => [
-  ...(auth.isAuthenticated ? [] : [{ key: 'login', type: 'login', name: '登录' }]),
-  { key: 'daily', type: 'daily', name: '每日推荐' },
-  { key: 'like', type: 'playlist', id: 'demo-like', name: '我喜欢的音乐' },
-  { key: 'pl-night', type: 'playlist', id: 'demo-night', name: '夜车电台' },
-  { key: 'pl-focus', type: 'playlist', id: 'demo-focus', name: '专注工作' }
-]);
-
+const remotePlaylists = ref([]);
 const selectedKey = ref('daily');
 const hoveredKey = ref('');
+
+const loadUserPlaylists = async () => {
+  if (!auth.isAuthenticated) {
+    remotePlaylists.value = [];
+    return;
+  }
+  try {
+    remotePlaylists.value = await getUserPlaylists();
+  } catch (error) {
+    remotePlaylists.value = [];
+    console.warn('[SigmaPlaylistPanel] 用户歌单载入失败:', error?.message || error);
+  }
+};
+
+onMounted(loadUserPlaylists);
+watch(() => auth.isAuthenticated, loadUserPlaylists);
+
+const items = computed(() => {
+  const list = [];
+  if (!auth.isAuthenticated) {
+    list.push({ key: 'login', type: 'login', name: '登录' });
+  }
+  list.push({ key: 'daily', type: 'daily', name: '每日推荐' });
+
+  const playlists = remotePlaylists.value || [];
+  const liked = playlists.find((playlist) => playlist.isDefault);
+  if (liked) {
+    list.push({
+      key: `pl-${liked.id}`,
+      type: 'playlist',
+      id: liked.id,
+      idType: liked.idType,
+      listId: liked.listId,
+      name: '我喜欢的音乐'
+    });
+  }
+  for (const playlist of playlists) {
+    if (playlist === liked) continue;
+    list.push({
+      key: `pl-${playlist.id}`,
+      type: 'playlist',
+      id: playlist.id,
+      idType: playlist.idType,
+      listId: playlist.listId,
+      name: playlist.name
+    });
+  }
+  return list;
+});
 
 const temporaryItem = computed(() => {
   const playlist = props.temporaryPlaylist;
@@ -54,6 +96,8 @@ const temporaryItem = computed(() => {
     key: 'temp-playlist',
     type: 'playlist',
     id: playlist.id,
+    idType: playlist.idType,
+    listId: playlist.listId,
     name: playlist.name || '歌单',
     temporary: true
   };

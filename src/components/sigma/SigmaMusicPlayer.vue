@@ -177,7 +177,6 @@ const renderStrip = (cover) => {
   }
 
   const image = new Image();
-  image.crossOrigin = 'anonymous';
   image.referrerPolicy = 'no-referrer';
   image.onload = () => {
     if (token !== stripToken) return;
@@ -232,9 +231,9 @@ const toggleSpectrum = () => {
 const searchBoxRef = ref(null);
 const temporaryPlaylist = ref(null);
 
-const onOpenSearchPlaylist = ({ id, name } = {}) => {
-  if (!id) return;
-  temporaryPlaylist.value = { id, name: name || '歌单' };
+const onOpenSearchPlaylist = (playlist = {}) => {
+  if (!playlist.id) return;
+  temporaryPlaylist.value = { ...playlist, name: playlist.name || '歌单' };
 };
 
 const onSearchStarted = () => {
@@ -253,7 +252,7 @@ const onPlaylistSelect = (item) => {
     return;
   }
   if (item.id) {
-    searchBoxRef.value?.showPlaylist?.(item.id);
+    searchBoxRef.value?.showPlaylist?.(item);
   }
 };
 

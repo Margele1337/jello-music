@@ -51,6 +51,7 @@ const stripAuthFields = (value) => {
 };
 
 export const sanitizeApiResponse = (path, body) => {
-  if (!path.startsWith('/login/')) return body;
+  const sensitive = path.startsWith('/login/') || path.startsWith('/user/') || path.startsWith('/register/');
+  if (!sensitive) return body;
   return stripAuthFields(body);
 };

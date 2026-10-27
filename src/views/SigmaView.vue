@@ -1,122 +1,38 @@
 <script setup>
-import { onBeforeUnmount, reactive } from 'vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import SigmaMusicPlayer from '../components/sigma/SigmaMusicPlayer.vue';
+import { usePlayerStore } from '../stores/player.js';
+import { useSettingsStore } from '../stores/settings.js';
 
 const router = useRouter();
+const player = usePlayerStore();
+const settings = useSettingsStore();
 
-const demoSongs = [
-  { hash: 'demo-1', title: '海阔天空', artist: 'Beyond', timelen: 326000 },
-  { hash: 'demo-2', title: '晴天', artist: '周杰伦', timelen: 269000 },
-  { hash: 'demo-3', title: 'Yellow', artist: 'Coldplay', timelen: 269000 },
-  { hash: 'demo-4', title: '夜空中最亮的星', artist: '逃跑计划', timelen: 252000 }
-];
+player.initialize();
 
-const state = reactive({
-  index: 0,
-  playing: false,
-  volume: 80,
-  mode: 1,
-  audio: {
-    currentTime: 0,
-    duration: demoSongs[0].timelen / 1000
-  }
+watch(() => settings.volume, (value) => player.applyPersistedVolume(value));
+
+const toast = ref('');
+let toastTimer = null;
+
+watch(() => player.error, (message) => {
+  if (!message) return;
+  toast.value = message;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.value = '';
+  }, 4000);
 });
 
-const current = () => demoSongs[state.index] || demoSongs[0];
-
-const applySong = (song) => {
-  const index = demoSongs.findIndex((item) => item.hash === song.hash);
-  if (index >= 0) {
-    state.index = index;
-  } else {
-    demoSongs.push(song);
-    state.index = demoSongs.length - 1;
-  }
-  state.audio.currentTime = 0;
-  state.audio.duration = Math.max(1, (song.timelen || 326000) / 1000);
-  state.playing = true;
-};
-
-const player = {
-  get currentSong() {
-    const song = current();
-    return {
-      hash: song.hash,
-      name: song.title,
-      author: song.artist,
-      img: '',
-      timeLength: song.timelen
-    };
-  },
-  get playing() {
-    return state.playing;
-  },
-  get volume() {
-    return state.volume;
-  },
-  get currentPlaybackModeIndex() {
-    return state.mode;
-  },
-  get audio() {
-    return state.audio;
-  },
-  togglePlayPause() {
-    state.playing = !state.playing;
-  },
-  pause() {
-    state.playing = false;
-  },
-  playNext() {
-    if (state.mode === 0) {
-      state.index = Math.floor(Math.random() * demoSongs.length);
-    } else {
-      state.index = (state.index + 1) % demoSongs.length;
-    }
-    applySong(current());
-  },
-  playPrevious() {
-    state.index = (state.index - 1 + demoSongs.length) % demoSongs.length;
-    applySong(current());
-  },
-  togglePlaybackMode() {
-    state.mode = (state.mode + 1) % 3;
-  },
-  setVolumePercent(value) {
-    const next = Number(value);
-    if (Number.isFinite(next)) state.volume = Math.max(0, Math.min(100, next));
-  },
-  playSongList(songs, hash) {
-    if (!Array.isArray(songs) || songs.length === 0) return;
-    const picked = songs.find((song) => song.hash === hash) || songs[0];
-    applySong({
-      hash: picked.hash,
-      title: picked.name || picked.title || '未知歌曲',
-      artist: picked.author || picked.artist || '',
-      timelen: picked.timelen || 326000
-    });
-  }
-};
-
-const timer = setInterval(() => {
-  if (!state.playing) return;
-  state.audio.currentTime = Math.min(state.audio.currentTime + 0.25, state.audio.duration);
-  if (state.audio.currentTime >= state.audio.duration) {
-    if (state.mode === 2) {
-      state.audio.currentTime = 0;
-    } else {
-      player.playNext();
-    }
-  }
-}, 250);
-
-onBeforeUnmount(() => clearInterval(timer));
+onBeforeUnmount(() => clearTimeout(toastTimer));
 </script>
 
 <template>
   <main class="sigma-page">
     <div class="sigma-stage">
       <SigmaMusicPlayer :player="player" @request-login="router.push('/login')" />
+      <div v-if="toast" class="sigma-toast">{{ toast }}</div>
     </div>
   </main>
 </template>
@@ -138,5 +54,24 @@ onBeforeUnmount(() => clearInterval(timer));
   position: relative;
   flex: 0 0 auto;
   overflow: hidden;
+}
+
+.sigma-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  max-width: 420px;
+  padding: 7px 14px;
+  background: rgba(1, 1, 1, 0.72);
+  color: rgba(254, 254, 254, 0.9);
+  font-family: 'SigmaLight', sans-serif;
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 60;
 }
 </style>

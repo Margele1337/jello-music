@@ -12,8 +12,8 @@
   mirrored read-only into a Pinia store through narrow IPC. No `localStorage`
   settings copy.
 - **API access goes through a main-process proxy.** `api:request` is the only
-  renderer-facing entry; it is currently a stub until the MIT KuGouMusicApi
-  sidecar is connected.
+  renderer-facing entry; it forwards allowlisted calls to the MIT KuGouMusicApi
+  sidecar and keeps cookies/tokens in the main process.
 - **JavaScript + JSDoc** rather than TypeScript for now, so the owner-authored
   Sigma UI can be ported without a mechanical rewrite. Type checking can be
   added incrementally.
@@ -52,17 +52,28 @@ api/                 KuGouMusicApi git submodule (MIT)
    broadcasts `settings:changed`.
 4. All windows mirror the same broadcast; no direct `localStorage` writes.
 
-## API flow (first slice implemented)
+## API flow
 
 1. Main spawns the MIT KuGouMusicApi submodule as a child process on a random
    loopback-only port; the process is stopped on app quit.
-2. Renderer calls `api:request` with path/method/params/body.
-3. Main validates the sender, method, and allowlisted path prefix, attaches
+2. Before the first forwarded request, main calls the sidecar's `/register/dev`
+   once and keeps the returned device cookies (`dfid`, `KUGOU_API_*`) in memory.
+3. Renderer calls `api:request` with path/method/params/body.
+4. Main validates the sender, method, and allowlisted path prefix, attaches
    cookies/token held in main memory, and forwards to the sidecar.
-4. Login responses have token fields stripped before returning to the renderer;
-   cookies and the fallback auth header stay in main.
-5. QR login is available at `/login`; phone/account login and a per-launch
-   sidecar token are still follow-ups. Remote media proxying is not wired yet.
+5. Login and user responses have token fields stripped before returning to the
+   renderer; cookies and the fallback auth header stay in main.
+6. Search, public/user playlists, daily recommendations, and song URLs go through
+   this proxy; audio and cover URLs are upgraded to HTTPS before the renderer
+   sees them. QR login is available at `/login`.
+
+## Playback
+
+The renderer owns an `HTMLAudioElement` only; the song URL is requested from the
+main proxy with the user's quality setting and falls back to lower quality when
+the requested one is unavailable (for example 320 kbps → 128 kbps for guest
+accounts). The queue, repeat/shuffle modes, and volume live in the Pinia player
+store. Persistent auth and remote media proxying are follow-ups.
 
 ## Security baseline
 
@@ -74,9 +85,8 @@ api/                 KuGouMusicApi git submodule (MIT)
 
 ## Roadmap
 
-1. Sigma UI port (owner-authored components/assets, Roboto atlas font) — demo
-   player/search/playlist in place.
-2. KuGouMusicApi sidecar + main API proxy + QR login — first slice in place.
-3. Search/playlists/daily recommendations against the real API.
-4. Playback/queue engine, lyrics, settings UI.
+1. Sigma UI port (owner-authored components/assets, Roboto atlas font) — done.
+2. KuGouMusicApi sidecar + main API proxy + QR login — done.
+3. Search/playlists/daily recommendations against the real API — done.
+4. Playback/queue engine — done; lyrics and settings UI remain.
 5. Updater, tray, packaging, sidecar token, persistent auth, tests/CI.

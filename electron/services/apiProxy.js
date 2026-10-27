@@ -7,10 +7,36 @@ import {
   storeSetCookies
 } from './authSession.js';
 
+let deviceReadyBaseUrl = '';
+let deviceReadyPromise = null;
+
+const ensureDeviceCookie = async (baseUrl) => {
+  if (deviceReadyBaseUrl === baseUrl) return;
+  if (deviceReadyPromise) return deviceReadyPromise;
+
+  deviceReadyPromise = (async () => {
+    try {
+      const response = await fetch(new URL('/register/dev', baseUrl), { method: 'POST' });
+      const setCookies = response.headers.getSetCookie?.() || [];
+      if (setCookies.length) storeSetCookies(setCookies);
+      await response.arrayBuffer();
+      deviceReadyBaseUrl = baseUrl;
+    } catch (error) {
+      console.error('[api] device registration failed:', error.message);
+    }
+  })().finally(() => {
+    deviceReadyPromise = null;
+  });
+
+  return deviceReadyPromise;
+};
+
 export const proxyApiRequest = async (input) => {
   const request = sanitizeApiRequest(input);
   const baseUrl = getSidecarBaseUrl();
   if (!baseUrl) throw new Error('API sidecar is not ready');
+
+  await ensureDeviceCookie(baseUrl);
 
   const url = new URL(request.path, baseUrl);
   for (const [key, value] of Object.entries(request.params)) {

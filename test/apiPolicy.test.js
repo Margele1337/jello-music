@@ -21,11 +21,15 @@ test('rejects absolute, traversal, and unknown paths', () => {
   assert.throws(() => sanitizeApiRequest(null));
 });
 
-test('removes auth fields from login responses only', () => {
+test('removes auth fields from login and user responses', () => {
   const loginBody = { status: 1, data: { nickname: 'demo', token: 'secret', userid: 1 } };
   assert.deepEqual(sanitizeApiResponse('/login/qr/check', loginBody), {
     status: 1,
     data: { nickname: 'demo', userid: 1 }
   });
-  assert.equal(sanitizeApiResponse('/user/detail', loginBody), loginBody);
+  assert.deepEqual(sanitizeApiResponse('/user/detail', loginBody), {
+    status: 1,
+    data: { nickname: 'demo', userid: 1 }
+  });
+  assert.equal(sanitizeApiResponse('/playlist/track/all', loginBody), loginBody);
 });
