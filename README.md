@@ -28,10 +28,11 @@ Sigma player backed by the real KuGou API:
 - `node:test` coverage for settings, API policy, URL normalization, lyrics,
   desktop-lyric state, and trusted senders
 
-Not implemented yet: username/password login, multi-account selection, a
-per-launch sidecar token, and code signing. Core runtime flows were verified in
-a real Electron window; phone SMS delivery and packaged self-update still need a
-live account/release to exercise end to end.
+Not implemented yet: username/password login, multi-account selection, and a
+per-launch sidecar token. Code signing is wired to optional `CSC_LINK` /
+`CSC_KEY_PASSWORD` repository secrets; without them builds are unsigned. Core
+runtime flows were verified in a real Electron window; phone SMS delivery and
+packaged self-update still need a live account/release to exercise end to end.
 
 ## Development
 

@@ -114,8 +114,9 @@ runtime dependencies are missing. Release builds should run
 `npm --prefix api prune --omit=dev` first so dev tooling is not shipped. Pushing a
 `v*` tag runs `.github/workflows/release.yml`, which builds on Windows and uploads
 the installer, `latest.yml`, and the blockmap through electron-builder; publish the
-draft release before clients can see it. Code signing and installer identity are
-not configured yet.
+draft release before clients can see it. The release workflow reads optional
+`CSC_LINK` and `CSC_KEY_PASSWORD` repository secrets; without them the installer
+is unsigned and SmartScreen warnings remain.
 
 ## Updates
 
