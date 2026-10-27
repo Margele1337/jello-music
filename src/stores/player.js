@@ -73,7 +73,7 @@ export const usePlayerStore = defineStore('player', {
       ensureAudio(this).volume = next / 100;
     },
 
-    async loadCurrent({ keepTime = false } = {}) {
+    async loadCurrent({ keepTime = false, resume = true } = {}) {
       const song = this.currentSong;
       if (!song?.hash) return;
 
@@ -102,7 +102,7 @@ export const usePlayerStore = defineStore('player', {
             }
           }, { once: true });
         }
-        await element.play();
+        if (resume) await element.play();
       } catch (error) {
         if (token === loadToken) {
           this.playing = false;
@@ -117,7 +117,7 @@ export const usePlayerStore = defineStore('player', {
       if (!this.currentSong) return;
       const element = ensureAudio(this);
       if (!element.src) return;
-      void this.loadCurrent({ keepTime: true });
+      void this.loadCurrent({ keepTime: true, resume: !element.paused });
     },
 
     playSongList(songs, hash) {
@@ -132,7 +132,7 @@ export const usePlayerStore = defineStore('player', {
 
     togglePlayPause() {
       const element = ensureAudio(this);
-      if (!element.src || !this.currentSong) {
+      if (!element.src || element.error || !this.currentSong) {
         void this.loadCurrent();
         return;
       }
@@ -194,6 +194,16 @@ export const usePlayerStore = defineStore('player', {
 
     togglePlaybackMode() {
       this.mode = (this.mode + 1) % 3;
+    },
+
+    seekBy(delta) {
+      const element = ensureAudio(this);
+      if (!element.src || !Number.isFinite(element.duration)) return;
+      element.currentTime = Math.max(0, Math.min(element.duration, element.currentTime + delta));
+    },
+
+    changeVolume(delta) {
+      this.setVolumePercent(this.volume + delta);
     },
 
     setVolumePercent(value) {

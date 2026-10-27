@@ -23,7 +23,7 @@ const ensureOk = (payload, fallback) => {
   return payload;
 };
 
-export const searchSongs = async (keywords, { page = 1, pagesize = 9 } = {}) => {
+export const searchSongs = async (keywords, { page = 1, pagesize = 30 } = {}) => {
   const payload = await apiRequest({
     method: 'GET',
     path: '/search',
