@@ -33,8 +33,10 @@ Conservative classification for this clean-room project:
 
 ## Rules
 
-1. Do not copy code, comments, file structure, or assets from MoeKoeMusic,
-   MoeKoe-NextGen, or `jello-music-temp` into this repository.
+1. Do not copy code, comments, file structure, or GPL/MoeKoe-derived assets
+   from MoeKoeMusic, MoeKoe-NextGen, or `jello-music-temp` into this repository.
+   Owner-authored Jello/Sigma branding assets may be reused only when the owner
+   confirms authorship and records the relicensing in the provenance log.
 2. Implement from behavior specifications, public API documentation, and
    original design work.
 3. Reusing owner-authored Sigma code is allowed only after confirming it is
@@ -55,6 +57,7 @@ Conservative classification for this clean-room project:
 | Sigma UI components/assets | Owner-authored sigmarebase work (ported from the legacy repo's Sigma UI) | MIT (owner) | 2026-10-27 | Owner review |
 | Roboto atlas font | Google Fonts / google/fonts | SIL OFL 1.1 | 2026-10-27 | Import check |
 | KuGouMusicApi sidecar | MakcRe/KuGouMusicApi | MIT | 2026-10-27 | Import check |
+| Jello/Sigma app & tray icon | Owner-authored Jello branding (stored in the legacy repo) | MIT (owner-authorized) | 2026-10-28 | Owner |
 
 ## Limits
 

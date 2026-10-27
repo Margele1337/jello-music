@@ -27,6 +27,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { getUserPlaylists } from '../../services/api/library.js';
 import { useAuthStore } from '../../stores/auth.js';
+import { buildPlaylistSidebarItems } from '../../utils/playlistSidebar.js';
 import SigmaText from './SigmaText.vue';
 
 const emit = defineEmits(['select']);
@@ -56,40 +57,10 @@ const loadUserPlaylists = async () => {
 onMounted(loadUserPlaylists);
 watch(() => auth.isAuthenticated, loadUserPlaylists);
 
-const items = computed(() => {
-  const list = [];
-  if (auth.ready && !auth.isAuthenticated) {
-    list.push({ key: 'login', type: 'login', name: '登录' });
-  }
-  list.push({ key: 'daily', type: 'daily', name: '每日推荐' });
-
-  const playlists = remotePlaylists.value || [];
-  const liked = playlists.find((playlist) => playlist.isDefault);
-  if (liked) {
-    list.push({
-      key: `pl-${liked.id}`,
-      type: 'playlist',
-      id: liked.id,
-      idType: liked.idType,
-      listId: liked.listId,
-      name: '我喜欢的音乐'
-    });
-  }
-  for (const playlist of playlists) {
-    if (playlist === liked) continue;
-    list.push({
-      key: `pl-${playlist.id}`,
-      type: 'playlist',
-      id: playlist.id,
-      idType: playlist.idType,
-      listId: playlist.listId,
-      name: playlist.name
-    });
-  }
-  list.push({ key: 'lyrics', type: 'lyrics', name: '歌词' });
-  list.push({ key: 'settings', type: 'settings', name: '设置' });
-  return list;
-});
+const items = computed(() => buildPlaylistSidebarItems(remotePlaylists.value, {
+  authenticated: auth.isAuthenticated,
+  ready: auth.ready
+}));
 
 const temporaryItem = computed(() => {
   const playlist = props.temporaryPlaylist;

@@ -12,6 +12,7 @@ import { initUpdater, stopUpdater } from './services/updater.js';
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
 app.setPath('userData', path.join(app.getPath('appData'), 'jello-music-clean'));
+app.setAppUserModelId('cn.jello.music');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -44,6 +45,7 @@ function createWindow() {
     minHeight: 600,
     useContentSize: true,
     show: false,
+    icon: path.join(__dirname, 'assets', 'app-icon.png'),
     backgroundColor: '#0e0c12',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

@@ -93,7 +93,7 @@ test('normalizes public and personal playlists', () => {
     listid: 8,
     name: '我喜欢的音乐',
     count: 3,
-    is_def: 1
+    is_def: '1'
   }), {
     id: '8',
     listId: 8,

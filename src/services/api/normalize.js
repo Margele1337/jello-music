@@ -84,7 +84,8 @@ export const normalizePlaylist = (raw) => {
     cover: coverUrl(raw.img || raw.pic || raw.cover),
     songCount: Number(raw.song_count ?? raw.count ?? raw.songcount) || 0,
     creator: toText(raw.nickname) || toText(raw.list_create_username),
-    isDefault: raw.is_def === 1 || raw.is_default === 1
+    isDefault: raw.is_def === 1 || raw.is_def === '1' || raw.is_def === true
+      || raw.is_default === 1 || raw.is_default === '1' || raw.is_default === true
   };
 };
 

@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildPlaylistSidebarItems } from '../src/utils/playlistSidebar.js';
+
+const names = (items) => items.map((item) => item.name);
+
+test('collapses the liked aliases into one entry', () => {
+  const items = buildPlaylistSidebarItems([
+    { id: 'custom', name: '我喜欢的音乐' },
+    { id: 'liked', name: '我喜欢', isDefault: true },
+    { id: 'daily', name: '每日推荐' }
+  ], { authenticated: true });
+
+  assert.deepEqual(names(items), ['每日推荐', '我喜欢的音乐', '歌词', '设置']);
+  assert.equal(items[1].id, 'liked');
+});
+
+test('deduplicates ids and names and reserves fixed entries', () => {
+  const items = buildPlaylistSidebarItems([
+    { id: 'a', name: '夜车电台' },
+    { id: 'a', name: '夜车电台' },
+    { id: 'b', name: '夜车电台' },
+    { id: 'c', name: '歌词' }
+  ], { authenticated: true });
+
+  assert.deepEqual(names(items), ['每日推荐', '夜车电台', '歌词', '设置']);
+});
+
+test('shows login for guests and preserves playlist metadata', () => {
+  const items = buildPlaylistSidebarItems([
+    { id: 'collection_1', name: '收藏', idType: 'collection', listId: 7 }
+  ], { authenticated: false, ready: true });
+
+  assert.deepEqual(names(items), ['登录', '每日推荐', '收藏', '歌词', '设置']);
+  assert.deepEqual(items[2], {
+    key: 'pl-collection_1',
+    type: 'playlist',
+    id: 'collection_1',
+    idType: 'collection',
+    listId: 7,
+    name: '收藏'
+  });
+});
