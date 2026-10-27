@@ -14,10 +14,14 @@
     "build": "vite build",
     "start": "electron .",
     "preview": "vite preview",
+    "test": "node --test",
     "dist": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "vue": "^3.5.44"
+    "electron-store": "^12.0.0",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",

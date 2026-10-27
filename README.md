@@ -12,12 +12,19 @@ must not contain code copied from them.
 
 ## Status
 
-Minimal skeleton only:
+Architecture foundation implemented:
 
-- Electron 45 + Vue 3 + Vite 8
+- Electron 45 + Vue 3 + Vite 8, single secure main window
 - `webSecurity: true`, `contextIsolation: true`, `nodeIntegration: false`,
   sandboxed renderer, minimal preload API
-- No player, login, lyrics, settings, updater, or Sigma UI yet
+- Main-owned settings (`electron-store`) mirrored into Pinia; no localStorage
+  settings copy; all IPC handlers validate the sender frame
+- Vue Router, Pinia stores, and a stub `api:request` boundary for the future
+  main-process API proxy
+- `node:test` unit tests for settings sanitization and trusted-sender checks
+
+Not implemented yet: Sigma UI, KuGouMusicApi sidecar, login, player, lyrics,
+settings UI, updater.
 
 ## Development
 
@@ -27,6 +34,7 @@ Requires Node.js >= 20.19 on Windows.
 npm install
 npm run dev      # Vite + Electron
 npm run build    # renderer production build
+npm test         # unit tests
 npm run dist     # Windows NSIS installer (electron-builder)
 ```
 

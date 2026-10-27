@@ -1,83 +1,77 @@
 # Architecture
 
-## Goals
+## Decisions
 
-- A maintainable, MIT-licensed desktop client for Windows.
-- Security-first renderer: no Node.js in the UI, no `webSecurity: false`.
-- Clean-room provenance: no copied code from MoeKoeMusic, MoeKoe-NextGen, or
-  the legacy `jello-music-temp` GPL repository.
-- Reuse only the author's own Sigma UI work, MIT/Apache third-party code, and
-  the MIT `KuGouMusicApi` sidecar.
-
-## Stack
-
-- Electron 45 (main + sandboxed renderer)
-- Vue 3 + Vite 8 for the renderer
-- electron-builder 26 for Windows NSIS packaging
-- Planned: KuGouMusicApi (MIT) as a local sidecar process
+- **Single main window** contains the Sigma UI and audio playback. Auxiliary
+  lyrics/spectrum windows can be added later over explicit IPC channels.
+- **The main process owns settings, auth state, and API access.** The renderer
+  never receives tokens, cookies, or the sidecar port.
+- **Renderer is sandboxed:** `contextIsolation: true`, `nodeIntegration: false`,
+  `sandbox: true`, `webSecurity: true`, strict CSP.
+- **Settings have one source of truth:** `electron-store` in the main process,
+  mirrored read-only into a Pinia store through narrow IPC. No `localStorage`
+  settings copy.
+- **API access goes through a main-process proxy.** `api:request` is the only
+  renderer-facing entry; it is currently a stub until the MIT KuGouMusicApi
+  sidecar is connected.
+- **JavaScript + JSDoc** rather than TypeScript for now, so the owner-authored
+  Sigma UI can be ported without a mechanical rewrite. Type checking can be
+  added incrementally.
 
 ## Layout
 
 ```
+shared/
+  ipc.js             IPC channel names (main + renderer)
+  settings.js        setting defaults and sanitization (tested)
 electron/
-  main.js        Electron main process and window lifecycle
-  preload.cjs    Minimal contextBridge API
+  main.js            app/window lifecycle, secure webPreferences
+  preload.cjs        minimal contextBridge API
+  security/          trusted-sender validation
+  services/          settings store, future sidecar/API proxy/updater
+  ipc/               IPC handlers
 src/
-  main.js        Vue bootstrap
-  App.vue        Current skeleton screen
-  styles.css     Global styles
-docs/
-  ARCHITECTURE.md
-  CLEAN_ROOM.md
+  main.js            Vue + Pinia + Router bootstrap
+  App.vue            router view + settings subscription
+  router/            hash-history routes
+  views/             pages (HomeView is the architecture smoke test)
+  stores/            settings, player
+  services/api/      renderer-side API client (calls the main proxy)
+  components/        Sigma UI will live here
+test/                node:test unit tests
+docs/                architecture and clean-room provenance
 ```
 
-## Process boundaries
+## Settings flow
 
-### Renderer
+1. Main initializes `electron-store` with defaults.
+2. Renderer calls `settings:get` through preload and patches its Pinia store.
+3. Renderer calls `settings:set`; main sanitizes the patch, persists it, and
+   broadcasts `settings:changed`.
+4. All windows mirror the same broadcast; no direct `localStorage` writes.
 
-- Runs with `contextIsolation: true`, `nodeIntegration: false`,
-  `sandbox: true`, `webSecurity: true`.
-- Talks to the main process only through the preload API.
-- Never receives API tokens, cookies, or the sidecar port directly.
+## API flow (planned)
 
-### Main process
-
-- Owns window lifecycle, the sidecar process, the API proxy, updates, tray,
-  global shortcuts, and protocol handling.
-- Validates every IPC sender (`webContents` and `senderFrame`).
-- Will expose a narrow, typed IPC surface; no generic "invoke arbitrary URL".
-
-### API sidecar (planned)
-
-- `KuGouMusicApi` (MIT) runs on a loopback-only random port.
-- Launched by the main process with a per-launch random token.
-- Requests from the main proxy include that token; direct local access is
-  rejected.
-- The main process proxies renderer API calls and audio/image URLs; the
-  renderer does not talk to the sidecar directly.
+1. Main spawns KuGouMusicApi (MIT) on a loopback-only random port with a
+   per-launch token.
+2. Renderer calls `api:request` with path/method/params/body.
+3. Main validates the sender and request shape, attaches auth cookies held in
+   main, forwards to the sidecar, and returns only the needed JSON.
+4. Remote media URLs are proxied separately; the renderer never gets auth
+   cookies.
 
 ## Security baseline
 
-- Keep `webSecurity: true`; never add `allowRunningInsecureContent`.
-- Strict CSP in `index.html`; add origins only with a review.
-- No remote code, no `eval`, no `nodeIntegration`.
-- Preload exposes only explicit, minimal methods.
-- Updater artifacts must be signed before public release; unsigned builds are
-  development-only.
+- Every IPC handler validates `event.sender` and `event.senderFrame` against the
+  registered main window; subframes are rejected.
+- No `webSecurity: false`, no `allowRunningInsecureContent`, no webviews.
+- CSP lives in `index.html`; new origins require review.
+- No generic "fetch arbitrary URL" IPC; the API proxy has an allowlist.
 
-## Planned modules
+## Roadmap
 
-1. Authentication (QR, phone, account) through the main-process API proxy.
-2. Search, playlists, daily recommendations.
-3. Playback/queue engine with explicit quality fallback.
-4. Lyrics (desktop and in-app) with deterministic cleanup.
-5. Settings with a single source of truth.
-6. Sigma UI, reused from the author's own sigmarebase work after a provenance
-   and asset/font license review.
-7. Updater, tray, global shortcuts, Windows packaging.
-
-## Testing and CI
-
-- Add unit tests for pure logic (URL building, parsing, settings migrations).
-- Add smoke tests for login, playback, queue, lyrics, and settings.
-- CI must run build, tests, dependency audit, and packaging checks.
+1. Sigma UI port (owner-authored components/assets, open font atlas).
+2. KuGouMusicApi sidecar + main API proxy + login.
+3. Search/playlists/daily recommendations.
+4. Playback/queue engine, lyrics, settings UI.
+5. Updater, tray, packaging, tests/CI.

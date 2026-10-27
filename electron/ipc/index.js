@@ -1,0 +1,36 @@
+import { app, BrowserWindow, ipcMain } from 'electron';
+import { IPC } from '../../shared/ipc.js';
+import { getSettings, updateSettings } from '../services/settingsStore.js';
+import { isTrustedSender } from '../security/trustedSender.js';
+
+const assertTrusted = (event, getWindow) => {
+  if (!isTrustedSender(event, getWindow())) {
+    throw new Error('unauthorized ipc sender');
+  }
+};
+
+export const registerIpc = (getWindow) => {
+  ipcMain.handle(IPC.APP_VERSION, (event) => {
+    assertTrusted(event, getWindow);
+    return app.getVersion();
+  });
+
+  ipcMain.handle(IPC.SETTINGS_GET, (event) => {
+    assertTrusted(event, getWindow);
+    return getSettings();
+  });
+
+  ipcMain.handle(IPC.SETTINGS_SET, (event, patch) => {
+    assertTrusted(event, getWindow);
+    const next = updateSettings(patch);
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(IPC.SETTINGS_CHANGED, next);
+    }
+    return next;
+  });
+
+  ipcMain.handle(IPC.API_REQUEST, (event) => {
+    assertTrusted(event, getWindow);
+    throw new Error('API sidecar is not connected yet');
+  });
+};

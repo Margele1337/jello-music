@@ -1,14 +1,20 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { initSettings } from './services/settingsStore.js';
+import { registerIpc } from './ipc/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
+let mainWindow = null;
+
 function createWindow() {
-  const win = new BrowserWindow({
-    width: 1100,
-    height: 720,
+  mainWindow = new BrowserWindow({
+    width: 800,
+    height: 600,
+    minWidth: 800,
+    minHeight: 600,
     show: false,
     backgroundColor: '#0e0c12',
     webPreferences: {
@@ -20,28 +26,34 @@ function createWindow() {
     }
   });
 
-  win.once('ready-to-show', () => win.show());
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  win.webContents.on('will-navigate', (event, url) => {
-    if (devServerUrl && url.startsWith(devServerUrl)) return;
-    event.preventDefault();
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowed = devServerUrl ? url.startsWith(devServerUrl) : url.startsWith('file://');
+    if (!allowed) event.preventDefault();
   });
 
   if (devServerUrl) {
-    void win.loadURL(devServerUrl);
+    void mainWindow.loadURL(devServerUrl);
   } else {
-    void win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    void mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 }
 
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (event) => event.preventDefault());
+});
+
 app.whenReady().then(() => {
-  ipcMain.handle('app:version', () => app.getVersion());
+  initSettings();
+  registerIpc(() => mainWindow);
   createWindow();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
