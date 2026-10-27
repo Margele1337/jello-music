@@ -12,24 +12,25 @@ must not contain code copied from them.
 
 ## Status
 
-Sigma UI demo with QR login wired to the MIT API sidecar:
+Sigma player backed by the real KuGou API:
 
-- Electron 45 + Vue 3 + Vite 8, single secure main window
-- `webSecurity: true`, `contextIsolation: true`, `nodeIntegration: false`,
-  sandboxed renderer, minimal preload API
-- Main-owned settings (`electron-store`) mirrored into Pinia; no localStorage
-  settings copy; all IPC handlers validate the sender frame
-- Sigma UI (owner-authored components/assets) with a mock player, local demo
-  playlist/search, Roboto atlas font (SIL OFL) replacing Helvetica
-- KuGouMusicApi sidecar launched by the main process on a random loopback port;
-  renderer calls only the allowlisted `api:request` IPC proxy
-- QR login page at `/login`; auth cookies/token stay in the main process
-- `node:test` unit tests for settings sanitization, API policy, and
-  trusted-sender checks
+- Electron 45 + Vue 3 + Vite 8; secure main window plus an optional transparent
+  desktop-lyrics window with its own narrow preload
+- QR login with encrypted session persistence (`safeStorage`); cookies/token
+  never reach the renderer
+- Real search, public/user playlists, daily recommendations, queue playback,
+  quality fallback (FLAC/320/128), in-app lyrics, desktop lyrics, tray mode,
+  and quality/data-source settings
+- KuGouMusicApi sidecar on a random loopback port; the renderer only uses the
+  allowlisted `api:request` IPC proxy
+- `electron-updater` wired to this repository's GitHub Releases; installer,
+  sidecar, and update metadata are produced by `npm run dist`
+- `node:test` coverage for settings, API policy, URL normalization, lyrics,
+  desktop-lyric state, and trusted senders
 
-Not implemented yet: real playback/queue, lyrics, settings UI, updater,
-phone/account login, persistent auth, and sidecar per-launch token. The
-Electron window runtime still needs a local binary reinstall/verification.
+Not implemented yet: phone/account login, a per-launch sidecar token, and code
+signing. The interactive Electron runtime still needs a desktop-session check
+(`npm run dev`).
 
 ## Development
 
@@ -43,12 +44,17 @@ npm test              # unit tests
 npm run dist          # Windows NSIS installer (electron-builder)
 ```
 
+Before packaging locally, run `npm --prefix api prune --omit=dev` so the sidecar
+ships without dev tooling (the release workflow does this automatically).
+
 ## Security baseline
 
 - The renderer never gets Node.js access.
 - `webSecurity` stays enabled; do not add `allowRunningInsecureContent`.
-- Remote API/media access will go through a main-process proxy; the local
-  sidecar will require a per-launch token.
+- API calls go through the main-process allowlist proxy; audio and cover URLs
+  are upgraded to HTTPS and loaded directly from Kugou CDNs.
+- The sidecar is loopback-only on a random port; a per-launch token is still a
+  follow-up.
 - Keep a strict CSP and review it whenever a new origin is added.
 
 ## Third-party and provenance
