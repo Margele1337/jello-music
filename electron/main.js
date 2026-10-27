@@ -5,6 +5,10 @@ import { initSettings, getSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
 
+// Keep the clean-room app's settings/session isolated from the legacy GPL app.
+app.setName('Jello Music Clean');
+app.setPath('userData', path.join(app.getPath('appData'), 'jello-music-clean'));
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
