@@ -37,6 +37,7 @@
   "build": {
     "appId": "cn.jello.music",
     "productName": "Jello Music",
+    "icon": "build/icon.ico",
     "electronDist": "node_modules/electron/dist",
     "afterPack": "tools/verify-pack.cjs",
     "directories": {
