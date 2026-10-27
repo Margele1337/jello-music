@@ -27,6 +27,7 @@ shared/
   apiPolicy.js       API allowlist, request/response sanitization (tested)
 electron/
   main.js            app/window lifecycle, sidecar lifecycle, secure webPreferences
+  tray.js            tray icon/menu and minimize-to-tray controller
   preload.cjs        minimal contextBridge API
   security/          trusted-sender validation
   services/          settings store, sidecar manager, API proxy, auth session
@@ -55,7 +56,9 @@ api/                 KuGouMusicApi git submodule (MIT)
 5. A data-source change restarts the sidecar with the matching platform and
    resets device cookies. A quality change reloads the current track at the new
    quality while preserving playback position. `/settings` exposes both, plus
-   the account/login entry.
+   the account/login entry and the minimize-to-tray checkbox.
+6. With minimize-to-tray enabled, close/minimize hides the window and the tray
+   menu restores it or quits; audio keeps playing because the renderer stays alive.
 
 ## API flow
 
@@ -113,4 +116,5 @@ signing and installer identity are not configured yet.
 5. Settings UI (quality, data source, account) — done.
 6. In-app lyrics — done.
 7. Windows packaging with sidecar — done (unpacked build verified).
-8. Desktop lyrics, updater, tray, code signing, sidecar token, tests/CI.
+8. Tray and minimize-to-tray — done.
+9. Desktop lyrics, updater, code signing, sidecar token, tests/CI.

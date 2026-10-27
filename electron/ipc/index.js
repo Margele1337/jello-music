@@ -5,6 +5,7 @@ import { isTrustedSender } from '../security/trustedSender.js';
 import { proxyApiRequest, resetDeviceRegistration } from '../services/apiProxy.js';
 import { clearAuthSession, getProfile, resetDeviceCookies } from '../services/authSession.js';
 import { restartSidecar } from '../services/sidecar.js';
+import { syncTray } from '../tray.js';
 
 const assertTrusted = (event, getWindow) => {
   if (!isTrustedSender(event, getWindow())) {
@@ -41,6 +42,10 @@ export const registerIpc = (getWindow) => {
       void restartSidecar({ platform }).catch((error) => {
         console.error('[sidecar] 数据源切换重启失败:', error.message);
       });
+    }
+
+    if (next.minimizeToTray !== previous.minimizeToTray) {
+      syncTray(next.minimizeToTray);
     }
 
     broadcast(IPC.SETTINGS_CHANGED, next);

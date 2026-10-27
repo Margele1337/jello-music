@@ -5,6 +5,7 @@ import { initSettings, getSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
+import { initTray, syncTray } from './tray.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -14,6 +15,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
 let mainWindow = null;
+let isQuitting = false;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -35,6 +47,22 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting || !getSettings().minimizeToTray) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
+  mainWindow.on('minimize', (event) => {
+    if (!getSettings().minimizeToTray) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
@@ -61,18 +89,25 @@ app.whenReady().then(() => {
   initSettings();
   initAuthSession();
   registerIpc(() => mainWindow);
+  initTray({
+    showWindow: showMainWindow,
+    quit: () => {
+      isQuitting = true;
+      app.quit();
+    }
+  });
+  syncTray(getSettings().minimizeToTray);
   const platform = getSettings().dataSource === 'concept' ? 'lite' : 'official';
   startSidecar({ platform }).catch((error) => {
     console.error('[sidecar] 启动失败:', error.message);
   });
   createWindow();
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  app.on('activate', showMainWindow);
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   flushAuthSession();
   stopSidecar();
 });

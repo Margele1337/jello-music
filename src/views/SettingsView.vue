@@ -53,6 +53,14 @@ const dataSource = computed({
   }
 });
 
+const minimizeToTray = computed({
+  get: () => settings.minimizeToTray,
+  set: (value) => {
+    void settings.update({ minimizeToTray: Boolean(value) })
+      .catch((error) => setNotice(error?.message || '保存失败'));
+  }
+});
+
 const accountName = computed(() => {
   const profile = auth.profile;
   if (!profile) return '';
@@ -109,7 +117,7 @@ onBeforeUnmount(() => {
           </option>
         </select>
       </label>
-      <p class="hint">默认 320 kbps。当前账号或歌曲没有目标音质时，会自动降级到可用音质。</p>
+      <p class="hint">默认 320 kbps；目标音质不可用时自动降级。</p>
     </section>
 
     <section class="card">
@@ -122,8 +130,7 @@ onBeforeUnmount(() => {
         </select>
       </label>
       <p class="hint">
-        数据源决定曲库和会员权益，切换后接口侧车会自动重启。音质与数据源是两个独立设置，
-        最终可用音质仍取决于账号和歌曲版权。
+        数据源决定曲库和会员权益，切换后接口会自动重启；音质与数据源相互独立。
       </p>
     </section>
 
@@ -141,6 +148,15 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <section class="card">
+      <h2>窗口</h2>
+      <label class="row check-row">
+        <span>关闭或最小化时收起到托盘</span>
+        <input v-model="minimizeToTray" type="checkbox" />
+      </label>
+      <p class="hint">开启后关闭/最小化窗口不退出，应用继续后台播放；可从托盘恢复或退出。</p>
+    </section>
+
     <p v-if="notice" class="notice">{{ notice }}</p>
   </main>
 </template>
@@ -150,7 +166,7 @@ onBeforeUnmount(() => {
   min-height: 100%;
   max-width: 620px;
   margin: 0 auto;
-  padding: 28px 36px 36px;
+  padding: 24px 36px 28px;
   overflow-y: auto;
 }
 
@@ -200,8 +216,8 @@ onBeforeUnmount(() => {
 }
 
 .card {
-  margin-top: 18px;
-  padding: 16px 18px;
+  margin-top: 12px;
+  padding: 14px 16px;
   border: 1px solid #2a2434;
   border-radius: 14px;
   background: rgba(254, 254, 254, 0.045);
@@ -240,6 +256,13 @@ onBeforeUnmount(() => {
 
 .row select:disabled {
   opacity: 0.55;
+}
+
+.check-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #ff69b4;
+  cursor: pointer;
 }
 
 .hint {
