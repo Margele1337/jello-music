@@ -90,6 +90,10 @@ api/                 KuGouMusicApi git submodule (MIT)
    is available at `/login`, together with phone/SMS-code login
    (`/captcha/sent` → `/login/cellphone`). Login responses also strip
    `secu_params` and other token-shaped fields before reaching the renderer.
+8. The settings account card can manually claim the concept-edition daily VIP
+   (`/youth/day/vip` → `/youth/day/vip/upgrade`). It is never automatic; it needs
+   a logged-in session with the concept data source, and the same token-field
+   stripping applies.
 
 ## Playback
 
@@ -150,4 +154,5 @@ still open.
 9. Auto-update plumbing — done (release upload/signing still open).
 10. QR + phone/SMS login — done; username/password and multi-account selection
     remain.
-11. Code signing, sidecar token, broader tests.
+11. Manual concept-VIP daily claim — done (never automatic).
+12. Code signing, sidecar token, broader tests.

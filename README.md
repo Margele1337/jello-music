@@ -21,6 +21,7 @@ Sigma player backed by the real KuGou API:
 - Real search, public/user playlists, daily recommendations, queue playback,
   quality fallback (FLAC/320/128), in-app lyrics, desktop lyrics, tray mode,
   and quality/data-source settings
+- Manual one-click concept-VIP daily claim (concept data source + login required)
 - KuGouMusicApi sidecar on a random loopback port; the renderer only uses the
   allowlisted `api:request` IPC proxy
 - `electron-updater` wired to this repository's GitHub Releases; installer,

@@ -12,6 +12,7 @@ test('accepts allowlisted api requests', () => {
     'POST'
   );
   assert.equal(sanitizeApiRequest({ path: '/lyric' }).path, '/lyric');
+  assert.equal(sanitizeApiRequest({ path: '/youth/day/vip' }).path, '/youth/day/vip');
 });
 
 test('does not match allowlisted prefixes by bare string prefix', () => {

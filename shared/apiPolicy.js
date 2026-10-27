@@ -13,7 +13,8 @@ const ALLOWED_PREFIXES = [
   '/rank',
   '/singer',
   '/album',
-  '/fm'
+  '/fm',
+  '/youth'
 ];
 
 const ALLOWED_METHODS = new Set(['GET', 'POST']);
@@ -51,7 +52,10 @@ const stripAuthFields = (value) => {
 };
 
 export const sanitizeApiResponse = (path, body) => {
-  const sensitive = path.startsWith('/login/') || path.startsWith('/user/') || path.startsWith('/register/');
+  const sensitive = path.startsWith('/login/')
+    || path.startsWith('/user/')
+    || path.startsWith('/register/')
+    || path.startsWith('/youth/');
   if (!sensitive) return body;
   return stripAuthFields(body);
 };

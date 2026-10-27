@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { claimDailyVip, formatVipDate } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useSettingsStore } from '../stores/settings.js';
 
@@ -13,6 +14,10 @@ const switching = ref(false);
 const notice = ref('');
 const updateState = ref({ status: 'idle', version: '', percent: 0, error: '' });
 const hasUpdateBridge = ref(false);
+const claimingVip = ref(false);
+const vipMessage = ref('');
+const vipError = ref(false);
+const claimedDay = ref('');
 let noticeTimer = null;
 let unsubscribeUpdates = null;
 
@@ -125,6 +130,48 @@ const onUpdateAction = async () => {
   }
 };
 
+const canClaimVip = computed(() => (
+  auth.isAuthenticated
+  && settings.dataSource === 'concept'
+  && !claimingVip.value
+  && claimedDay.value !== formatVipDate()
+));
+
+const vipButtonLabel = computed(() => {
+  if (claimingVip.value) return '领取中…';
+  if (claimedDay.value === formatVipDate()) return '今日已领取';
+  return '领取今日 VIP';
+});
+
+const claimVip = async () => {
+  if (!auth.isAuthenticated) {
+    vipMessage.value = '请先登录';
+    vipError.value = true;
+    return;
+  }
+  if (settings.dataSource !== 'concept') {
+    vipMessage.value = '概念版 VIP 仅在概念版数据源下可领取';
+    vipError.value = true;
+    return;
+  }
+
+  claimingVip.value = true;
+  vipMessage.value = '';
+  vipError.value = false;
+  try {
+    const result = await claimDailyVip();
+    claimedDay.value = result.day;
+    vipMessage.value = result.upgradeOk
+      ? '今日概念版 VIP 已领取并升级'
+      : `今日 VIP 已领取${result.upgradeMessage ? `（${result.upgradeMessage}）` : ''}`;
+  } catch (error) {
+    vipMessage.value = error?.message || '领取失败';
+    vipError.value = true;
+  } finally {
+    claimingVip.value = false;
+  }
+};
+
 const accountName = computed(() => {
   const profile = auth.profile;
   if (!profile) return '';
@@ -225,6 +272,18 @@ onBeforeUnmount(() => {
           <button type="button" class="action" :disabled="!auth.ready" @click="goLogin">扫码登录</button>
         </template>
       </div>
+      <template v-if="auth.isAuthenticated">
+        <div class="vip-row">
+          <span>概念版 VIP</span>
+          <button type="button" class="action ghost" :disabled="!canClaimVip" @click="claimVip">
+            {{ vipButtonLabel }}
+          </button>
+        </div>
+        <p class="hint">
+          {{ settings.dataSource === 'concept' ? '每日可手动领取一次，请勿频繁调用。' : '切换到概念版数据源后可领取。' }}
+        </p>
+        <p v-if="vipMessage" class="vip-message" :class="{ error: vipError }">{{ vipMessage }}</p>
+      </template>
     </section>
 
     <section class="card">
@@ -391,6 +450,27 @@ onBeforeUnmount(() => {
 .account-name {
   color: #b9b1c6;
   font-size: 13px;
+}
+
+.vip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  color: #b9b1c6;
+  font-size: 13px;
+}
+
+.vip-message {
+  margin: 8px 0 0;
+  color: #9fe6c8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vip-message.error {
+  color: #ff8f9f;
 }
 
 .action {
