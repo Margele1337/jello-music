@@ -5,7 +5,7 @@ import { initSettings, getSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
-import { initTray, syncTray } from './tray.js';
+import { hasTray, initTray, syncTray } from './tray.js';
 import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from './windows/desktopLyrics.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
 
@@ -44,20 +44,22 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
-      autoplayPolicy: 'no-user-gesture-required'
+      autoplayPolicy: 'no-user-gesture-required',
+      // 主窗口隐藏到托盘后仍需按播放进度更新桌面歌词
+      backgroundThrottling: false
     }
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
 
   mainWindow.on('close', (event) => {
-    if (isQuitting || !getSettings().minimizeToTray) return;
+    if (isQuitting || !getSettings().minimizeToTray || !hasTray()) return;
     event.preventDefault();
     mainWindow?.hide();
   });
 
   mainWindow.on('minimize', (event) => {
-    if (!getSettings().minimizeToTray) return;
+    if (!getSettings().minimizeToTray || !hasTray()) return;
     event.preventDefault();
     mainWindow?.hide();
   });

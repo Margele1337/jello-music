@@ -12,6 +12,8 @@ export const initTray = (nextCallbacks) => {
   callbacks = { ...callbacks, ...nextCallbacks };
 };
 
+export const hasTray = () => !!tray;
+
 export const syncTray = (enabled) => {
   if (!enabled) {
     tray?.destroy();

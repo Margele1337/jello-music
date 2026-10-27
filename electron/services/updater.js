@@ -24,7 +24,12 @@ const setState = (patch) => {
   broadcast();
 };
 
-const errorText = (error) => String(error?.message || error || '更新失败').slice(0, 300);
+const errorText = (error) => {
+  const raw = String(error?.message || error || '更新失败');
+  if (/404|not found|latest\.yml|app-update/i.test(raw)) return '更新服务暂不可用';
+  if (/ENOTFOUND|ECONN|ETIMEDOUT|network/i.test(raw)) return '网络连接失败';
+  return raw.slice(0, 300);
+};
 
 export const initUpdater = () => {
   if (!app.isPackaged) {
