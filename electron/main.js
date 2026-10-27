@@ -66,6 +66,8 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // 桌面歌词窗口是 closable:false 的辅助窗口，不能让它把应用留在后台
+    if (!isQuitting) app.quit();
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
