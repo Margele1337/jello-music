@@ -70,7 +70,8 @@ docs/                architecture and clean-room provenance
 
 ## Roadmap
 
-1. Sigma UI port (owner-authored components/assets, open font atlas).
+1. Sigma UI port (owner-authored components/assets, Roboto atlas font) — demo
+   player/search/playlist now in place.
 2. KuGouMusicApi sidecar + main API proxy + login.
 3. Search/playlists/daily recommendations.
 4. Playback/queue engine, lyrics, settings UI.

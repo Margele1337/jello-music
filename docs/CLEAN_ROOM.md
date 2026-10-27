@@ -52,9 +52,9 @@ Conservative classification for this clean-room project:
 | Module | Source | License | Date | Reviewer |
 | --- | --- | --- | --- | --- |
 | Electron/Vue/Vite skeleton | Original work | MIT | 2026-10-27 | — |
-| Sigma UI | Owner's sigmarebase work (to review) | TBD | — | — |
+| Sigma UI components/assets | Owner-authored sigmarebase work (ported from the legacy repo's Sigma UI) | MIT (owner) | 2026-10-27 | Owner review |
+| Roboto atlas font | Google Fonts / google/fonts | SIL OFL 1.1 | 2026-10-27 | Import check |
 | KuGouMusicApi sidecar (planned) | MakcRe/KuGouMusicApi | MIT | — | — |
-| Font Awesome (planned) | Font Awesome Free | CC BY 4.0 / OFL 1.1 / MIT | — | — |
 
 ## Limits
 

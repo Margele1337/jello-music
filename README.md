@@ -12,19 +12,22 @@ must not contain code copied from them.
 
 ## Status
 
-Architecture foundation implemented:
+Sigma UI demo integrated on top of the architecture foundation:
 
 - Electron 45 + Vue 3 + Vite 8, single secure main window
 - `webSecurity: true`, `contextIsolation: true`, `nodeIntegration: false`,
   sandboxed renderer, minimal preload API
 - Main-owned settings (`electron-store`) mirrored into Pinia; no localStorage
   settings copy; all IPC handlers validate the sender frame
+- Sigma UI (owner-authored components/assets) with a mock player, local demo
+  playlist/search, Roboto atlas font (SIL OFL) replacing Helvetica
 - Vue Router, Pinia stores, and a stub `api:request` boundary for the future
   main-process API proxy
 - `node:test` unit tests for settings sanitization and trusted-sender checks
 
-Not implemented yet: Sigma UI, KuGouMusicApi sidecar, login, player, lyrics,
-settings UI, updater.
+Not implemented yet: KuGouMusicApi sidecar, real login/player, lyrics,
+settings UI, updater. The Electron window runtime still needs a local binary
+reinstall/verification.
 
 ## Development
 
@@ -49,7 +52,7 @@ npm run dist     # Windows NSIS installer (electron-builder)
 ## Third-party and provenance
 
 - API sidecar (planned): [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi), MIT.
-- Icon font (planned, when Sigma UI is integrated): Font Awesome Free
-  (icons CC BY 4.0, fonts SIL OFL 1.1, code MIT).
+- Sigma UI font: Roboto, SIL Open Font License 1.1 (see
+  `src/assets/sigma/fonts/OFL.txt`).
 - See [NOTICE](NOTICE), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and
   [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md).

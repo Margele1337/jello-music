@@ -14,13 +14,19 @@ Third-party components
 - Vue: MIT
 - Vite: MIT
 - electron-builder: MIT
+- Roboto (Sigma UI font): SIL Open Font License 1.1
+  Copyright 2011 Google Inc. See src/assets/sigma/fonts/OFL.txt.
 - Other npm dependencies: used under their respective licenses; see
   package-lock.json and the dependency packages for full texts.
+
+Sigma UI
+--------
+The Sigma UI components and Sigma image assets are the repository owner's
+original work (ported from the owner's sigmarebase UI work). They contain no
+code from MoeKoeMusic, MoeKoe-NextGen, or the legacy GPL repository. See
+docs/CLEAN_ROOM.md for provenance.
 
 Planned integrations
 --------------------
 - KuGouMusicApi (https://github.com/MakcRe/KuGouMusicApi): MIT. Its LICENSE
   and copyright notice must be retained when the sidecar is added.
-- Font Awesome Free: Icons CC BY 4.0, Fonts SIL OFL 1.1, Code MIT
-  (https://fontawesome.com/license/free). Attribution must be retained if its
-  icons or fonts are bundled.
