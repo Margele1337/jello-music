@@ -7,6 +7,7 @@ import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
 import { initTray, syncTray } from './tray.js';
 import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from './windows/desktopLyrics.js';
+import { initUpdater, stopUpdater } from './services/updater.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -89,6 +90,7 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(() => {
   initSettings();
   initAuthSession();
+  initUpdater();
   registerIpc(() => [mainWindow, getDesktopLyricsWindow()].filter(Boolean));
   initTray({
     showWindow: showMainWindow,
@@ -110,6 +112,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  stopUpdater();
   destroyDesktopLyrics();
   flushAuthSession();
   stopSidecar();

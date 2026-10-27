@@ -25,6 +25,17 @@ contextBridge.exposeInMainWorld('jello', {
   desktopLyrics: {
     update: (state) => ipcRenderer.send('desktop-lyrics:update', state)
   },
+  updates: {
+    get: () => ipcRenderer.invoke('update:get'),
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onState: (callback) => {
+      const handler = (_event, state) => callback(state);
+      ipcRenderer.on('update:state', handler);
+      return () => ipcRenderer.removeListener('update:state', handler);
+    }
+  },
   api: {
     request: (request) => ipcRenderer.invoke('api:request', request)
   }

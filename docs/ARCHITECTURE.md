@@ -59,7 +59,7 @@ api/                 KuGouMusicApi git submodule (MIT)
 5. A data-source change restarts the sidecar with the matching platform and
    resets device cookies. A quality change reloads the current track at the new
    quality while preserving playback position. `/settings` exposes both, plus
-   the account/login entry, minimize-to-tray, and desktop lyrics.
+   the account/login entry, minimize-to-tray, desktop lyrics, and update status.
 6. With minimize-to-tray enabled, close/minimize hides the window and the tray
    menu restores it or quits; audio keeps playing because the renderer stays alive.
 7. With desktop lyrics enabled, the main renderer loads and parses the current
@@ -106,6 +106,17 @@ runtime dependencies are missing. Release builds should run
 `npm --prefix api prune --omit=dev` first so dev tooling is not shipped. Code
 signing and installer identity are not configured yet.
 
+## Updates
+
+`electron-updater` is wired to the repository's GitHub Releases. In a packaged
+build it checks quietly 15 seconds after launch and on demand from `/settings`.
+Downloads are opt-in (`autoDownload: false`); once downloaded, the update installs
+on quit and the settings page offers an immediate restart. Development builds
+report "dev" and never contact the update server. `Jello-Music-Setup-x.y.z.exe`,
+`latest.yml`, and the `.blockmap` must be uploaded together to the GitHub release.
+Builds are unsigned, so SmartScreen warnings and update signature hardening are
+still open.
+
 ## Security baseline
 
 - Every IPC handler validates `event.sender` and `event.senderFrame` against the
@@ -124,4 +135,5 @@ signing and installer identity are not configured yet.
 6. In-app lyrics — done.
 7. Windows packaging with sidecar — done (unpacked build verified).
 8. Tray and minimize-to-tray — done; desktop lyrics — done.
-9. Updater, code signing, sidecar token, broader tests/CI.
+9. Auto-update plumbing — done (release upload/signing still open).
+10. Code signing, release workflow, sidecar token, broader tests.

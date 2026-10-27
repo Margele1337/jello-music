@@ -11,7 +11,10 @@ const auth = useAuthStore();
 const version = ref('');
 const switching = ref(false);
 const notice = ref('');
+const updateState = ref({ status: 'idle', version: '', percent: 0, error: '' });
+const hasUpdateBridge = ref(false);
 let noticeTimer = null;
+let unsubscribeUpdates = null;
 
 const setNotice = (text, duration = 3000) => {
   notice.value = text;
@@ -69,6 +72,59 @@ const desktopLyrics = computed({
   }
 });
 
+const updateText = computed(() => {
+  const state = updateState.value;
+  switch (state.status) {
+    case 'dev':
+      return '开发模式不检查更新';
+    case 'checking':
+      return '正在检查更新…';
+    case 'current':
+      return '已是最新版本';
+    case 'available':
+      return state.version ? `发现新版本 v${state.version}` : '发现新版本';
+    case 'downloading':
+      return `正在下载更新 ${state.percent || 0}%`;
+    case 'downloaded':
+      return state.version ? `v${state.version} 已下载，重启后生效` : '更新已下载，重启后生效';
+    case 'error':
+      return state.error || '检查更新失败';
+    default:
+      return '尚未检查更新';
+  }
+});
+
+const updateAction = computed(() => {
+  if (updateState.value.status === 'available') return 'download';
+  if (updateState.value.status === 'downloaded') return 'install';
+  return 'check';
+});
+
+const updateLabel = computed(() => {
+  if (updateAction.value === 'download') return '下载更新';
+  if (updateAction.value === 'install') return '重启安装';
+  return '检查更新';
+});
+
+const updateBusy = computed(() => ['checking', 'downloading'].includes(updateState.value.status));
+const updateDisabled = computed(() => !hasUpdateBridge.value || updateBusy.value || updateState.value.status === 'dev');
+
+const onUpdateAction = async () => {
+  const bridge = window.jello?.updates;
+  if (!bridge) return;
+  try {
+    if (updateAction.value === 'download') {
+      updateState.value = await bridge.download();
+    } else if (updateAction.value === 'install') {
+      await bridge.install();
+    } else {
+      updateState.value = await bridge.check();
+    }
+  } catch (error) {
+    setNotice(error?.message || '更新操作失败');
+  }
+};
+
 const accountName = computed(() => {
   const profile = auth.profile;
   if (!profile) return '';
@@ -96,11 +152,25 @@ onMounted(async () => {
   } catch {
     version.value = '';
   }
+
+  if (window.jello?.updates) {
+    hasUpdateBridge.value = true;
+    try {
+      updateState.value = await window.jello.updates.get();
+    } catch {
+      /* keep default state */
+    }
+    unsubscribeUpdates = window.jello.updates.onState((next) => {
+      updateState.value = next || updateState.value;
+    });
+  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
   clearTimeout(noticeTimer);
+  unsubscribeUpdates?.();
+  unsubscribeUpdates = null;
 });
 </script>
 
@@ -166,6 +236,18 @@ onBeforeUnmount(() => {
         <span>显示桌面歌词</span>
         <input v-model="desktopLyrics" type="checkbox" />
       </label>
+    </section>
+
+    <section class="card update-card">
+      <div class="update-row">
+        <div class="update-info">
+          <h2>更新</h2>
+          <p class="update-status" :class="{ error: updateState.status === 'error' }">{{ updateText }}</p>
+        </div>
+        <button type="button" class="action" :disabled="updateDisabled" @click="onUpdateAction">
+          {{ updateLabel }}
+        </button>
+      </div>
     </section>
 
     <p v-if="notice" class="notice">{{ notice }}</p>
@@ -332,6 +414,33 @@ onBeforeUnmount(() => {
 .action:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.update-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.update-info {
+  min-width: 0;
+}
+
+.update-info h2 {
+  margin-bottom: 4px;
+}
+
+.update-status {
+  margin: 0;
+  color: #837b8f;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.update-status.error {
+  color: #ff8f9f;
 }
 
 .notice {

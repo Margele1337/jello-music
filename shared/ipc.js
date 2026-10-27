@@ -8,5 +8,10 @@ export const IPC = Object.freeze({
   AUTH_CHANGED: 'auth:changed',
   API_REQUEST: 'api:request',
   DESKTOP_LYRICS_UPDATE: 'desktop-lyrics:update',
-  DESKTOP_LYRICS_STATE: 'desktop-lyrics:state'
+  DESKTOP_LYRICS_STATE: 'desktop-lyrics:state',
+  UPDATE_GET: 'update:get',
+  UPDATE_CHECK: 'update:check',
+  UPDATE_DOWNLOAD: 'update:download',
+  UPDATE_INSTALL: 'update:install',
+  UPDATE_STATE: 'update:state'
 });

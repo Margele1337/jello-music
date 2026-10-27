@@ -20,7 +20,8 @@
     "dist": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "electron-store": "^12.0.0"
+    "electron-store": "^12.0.0",
+    "electron-updater": "^6.8.12"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
@@ -79,8 +80,16 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "Jello-Music-Setup-${version}.${ext}"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Margele1337",
+        "repo": "jello-music"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

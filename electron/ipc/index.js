@@ -8,6 +8,12 @@ import { restartSidecar } from '../services/sidecar.js';
 import { syncTray } from '../tray.js';
 import { syncDesktopLyrics, sendDesktopLyricsState } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricState } from '../../shared/desktopLyrics.js';
+import {
+  checkForUpdates,
+  downloadUpdate,
+  getUpdateState,
+  installUpdate
+} from '../services/updater.js';
 
 const assertTrusted = (event, getWindow) => {
   if (!isTrustedSender(event, getWindow())) {
@@ -83,5 +89,26 @@ export const registerIpc = (getWindow) => {
   ipcMain.on(IPC.DESKTOP_LYRICS_UPDATE, (event, state) => {
     if (!isTrustedSender(event, getWindow())) return;
     sendDesktopLyricsState(sanitizeDesktopLyricState(state));
+  });
+
+  ipcMain.handle(IPC.UPDATE_GET, (event) => {
+    assertTrusted(event, getWindow);
+    return getUpdateState();
+  });
+
+  ipcMain.handle(IPC.UPDATE_CHECK, async (event) => {
+    assertTrusted(event, getWindow);
+    return checkForUpdates();
+  });
+
+  ipcMain.handle(IPC.UPDATE_DOWNLOAD, async (event) => {
+    assertTrusted(event, getWindow);
+    return downloadUpdate();
+  });
+
+  ipcMain.handle(IPC.UPDATE_INSTALL, (event) => {
+    assertTrusted(event, getWindow);
+    installUpdate();
+    return true;
   });
 };
