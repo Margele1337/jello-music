@@ -86,6 +86,16 @@ sidecar to decode the LRC, highlights the current line from the audio clock, and
 seeks on line click. Desktop lyrics are a follow-up. Remote media proxying is a
 follow-up.
 
+## Packaging
+
+`npm run dist` builds the renderer and an NSIS installer. The KuGouMusicApi
+sidecar is copied to `resources/api` (outside `app.asar`) together with its
+production `node_modules`; main resolves that path through `process.resourcesPath`
+when packaged. `tools/verify-pack.cjs` fails the build if the sidecar entry or its
+runtime dependencies are missing. Release builds should run
+`npm --prefix api prune --omit=dev` first so dev tooling is not shipped. Code
+signing and installer identity are not configured yet.
+
 ## Security baseline
 
 - Every IPC handler validates `event.sender` and `event.senderFrame` against the
@@ -102,4 +112,5 @@ follow-up.
 4. Playback/queue engine — done; persistent login session — done.
 5. Settings UI (quality, data source, account) — done.
 6. In-app lyrics — done.
-7. Desktop lyrics, updater, tray, packaging, sidecar token, tests/CI.
+7. Windows packaging with sidecar — done (unpacked build verified).
+8. Desktop lyrics, updater, tray, code signing, sidecar token, tests/CI.

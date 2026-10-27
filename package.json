@@ -16,13 +16,11 @@
     "start": "electron .",
     "preview": "vite preview",
     "test": "node --test",
+    "predist": "node tools/clean-electron-default-app.cjs",
     "dist": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "electron-store": "^12.0.0",
-    "pinia": "^3.0.4",
-    "vue": "^3.5.44",
-    "vue-router": "^4.6.4"
+    "electron-store": "^12.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
@@ -30,12 +28,17 @@
     "cross-env": "^10.1.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",
+    "pinia": "^3.0.4",
     "vite": "^8.3.5",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4",
     "wait-on": "^9.5.1"
   },
   "build": {
     "appId": "cn.jello.music",
     "productName": "Jello Music",
+    "electronDist": "node_modules/electron/dist",
+    "afterPack": "tools/verify-pack.cjs",
     "directories": {
       "output": "dist_electron"
     },
@@ -45,6 +48,32 @@
       "package.json",
       "LICENSE",
       "NOTICE"
+    ],
+    "extraResources": [
+      {
+        "from": "api",
+        "to": "api",
+        "filter": [
+          "**/*",
+          "!node_modules/**",
+          "!docs/**",
+          "!bin/**",
+          "!.git/**",
+          "!**/*.md",
+          "!**/*.ts",
+          "!package-lock.json",
+          "!pnpm-lock.yaml"
+        ]
+      },
+      {
+        "from": "api/node_modules",
+        "to": "api/node_modules",
+        "filter": [
+          "**/*",
+          "!**/.cache/**",
+          "!.bin/**"
+        ]
+      }
     ],
     "win": {
       "target": [

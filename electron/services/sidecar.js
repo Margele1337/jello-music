@@ -1,9 +1,16 @@
 import { spawn } from 'node:child_process';
+import { app } from 'electron';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const resolveApiDir = () => (
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'api')
+    : path.join(__dirname, '..', '..', 'api')
+);
 
 let child = null;
 let baseUrl = '';
@@ -44,7 +51,7 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
 
   starting = (async () => {
     const port = await getFreePort();
-    const apiDir = path.join(__dirname, '..', '..', 'api');
+    const apiDir = resolveApiDir();
     const entry = path.join(apiDir, 'app.js');
     const args = [entry, `--port=${port}`];
     if (platform === 'lite') args.push('--platform=lite');
