@@ -53,8 +53,7 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
     const port = await getFreePort();
     const apiDir = resolveApiDir();
     const entry = path.join(apiDir, 'app.js');
-    const args = [entry, `--port=${port}`];
-    if (platform === 'lite') args.push('--platform=lite');
+    const args = [entry, `--port=${port}`, `--platform=${platform}`];
 
     child = spawn(process.execPath, args, {
       cwd: apiDir,
