@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { app } from 'electron';
 import net from 'node:net';
@@ -6,15 +7,27 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const resolveApiDir = () => (
-  app.isPackaged
-    ? path.join(process.resourcesPath, 'api')
-    : path.join(__dirname, '..', '..', 'api')
-);
+const resolvePaths = () => {
+  if (app.isPackaged) {
+    return {
+      apiDir: path.join(process.resourcesPath, 'api'),
+      entry: path.join(process.resourcesPath, 'api', 'app.js'),
+      wrapper: path.join(process.resourcesPath, 'sidecar-entry.cjs'),
+      guard: path.join(process.resourcesPath, 'sidecar-guard.cjs')
+    };
+  }
+  return {
+    apiDir: path.join(__dirname, '..', '..', 'api'),
+    entry: path.join(__dirname, '..', '..', 'api', 'app.js'),
+    wrapper: path.join(__dirname, '..', 'sidecar-entry.cjs'),
+    guard: path.join(__dirname, '..', 'sidecar-guard.cjs')
+  };
+};
 
 let child = null;
 let baseUrl = '';
 let starting = null;
+let sidecarToken = '';
 
 const getFreePort = () => new Promise((resolve, reject) => {
   const server = net.createServer();
@@ -51,20 +64,24 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
 
   starting = (async () => {
     const port = await getFreePort();
-    const apiDir = resolveApiDir();
-    const entry = path.join(apiDir, 'app.js');
-    const args = [entry, `--port=${port}`, `--platform=${platform}`];
+    const { apiDir, entry, wrapper, guard } = resolvePaths();
+    const token = randomBytes(24).toString('hex');
+    const args = [wrapper, `--port=${port}`, `--platform=${platform}`];
 
     child = spawn(process.execPath, args, {
       cwd: apiDir,
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        HOST: '127.0.0.1'
+        HOST: '127.0.0.1',
+        JELLO_SIDECAR_TOKEN: token,
+        JELLO_SIDECAR_GUARD: guard,
+        JELLO_SIDECAR_ENTRY: entry
       },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
+    sidecarToken = token;
 
     child.stdout.on('data', () => {});
     child.stderr.on('data', (data) => {
@@ -74,6 +91,7 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
     child.once('exit', () => {
       child = null;
       baseUrl = '';
+      sidecarToken = '';
     });
 
     await waitForPort(port);
@@ -87,6 +105,8 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
 };
 
 export const getSidecarBaseUrl = () => baseUrl;
+
+export const getSidecarToken = () => sidecarToken;
 
 export const waitForSidecar = async (timeoutMs = 10000) => {
   if (baseUrl) return baseUrl;
@@ -118,6 +138,7 @@ export const stopSidecar = async () => {
   const current = child;
   child = null;
   baseUrl = '';
+  sidecarToken = '';
   if (!current || current.killed) return;
 
   await new Promise((resolve) => {

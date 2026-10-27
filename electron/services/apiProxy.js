@@ -1,5 +1,5 @@
 import { sanitizeApiRequest, sanitizeApiResponse } from '../../shared/apiPolicy.js';
-import { getSidecarBaseUrl, waitForSidecar } from './sidecar.js';
+import { getSidecarBaseUrl, getSidecarToken, waitForSidecar } from './sidecar.js';
 import {
   getAuthHeader,
   getCookieHeader,
@@ -20,7 +20,13 @@ const ensureDeviceCookie = async (baseUrl) => {
 
   deviceReadyPromise = (async () => {
     try {
-      const response = await fetch(new URL('/register/dev', baseUrl), { method: 'POST' });
+      const headers = {};
+      const token = getSidecarToken();
+      if (token) headers['x-jello-token'] = token;
+      const response = await fetch(new URL('/register/dev', baseUrl), {
+        method: 'POST',
+        headers
+      });
       const setCookies = response.headers.getSetCookie?.() || [];
       if (setCookies.length) storeSetCookies(setCookies);
       await response.arrayBuffer();
@@ -49,6 +55,8 @@ export const proxyApiRequest = async (input) => {
   }
 
   const headers = {};
+  const sidecarToken = getSidecarToken();
+  if (sidecarToken) headers['x-jello-token'] = sidecarToken;
   const cookieHeader = getCookieHeader();
   if (cookieHeader) headers.Cookie = cookieHeader;
   const authHeader = getAuthHeader();

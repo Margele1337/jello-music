@@ -8,6 +8,8 @@ exports.default = async (context) => {
     'api/server.js',
     'api/node_modules/express/package.json',
     'api/node_modules/axios/package.json',
+    'sidecar-entry.cjs',
+    'sidecar-guard.cjs',
     'app.asar'
   ];
 

@@ -29,11 +29,11 @@ Sigma player backed by the real KuGou API:
 - `node:test` coverage for settings, API policy, URL normalization, lyrics,
   desktop-lyric state, and trusted senders
 
-Not implemented yet: username/password login, multi-account selection, and a
-per-launch sidecar token. Code signing is wired to optional `CSC_LINK` /
-`CSC_KEY_PASSWORD` repository secrets; without them builds are unsigned. Core
-runtime flows were verified in a real Electron window; phone SMS delivery and
-packaged self-update still need a live account/release to exercise end to end.
+Not implemented yet: username/password login and multi-account selection. Code
+signing is wired to optional `CSC_LINK` / `CSC_KEY_PASSWORD` repository secrets;
+without them builds are unsigned. Core runtime flows were verified in a real
+Electron window; phone SMS delivery and packaged self-update still need a live
+account/release to exercise end to end.
 
 ## Development
 
@@ -57,8 +57,8 @@ ships without dev tooling (the release workflow does this automatically).
 - API calls go through the main-process allowlist proxy; covers are upgraded to
   HTTPS, while audio keeps the CDN protocol because some concept hosts only
   serve valid HTTP. Media is loaded directly from Kugou CDNs.
-- The sidecar is loopback-only on a random port; a per-launch token is still a
-  follow-up.
+- The sidecar is loopback-only on a random port and requires a fresh per-launch
+  token; direct local requests without it receive 401.
 - Keep a strict CSP and review it whenever a new origin is added.
 
 ## Third-party and provenance

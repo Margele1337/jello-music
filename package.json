@@ -53,6 +53,14 @@
     ],
     "extraResources": [
       {
+        "from": "electron/sidecar-entry.cjs",
+        "to": "sidecar-entry.cjs"
+      },
+      {
+        "from": "electron/sidecar-guard.cjs",
+        "to": "sidecar-guard.cjs"
+      },
+      {
         "from": "api",
         "to": "api",
         "filter": [

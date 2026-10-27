@@ -70,8 +70,11 @@ api/                 KuGouMusicApi git submodule (MIT)
 ## API flow
 
 1. Main spawns the MIT KuGouMusicApi submodule as a child process on a random
-   loopback-only port; the process is stopped on app quit. Requests that arrive
-   while it is starting (or restarting after a data-source switch) wait for it.
+   loopback-only port; the process is stopped on app quit. It is launched through
+   `sidecar-entry.cjs`, which preloads `sidecar-guard.cjs` and enforces a fresh
+   per-launch `x-jello-token` header on every inbound request (401 otherwise).
+   Requests that arrive while it is starting (or restarting after a data-source
+   switch) wait for it.
 2. Before the first forwarded request, main calls the sidecar's `/register/dev`
    once and keeps the returned device cookies (`dfid`, `KUGOU_API_*`) in memory.
 3. Renderer calls `api:request` with path/method/params/body.
@@ -113,7 +116,8 @@ follow-up.
 `npm run dist` builds the renderer and an NSIS installer. The KuGouMusicApi
 sidecar is copied to `resources/api` (outside `app.asar`) together with its
 production `node_modules`; main resolves that path through `process.resourcesPath`
-when packaged. `tools/verify-pack.cjs` fails the build if the sidecar entry or its
+when packaged. The wrapper and token guard are copied next to the sidecar.
+`tools/verify-pack.cjs` fails the build if the sidecar entry, wrapper/guard, or
 runtime dependencies are missing. Release builds should run
 `npm --prefix api prune --omit=dev` first so dev tooling is not shipped. Pushing a
 `v*` tag runs `.github/workflows/release.yml`, which builds on Windows and uploads
@@ -140,6 +144,8 @@ still open.
 - No `webSecurity: false`, no `allowRunningInsecureContent`, no webviews.
 - CSP lives in `index.html`; new origins require review.
 - No generic "fetch arbitrary URL" IPC; the API proxy has an allowlist.
+- The sidecar requires a random per-launch token supplied by main; direct local
+  requests without it are rejected before reaching Express.
 
 ## Roadmap
 
@@ -155,4 +161,5 @@ still open.
 10. QR + phone/SMS login — done; username/password and multi-account selection
     remain.
 11. Manual concept-VIP daily claim — done (never automatic).
-12. Code signing, sidecar token, broader tests.
+12. Per-launch sidecar token — done.
+13. Code signing and broader tests.
