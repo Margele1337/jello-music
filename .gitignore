@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist_electron/
+dist_electron_verify*/
+.vite/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*

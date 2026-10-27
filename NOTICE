@@ -1,0 +1,26 @@
+Jello Music NOTICE
+==================
+
+Jello Music clean-room implementation
+Copyright (c) 2026 Margele1337
+License: MIT (see LICENSE)
+
+This repository is an independent implementation. It contains no code from
+MoeKoeMusic, MoeKoe-NextGen, or the legacy jello-music-temp GPL repository.
+
+Third-party components
+----------------------
+- Electron: MIT
+- Vue: MIT
+- Vite: MIT
+- electron-builder: MIT
+- Other npm dependencies: used under their respective licenses; see
+  package-lock.json and the dependency packages for full texts.
+
+Planned integrations
+--------------------
+- KuGouMusicApi (https://github.com/MakcRe/KuGouMusicApi): MIT. Its LICENSE
+  and copyright notice must be retained when the sidecar is added.
+- Font Awesome Free: Icons CC BY 4.0, Fonts SIL OFL 1.1, Code MIT
+  (https://fontawesome.com/license/free). Attribution must be retained if its
+  icons or fonts are bundled.
