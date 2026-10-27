@@ -2,8 +2,9 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
-import { proxyApiRequest } from '../services/apiProxy.js';
-import { clearAuthSession, getProfile } from '../services/authSession.js';
+import { proxyApiRequest, resetDeviceRegistration } from '../services/apiProxy.js';
+import { clearAuthSession, getProfile, resetDeviceCookies } from '../services/authSession.js';
+import { restartSidecar } from '../services/sidecar.js';
 
 const assertTrusted = (event, getWindow) => {
   if (!isTrustedSender(event, getWindow())) {
@@ -30,7 +31,18 @@ export const registerIpc = (getWindow) => {
 
   ipcMain.handle(IPC.SETTINGS_SET, (event, patch) => {
     assertTrusted(event, getWindow);
+    const previous = getSettings();
     const next = updateSettings(patch);
+
+    if (next.dataSource !== previous.dataSource) {
+      resetDeviceRegistration();
+      resetDeviceCookies();
+      const platform = next.dataSource === 'concept' ? 'lite' : 'official';
+      void restartSidecar({ platform }).catch((error) => {
+        console.error('[sidecar] 数据源切换重启失败:', error.message);
+      });
+    }
+
     broadcast(IPC.SETTINGS_CHANGED, next);
     return next;
   });

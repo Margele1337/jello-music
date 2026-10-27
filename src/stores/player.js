@@ -113,6 +113,13 @@ export const usePlayerStore = defineStore('player', {
       }
     },
 
+    reloadCurrent() {
+      if (!this.currentSong) return;
+      const element = ensureAudio(this);
+      if (!element.src) return;
+      void this.loadCurrent({ keepTime: true });
+    },
+
     playSongList(songs, hash) {
       const list = Array.isArray(songs) ? songs.filter((song) => song?.hash) : [];
       if (!list.length) return;

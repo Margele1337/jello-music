@@ -106,6 +106,17 @@ export const storeLoginData = (data = {}) => {
   schedulePersist();
 };
 
+export const resetDeviceCookies = () => {
+  let changed = false;
+  for (const key of [...cookies.keys()]) {
+    if (key.startsWith('KUGOU_API_') || key === 'dfid') {
+      cookies.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) schedulePersist();
+};
+
 export const clearAuthSession = () => {
   for (const key of ['token', 'userid', 't1', 'vip_type']) cookies.delete(key);
   authHeader = '';

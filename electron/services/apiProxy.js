@@ -10,6 +10,10 @@ import {
 let deviceReadyBaseUrl = '';
 let deviceReadyPromise = null;
 
+export const resetDeviceRegistration = () => {
+  deviceReadyBaseUrl = '';
+};
+
 const ensureDeviceCookie = async (baseUrl) => {
   if (deviceReadyBaseUrl === baseUrl) return;
   if (deviceReadyPromise) return deviceReadyPromise;

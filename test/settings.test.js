@@ -30,3 +30,12 @@ test('sanitize clamps volume and rejects wrong types', () => {
   assert.deepEqual(sanitizeSettings(null), {});
   assert.deepEqual(sanitizeSettings([]), {});
 });
+
+test('sanitize rejects unknown quality and data source values', () => {
+  assert.deepEqual(sanitizeSettings({ quality: 'hires' }), {});
+  assert.deepEqual(sanitizeSettings({ dataSource: 'other' }), {});
+  assert.deepEqual(sanitizeSettings({ quality: 'flac', dataSource: 'official' }), {
+    quality: 'flac',
+    dataSource: 'official'
+  });
+});

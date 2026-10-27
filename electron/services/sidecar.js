@@ -82,8 +82,34 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
 
 export const getSidecarBaseUrl = () => baseUrl;
 
-export const stopSidecar = () => {
-  if (child && !child.killed) child.kill();
+export const stopSidecar = async () => {
+  if (starting) {
+    try {
+      await starting;
+    } catch {
+      /* starting already failed */
+    }
+  }
+
+  const current = child;
   child = null;
   baseUrl = '';
+  if (!current || current.killed) return;
+
+  await new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    current.once('exit', finish);
+    current.kill();
+    setTimeout(finish, 3000);
+  });
+};
+
+export const restartSidecar = async (options) => {
+  await stopSidecar();
+  return startSidecar(options);
 };

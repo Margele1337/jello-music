@@ -34,8 +34,8 @@ electron/
 src/
   main.js            Vue + Pinia + Router bootstrap
   App.vue            router view + settings subscription
-  router/            hash-history routes (/, /login, /dev)
-  views/             SigmaView, LoginView, HomeView (architecture smoke test)
+  router/            hash-history routes (/, /login, /settings, /dev)
+  views/             SigmaView, LoginView, SettingsView, HomeView (dev smoke test)
   stores/            settings, player, auth
   services/api/      renderer-side API client (calls the main proxy)
   components/        Sigma UI
@@ -48,9 +48,13 @@ api/                 KuGouMusicApi git submodule (MIT)
 
 1. Main initializes `electron-store` with defaults.
 2. Renderer calls `settings:get` through preload and patches its Pinia store.
-3. Renderer calls `settings:set`; main sanitizes the patch, persists it, and
-   broadcasts `settings:changed`.
+3. Renderer calls `settings:set`; main sanitizes the patch against the accepted
+   quality/data-source values, persists it, and broadcasts `settings:changed`.
 4. All windows mirror the same broadcast; no direct `localStorage` writes.
+5. A data-source change restarts the sidecar with the matching platform and
+   resets device cookies. A quality change reloads the current track at the new
+   quality while preserving playback position. `/settings` exposes both, plus
+   the account/login entry.
 
 ## API flow
 
@@ -92,4 +96,5 @@ store. Remote media proxying is a follow-up.
 2. KuGouMusicApi sidecar + main API proxy + QR login — done.
 3. Search/playlists/daily recommendations against the real API — done.
 4. Playback/queue engine — done; persistent login session — done.
-5. Lyrics, settings UI, updater, tray, packaging, sidecar token, tests/CI.
+5. Settings UI (quality, data source, account) — done.
+6. Lyrics, updater, tray, packaging, sidecar token, tests/CI.

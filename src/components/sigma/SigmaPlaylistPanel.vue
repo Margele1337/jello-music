@@ -86,6 +86,7 @@ const items = computed(() => {
       name: playlist.name
     });
   }
+  list.push({ key: 'settings', type: 'settings', name: '设置' });
   return list;
 });
 

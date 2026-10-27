@@ -1,3 +1,6 @@
+export const QUALITY_VALUES = Object.freeze(['128', '320', 'flac']);
+export const DATA_SOURCE_VALUES = Object.freeze(['concept', 'official']);
+
 export const SETTING_DEFAULTS = Object.freeze({
   language: '',
   quality: '320',
@@ -24,6 +27,16 @@ export const sanitizeSettings = (patch) => {
 
     if (key === 'minimizeToTray') {
       if (typeof value === 'boolean') next.minimizeToTray = value;
+      continue;
+    }
+
+    if (key === 'quality') {
+      if (QUALITY_VALUES.includes(value)) next.quality = value;
+      continue;
+    }
+
+    if (key === 'dataSource') {
+      if (DATA_SOURCE_VALUES.includes(value)) next.dataSource = value;
       continue;
     }
 

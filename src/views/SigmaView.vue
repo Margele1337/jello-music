@@ -31,7 +31,11 @@ onBeforeUnmount(() => clearTimeout(toastTimer));
 <template>
   <main class="sigma-page">
     <div class="sigma-stage">
-      <SigmaMusicPlayer :player="player" @request-login="router.push('/login')" />
+      <SigmaMusicPlayer
+        :player="player"
+        @request-login="router.push('/login')"
+        @request-settings="router.push('/settings')"
+      />
       <div v-if="toast" class="sigma-toast">{{ toast }}</div>
     </div>
   </main>
