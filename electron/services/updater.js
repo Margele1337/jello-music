@@ -1,6 +1,9 @@
 import { app, BrowserWindow } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electronUpdater from 'electron-updater';
 import { IPC } from '../../shared/ipc.js';
+
+// electron-updater 是 CommonJS 包，ESM 命名导入会在启动时抛 SyntaxError
+let autoUpdater = null;
 
 const INITIAL_STATE = {
   status: 'idle',
@@ -37,6 +40,7 @@ export const initUpdater = () => {
     return;
   }
 
+  autoUpdater = electronUpdater.autoUpdater;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
@@ -76,7 +80,7 @@ export const checkForUpdates = async () => {
     setState({ status: 'dev', error: '' });
     return getUpdateState();
   }
-  if (!initialized) return getUpdateState();
+  if (!initialized || !autoUpdater) return getUpdateState();
   if (state.status === 'checking' || state.status === 'downloading') return getUpdateState();
 
   setState({ status: 'checking', version: '', percent: 0, error: '' });
@@ -89,7 +93,7 @@ export const checkForUpdates = async () => {
 };
 
 export const downloadUpdate = async () => {
-  if (!app.isPackaged || !initialized) return getUpdateState();
+  if (!app.isPackaged || !initialized || !autoUpdater) return getUpdateState();
   if (state.status !== 'available') return getUpdateState();
 
   setState({ status: 'downloading', percent: 0, error: '' });
@@ -102,7 +106,7 @@ export const downloadUpdate = async () => {
 };
 
 export const installUpdate = () => {
-  if (!app.isPackaged || !initialized) return;
+  if (!app.isPackaged || !initialized || !autoUpdater) return;
   if (state.status !== 'downloaded') return;
   autoUpdater.quitAndInstall(false, true);
 };
