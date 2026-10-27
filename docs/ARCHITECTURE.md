@@ -24,22 +24,24 @@
 shared/
   ipc.js             IPC channel names (main + renderer)
   settings.js        setting defaults and sanitization (tested)
+  apiPolicy.js       API allowlist, request/response sanitization (tested)
 electron/
-  main.js            app/window lifecycle, secure webPreferences
+  main.js            app/window lifecycle, sidecar lifecycle, secure webPreferences
   preload.cjs        minimal contextBridge API
   security/          trusted-sender validation
-  services/          settings store, future sidecar/API proxy/updater
+  services/          settings store, sidecar manager, API proxy, auth session
   ipc/               IPC handlers
 src/
   main.js            Vue + Pinia + Router bootstrap
   App.vue            router view + settings subscription
-  router/            hash-history routes
-  views/             pages (HomeView is the architecture smoke test)
-  stores/            settings, player
+  router/            hash-history routes (/, /login, /dev)
+  views/             SigmaView, LoginView, HomeView (architecture smoke test)
+  stores/            settings, player, auth
   services/api/      renderer-side API client (calls the main proxy)
-  components/        Sigma UI will live here
+  components/        Sigma UI
 test/                node:test unit tests
 docs/                architecture and clean-room provenance
+api/                 KuGouMusicApi git submodule (MIT)
 ```
 
 ## Settings flow
@@ -50,15 +52,17 @@ docs/                architecture and clean-room provenance
    broadcasts `settings:changed`.
 4. All windows mirror the same broadcast; no direct `localStorage` writes.
 
-## API flow (planned)
+## API flow (first slice implemented)
 
-1. Main spawns KuGouMusicApi (MIT) on a loopback-only random port with a
-   per-launch token.
+1. Main spawns the MIT KuGouMusicApi submodule as a child process on a random
+   loopback-only port; the process is stopped on app quit.
 2. Renderer calls `api:request` with path/method/params/body.
-3. Main validates the sender and request shape, attaches auth cookies held in
-   main, forwards to the sidecar, and returns only the needed JSON.
-4. Remote media URLs are proxied separately; the renderer never gets auth
-   cookies.
+3. Main validates the sender, method, and allowlisted path prefix, attaches
+   cookies/token held in main memory, and forwards to the sidecar.
+4. Login responses have token fields stripped before returning to the renderer;
+   cookies and the fallback auth header stay in main.
+5. QR login is available at `/login`; phone/account login and a per-launch
+   sidecar token are still follow-ups. Remote media proxying is not wired yet.
 
 ## Security baseline
 
@@ -71,8 +75,8 @@ docs/                architecture and clean-room provenance
 ## Roadmap
 
 1. Sigma UI port (owner-authored components/assets, Roboto atlas font) — demo
-   player/search/playlist now in place.
-2. KuGouMusicApi sidecar + main API proxy + login.
-3. Search/playlists/daily recommendations.
+   player/search/playlist in place.
+2. KuGouMusicApi sidecar + main API proxy + QR login — first slice in place.
+3. Search/playlists/daily recommendations against the real API.
 4. Playback/queue engine, lyrics, settings UI.
-5. Updater, tray, packaging, tests/CI.
+5. Updater, tray, packaging, sidecar token, persistent auth, tests/CI.

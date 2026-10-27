@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
+import { proxyApiRequest } from '../services/apiProxy.js';
 
 const assertTrusted = (event, getWindow) => {
   if (!isTrustedSender(event, getWindow())) {
@@ -29,8 +30,8 @@ export const registerIpc = (getWindow) => {
     return next;
   });
 
-  ipcMain.handle(IPC.API_REQUEST, (event) => {
+  ipcMain.handle(IPC.API_REQUEST, async (event, request) => {
     assertTrusted(event, getWindow);
-    throw new Error('API sidecar is not connected yet');
+    return proxyApiRequest(request);
   });
 };

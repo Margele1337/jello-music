@@ -25,6 +25,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
+import { useAuthStore } from '../../stores/auth.js';
 import SigmaText from './SigmaText.vue';
 
 const emit = defineEmits(['select']);
@@ -33,7 +34,10 @@ const props = defineProps({
   temporaryPlaylist: { type: Object, default: null }
 });
 
-const items = ref([
+const auth = useAuthStore();
+
+const items = computed(() => [
+  ...(auth.isAuthenticated ? [] : [{ key: 'login', type: 'login', name: '登录' }]),
   { key: 'daily', type: 'daily', name: '每日推荐' },
   { key: 'like', type: 'playlist', id: 'demo-like', name: '我喜欢的音乐' },
   { key: 'pl-night', type: 'playlist', id: 'demo-night', name: '夜车电台' },

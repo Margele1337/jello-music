@@ -10,6 +10,8 @@ MoeKoeMusic, MoeKoe-NextGen, or the legacy jello-music-temp GPL repository.
 
 Third-party components
 ----------------------
+- KuGouMusicApi (api/ submodule): MIT License, Copyright (c) 2023 MakcRe
+  https://github.com/MakcRe/KuGouMusicApi
 - Electron: MIT
 - Vue: MIT
 - Vite: MIT
@@ -25,8 +27,3 @@ The Sigma UI components and Sigma image assets are the repository owner's
 original work (ported from the owner's sigmarebase UI work). They contain no
 code from MoeKoeMusic, MoeKoe-NextGen, or the legacy GPL repository. See
 docs/CLEAN_ROOM.md for provenance.
-
-Planned integrations
---------------------
-- KuGouMusicApi (https://github.com/MakcRe/KuGouMusicApi): MIT. Its LICENSE
-  and copyright notice must be retained when the sidecar is added.

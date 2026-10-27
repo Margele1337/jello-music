@@ -12,7 +12,7 @@ must not contain code copied from them.
 
 ## Status
 
-Sigma UI demo integrated on top of the architecture foundation:
+Sigma UI demo with QR login wired to the MIT API sidecar:
 
 - Electron 45 + Vue 3 + Vite 8, single secure main window
 - `webSecurity: true`, `contextIsolation: true`, `nodeIntegration: false`,
@@ -21,24 +21,26 @@ Sigma UI demo integrated on top of the architecture foundation:
   settings copy; all IPC handlers validate the sender frame
 - Sigma UI (owner-authored components/assets) with a mock player, local demo
   playlist/search, Roboto atlas font (SIL OFL) replacing Helvetica
-- Vue Router, Pinia stores, and a stub `api:request` boundary for the future
-  main-process API proxy
-- `node:test` unit tests for settings sanitization and trusted-sender checks
+- KuGouMusicApi sidecar launched by the main process on a random loopback port;
+  renderer calls only the allowlisted `api:request` IPC proxy
+- QR login page at `/login`; auth cookies/token stay in the main process
+- `node:test` unit tests for settings sanitization, API policy, and
+  trusted-sender checks
 
-Not implemented yet: KuGouMusicApi sidecar, real login/player, lyrics,
-settings UI, updater. The Electron window runtime still needs a local binary
-reinstall/verification.
+Not implemented yet: real playback/queue, lyrics, settings UI, updater,
+phone/account login, persistent auth, and sidecar per-launch token. The
+Electron window runtime still needs a local binary reinstall/verification.
 
 ## Development
 
 Requires Node.js >= 20.19 on Windows.
 
 ```sh
-npm install
-npm run dev      # Vite + Electron
-npm run build    # renderer production build
-npm test         # unit tests
-npm run dist     # Windows NSIS installer (electron-builder)
+npm run install-all   # root + MIT API submodule dependencies
+npm run dev           # Vite + Electron + sidecar
+npm run build         # renderer production build
+npm test              # unit tests
+npm run dist          # Windows NSIS installer (electron-builder)
 ```
 
 ## Security baseline
@@ -51,7 +53,8 @@ npm run dist     # Windows NSIS installer (electron-builder)
 
 ## Third-party and provenance
 
-- API sidecar (planned): [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi), MIT.
+- API sidecar: [KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi), MIT
+  (git submodule `api/`, LICENSE retained).
 - Sigma UI font: Roboto, SIL Open Font License 1.1 (see
   `src/assets/sigma/fonts/OFL.txt`).
 - See [NOTICE](NOTICE), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and

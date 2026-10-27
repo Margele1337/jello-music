@@ -1,6 +1,9 @@
 <script setup>
 import { onBeforeUnmount, reactive } from 'vue';
+import { useRouter } from 'vue-router';
 import SigmaMusicPlayer from '../components/sigma/SigmaMusicPlayer.vue';
+
+const router = useRouter();
 
 const demoSongs = [
   { hash: 'demo-1', title: '海阔天空', artist: 'Beyond', timelen: 326000 },
@@ -113,7 +116,7 @@ onBeforeUnmount(() => clearInterval(timer));
 <template>
   <main class="sigma-page">
     <div class="sigma-stage">
-      <SigmaMusicPlayer :player="player" />
+      <SigmaMusicPlayer :player="player" @request-login="router.push('/login')" />
     </div>
   </main>
 </template>

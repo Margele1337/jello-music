@@ -1,8 +1,9 @@
 import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initSettings } from './services/settingsStore.js';
+import { initSettings, getSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
+import { startSidecar, stopSidecar } from './services/sidecar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -53,11 +54,19 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(() => {
   initSettings();
   registerIpc(() => mainWindow);
+  const platform = getSettings().dataSource === 'concept' ? 'lite' : 'official';
+  startSidecar({ platform }).catch((error) => {
+    console.error('[sidecar] 启动失败:', error.message);
+  });
   createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('before-quit', () => {
+  stopSidecar();
 });
 
 app.on('window-all-closed', () => {

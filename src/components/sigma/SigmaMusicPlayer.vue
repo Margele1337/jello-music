@@ -78,6 +78,8 @@ const props = defineProps({
   player: { type: Object, default: null }
 });
 
+const emit = defineEmits(['request-login']);
+
 const FONT_STYLE_ID = 'sigma-ui-fonts';
 if (typeof document !== 'undefined' && !document.getElementById(FONT_STYLE_ID)) {
   const style = document.createElement('style');
@@ -242,6 +244,10 @@ const onSearchStarted = () => {
 const onPlaylistSelect = (item) => {
   if (!item) return;
   if (item.key !== 'temp-playlist') temporaryPlaylist.value = null;
+  if (item.type === 'login') {
+    emit('request-login');
+    return;
+  }
   if (item.type === 'daily') {
     searchBoxRef.value?.loadDailyRecommend?.();
     return;

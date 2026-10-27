@@ -1,0 +1,89 @@
+import { spawn } from 'node:child_process';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+let child = null;
+let baseUrl = '';
+let starting = null;
+
+const getFreePort = () => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', () => {
+    const { port } = server.address();
+    server.close(() => resolve(port));
+  });
+});
+
+const waitForPort = (port, timeoutMs = 20000) => new Promise((resolve, reject) => {
+  const deadline = Date.now() + timeoutMs;
+  const tryConnect = () => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve();
+    });
+    socket.once('error', () => {
+      socket.destroy();
+      if (Date.now() > deadline) {
+        reject(new Error('sidecar start timed out'));
+      } else {
+        setTimeout(tryConnect, 250);
+      }
+    });
+  };
+  tryConnect();
+});
+
+export const startSidecar = async ({ platform = 'lite' } = {}) => {
+  if (baseUrl) return baseUrl;
+  if (starting) return starting;
+
+  starting = (async () => {
+    const port = await getFreePort();
+    const apiDir = path.join(__dirname, '..', '..', 'api');
+    const entry = path.join(apiDir, 'app.js');
+    const args = [entry, `--port=${port}`];
+    if (platform === 'lite') args.push('--platform=lite');
+
+    child = spawn(process.execPath, args, {
+      cwd: apiDir,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        HOST: '127.0.0.1'
+      },
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    child.stdout.on('data', () => {});
+    child.stderr.on('data', (data) => {
+      const text = String(data).trim();
+      if (text) console.error('[sidecar]', text.slice(0, 500));
+    });
+    child.once('exit', () => {
+      child = null;
+      baseUrl = '';
+    });
+
+    await waitForPort(port);
+    baseUrl = `http://127.0.0.1:${port}`;
+    return baseUrl;
+  })().finally(() => {
+    starting = null;
+  });
+
+  return starting;
+};
+
+export const getSidecarBaseUrl = () => baseUrl;
+
+export const stopSidecar = () => {
+  if (child && !child.killed) child.kill();
+  child = null;
+  baseUrl = '';
+};
