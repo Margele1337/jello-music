@@ -10,7 +10,7 @@ globalThis.window = {
   }
 };
 
-const { getSongUrl, searchSongs } = await import('../src/services/api/library.js');
+const { getLyrics, getSongUrl, searchSongs } = await import('../src/services/api/library.js');
 
 test('searchSongs normalizes results and rejects api errors', async () => {
   handler = async () => ({
@@ -42,4 +42,25 @@ test('getSongUrl falls back through qualities and upgrades the URL', async () =>
 test('getSongUrl surfaces the last api error', async () => {
   handler = async () => ({ status: 2, error: '本次请求需要验证' });
   await assert.rejects(() => getSongUrl({ hash: 'ABC' }, '320'), /本次请求需要验证/);
+});
+
+test('getLyrics resolves a candidate and parses the decoded LRC', async () => {
+  handler = async ({ path }) => {
+    if (path === '/search/lyric') {
+      return { status: 200, candidates: [{ id: '1', accesskey: 'key', song: '晴天' }] };
+    }
+    return { status: 200, decodeContent: '[00:01.00]第一句\n[00:02.50]第二句' };
+  };
+
+  const result = await getLyrics({ hash: 'ABC', name: '晴天', author: '周杰伦', timeLength: 269000 });
+  assert.deepEqual(result.lines, [
+    { time: 1, text: '第一句' },
+    { time: 2.5, text: '第二句' }
+  ]);
+  assert.equal(result.candidate.id, '1');
+});
+
+test('getLyrics reports missing candidates', async () => {
+  handler = async () => ({ status: 200, candidates: [] });
+  await assert.rejects(() => getLyrics({ hash: 'ABC' }), /没有找到歌词/);
 });

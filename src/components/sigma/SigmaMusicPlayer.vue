@@ -78,7 +78,7 @@ const props = defineProps({
   player: { type: Object, default: null }
 });
 
-const emit = defineEmits(['request-login', 'request-settings']);
+const emit = defineEmits(['request-login', 'request-settings', 'request-lyrics']);
 
 const FONT_STYLE_ID = 'sigma-ui-fonts';
 if (typeof document !== 'undefined' && !document.getElementById(FONT_STYLE_ID)) {
@@ -249,6 +249,10 @@ const onPlaylistSelect = (item) => {
   }
   if (item.type === 'settings') {
     emit('request-settings');
+    return;
+  }
+  if (item.type === 'lyrics') {
+    emit('request-lyrics');
     return;
   }
   if (item.type === 'daily') {

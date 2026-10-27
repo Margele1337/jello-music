@@ -35,6 +35,7 @@ onBeforeUnmount(() => clearTimeout(toastTimer));
         :player="player"
         @request-login="router.push('/login')"
         @request-settings="router.push('/settings')"
+        @request-lyrics="router.push('/lyrics')"
       />
       <div v-if="toast" class="sigma-toast">{{ toast }}</div>
     </div>

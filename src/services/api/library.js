@@ -1,3 +1,4 @@
+import { parseLrc } from '../lyrics/lrc.js';
 import { apiRequest } from './client.js';
 import {
   normalizePlaylistList,
@@ -77,6 +78,36 @@ export const getUserPlaylists = async () => {
   ensureOk(payload, '获取用户歌单失败');
   const list = payload?.data?.info || payload?.data?.lists || payload?.data?.data?.info;
   return normalizePlaylistList(list);
+};
+
+export const getLyrics = async (song) => {
+  if (!song?.hash) throw new Error('缺少歌曲信息');
+
+  const searchParams = {
+    hash: song.hash,
+    duration: Math.max(0, Math.round(Number(song.timeLength) || 0))
+  };
+  if (song.albumAudioId) searchParams.album_audio_id = song.albumAudioId;
+  const keywords = [song.name, song.author].filter(Boolean).join(' ');
+  if (keywords) searchParams.keywords = keywords;
+
+  const search = await apiRequest({ method: 'GET', path: '/search/lyric', params: searchParams });
+  ensureOk(search, '搜索歌词失败');
+
+  const candidates = Array.isArray(search?.candidates) ? search.candidates : [];
+  const candidate = candidates.find((item) => item?.id && item?.accesskey);
+  if (!candidate) throw new Error('没有找到歌词');
+
+  const lyric = await apiRequest({
+    method: 'GET',
+    path: '/lyric',
+    params: { id: candidate.id, accesskey: candidate.accesskey, decode: true, fmt: 'lrc' }
+  });
+  ensureOk(lyric, '获取歌词失败');
+
+  const lines = parseLrc(lyric?.decodeContent || '');
+  if (!lines.length) throw new Error('歌词内容为空');
+  return { lines, candidate };
 };
 
 const pickUrl = (payload) => {

@@ -1,19 +1,19 @@
 const ALLOWED_PREFIXES = [
-  '/login/',
-  '/captcha/',
-  '/register/',
-  '/user/',
-  '/song/',
-  '/search/',
-  '/playlist/',
-  '/everyday/',
-  '/privilege/',
-  '/top/',
-  '/lyric/',
-  '/rank/',
-  '/singer/',
-  '/album/',
-  '/fm/'
+  '/login',
+  '/captcha',
+  '/register',
+  '/user',
+  '/song',
+  '/search',
+  '/playlist',
+  '/everyday',
+  '/privilege',
+  '/top',
+  '/lyric',
+  '/rank',
+  '/singer',
+  '/album',
+  '/fm'
 ];
 
 const ALLOWED_METHODS = new Set(['GET', 'POST']);
@@ -29,7 +29,7 @@ export const sanitizeApiRequest = (input) => {
   const path = String(input.path || '');
   if (!path.startsWith('/') || path.startsWith('//')) throw new Error('invalid api path');
   if (path.includes('..') || /^[a-z]+:/i.test(path)) throw new Error('invalid api path');
-  if (!ALLOWED_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+  if (!ALLOWED_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
     throw new Error('api path is not allowed');
   }
 

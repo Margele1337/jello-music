@@ -11,6 +11,12 @@ test('accepts allowlisted api requests', () => {
     sanitizeApiRequest({ method: 'post', path: '/user/playlist', data: { pagesize: 30 } }).method,
     'POST'
   );
+  assert.equal(sanitizeApiRequest({ path: '/lyric' }).path, '/lyric');
+});
+
+test('does not match allowlisted prefixes by bare string prefix', () => {
+  assert.throws(() => sanitizeApiRequest({ path: '/lyricfoo' }));
+  assert.throws(() => sanitizeApiRequest({ path: '/searchx' }));
 });
 
 test('rejects absolute, traversal, and unknown paths', () => {

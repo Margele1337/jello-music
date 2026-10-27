@@ -3,6 +3,7 @@ import HomeView from '../views/HomeView.vue';
 import SigmaView from '../views/SigmaView.vue';
 import LoginView from '../views/LoginView.vue';
 import SettingsView from '../views/SettingsView.vue';
+import LyricsView from '../views/LyricsView.vue';
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -10,6 +11,7 @@ const router = createRouter({
     { path: '/', name: 'sigma', component: SigmaView },
     { path: '/login', name: 'login', component: LoginView },
     { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/lyrics', name: 'lyrics', component: LyricsView },
     { path: '/dev', name: 'dev', component: HomeView }
   ]
 });

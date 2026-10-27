@@ -38,6 +38,7 @@ src/
   views/             SigmaView, LoginView, SettingsView, HomeView (dev smoke test)
   stores/            settings, player, auth
   services/api/      renderer-side API client (calls the main proxy)
+  services/lyrics/   LRC parser
   components/        Sigma UI
 test/                node:test unit tests
 docs/                architecture and clean-room provenance
@@ -80,7 +81,10 @@ The renderer owns an `HTMLAudioElement` only; the song URL is requested from the
 main proxy with the user's quality setting and falls back to lower quality when
 the requested one is unavailable (for example 320 kbps → 128 kbps for guest
 accounts). The queue, repeat/shuffle modes, and volume live in the Pinia player
-store. Remote media proxying is a follow-up.
+store. The in-app lyrics view (`/lyrics`) searches Kugou lyrics by hash, asks the
+sidecar to decode the LRC, highlights the current line from the audio clock, and
+seeks on line click. Desktop lyrics are a follow-up. Remote media proxying is a
+follow-up.
 
 ## Security baseline
 
@@ -97,4 +101,5 @@ store. Remote media proxying is a follow-up.
 3. Search/playlists/daily recommendations against the real API — done.
 4. Playback/queue engine — done; persistent login session — done.
 5. Settings UI (quality, data source, account) — done.
-6. Lyrics, updater, tray, packaging, sidecar token, tests/CI.
+6. In-app lyrics — done.
+7. Desktop lyrics, updater, tray, packaging, sidecar token, tests/CI.
