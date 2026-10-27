@@ -36,3 +36,22 @@ test('rejects subframes, other senders, and destroyed windows', () => {
     false
   );
 });
+
+test('accepts a trusted window from a list of windows', () => {
+  const main = makeWindow();
+  const lyrics = makeWindow();
+  const trusted = [main, lyrics];
+
+  assert.equal(
+    isTrustedSender({ sender: main.webContents, senderFrame: main.mainFrame }, trusted),
+    true
+  );
+  assert.equal(
+    isTrustedSender({ sender: lyrics.webContents, senderFrame: lyrics.mainFrame }, trusted),
+    true
+  );
+  assert.equal(
+    isTrustedSender({ sender: { mainFrame: {} }, senderFrame: {} }, trusted),
+    false
+  );
+});

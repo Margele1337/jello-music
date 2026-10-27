@@ -6,7 +6,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   quality: '320',
   dataSource: 'concept',
   volume: 1,
-  minimizeToTray: true
+  minimizeToTray: true,
+  desktopLyrics: false
 });
 
 export const SETTING_KEYS = Object.freeze(Object.keys(SETTING_DEFAULTS));
@@ -25,8 +26,8 @@ export const sanitizeSettings = (patch) => {
       continue;
     }
 
-    if (key === 'minimizeToTray') {
-      if (typeof value === 'boolean') next.minimizeToTray = value;
+    if (key === 'minimizeToTray' || key === 'desktopLyrics') {
+      if (typeof value === 'boolean') next[key] = value;
       continue;
     }
 

@@ -27,6 +27,8 @@ test('sanitize clamps volume and rejects wrong types', () => {
   assert.deepEqual(sanitizeSettings({ volume: -1 }), { volume: 0 });
   assert.deepEqual(sanitizeSettings({ volume: 'loud' }), {});
   assert.deepEqual(sanitizeSettings({ minimizeToTray: 'yes' }), {});
+  assert.deepEqual(sanitizeSettings({ desktopLyrics: 'yes' }), {});
+  assert.deepEqual(sanitizeSettings({ desktopLyrics: true }), { desktopLyrics: true });
   assert.deepEqual(sanitizeSettings(null), {});
   assert.deepEqual(sanitizeSettings([]), {});
 });

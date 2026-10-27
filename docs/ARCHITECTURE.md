@@ -2,8 +2,9 @@
 
 ## Decisions
 
-- **Single main window** contains the Sigma UI and audio playback. Auxiliary
-  lyrics/spectrum windows can be added later over explicit IPC channels.
+- **One main window** contains the Sigma UI and audio playback. The optional
+  desktop-lyrics window is a second, transparent click-through window with a
+  dedicated narrow preload; it only receives sanitized lyric text.
 - **The main process owns settings, auth state, and API access.** The renderer
   never receives tokens, cookies, or the sidecar port.
 - **Renderer is sandboxed:** `contextIsolation: true`, `nodeIntegration: false`,
@@ -28,8 +29,10 @@ shared/
 electron/
   main.js            app/window lifecycle, sidecar lifecycle, secure webPreferences
   tray.js            tray icon/menu and minimize-to-tray controller
+  windows/           desktop-lyrics window controller
   preload.cjs        minimal contextBridge API
-  security/          trusted-sender validation
+  preloadLyrics.cjs  desktop-lyrics-only bridge (state push)
+  security/          trusted-sender validation (main + lyrics windows)
   services/          settings store, sidecar manager, API proxy, auth session
   ipc/               IPC handlers
 src/
@@ -56,9 +59,13 @@ api/                 KuGouMusicApi git submodule (MIT)
 5. A data-source change restarts the sidecar with the matching platform and
    resets device cookies. A quality change reloads the current track at the new
    quality while preserving playback position. `/settings` exposes both, plus
-   the account/login entry and the minimize-to-tray checkbox.
+   the account/login entry, minimize-to-tray, and desktop lyrics.
 6. With minimize-to-tray enabled, close/minimize hides the window and the tray
    menu restores it or quits; audio keeps playing because the renderer stays alive.
+7. With desktop lyrics enabled, the main renderer loads and parses the current
+   song's LRC, then pushes a change-only `{title, artist, current, next, playing}`
+   state to main. Main sanitizes it and forwards it to a transparent, always-on-top,
+   click-through window whose preload exposes only the state subscription.
 
 ## API flow
 
@@ -116,5 +123,5 @@ signing and installer identity are not configured yet.
 5. Settings UI (quality, data source, account) — done.
 6. In-app lyrics — done.
 7. Windows packaging with sidecar — done (unpacked build verified).
-8. Tray and minimize-to-tray — done.
-9. Desktop lyrics, updater, code signing, sidecar token, tests/CI.
+8. Tray and minimize-to-tray — done; desktop lyrics — done.
+9. Updater, code signing, sidecar token, broader tests/CI.

@@ -61,6 +61,14 @@ const minimizeToTray = computed({
   }
 });
 
+const desktopLyrics = computed({
+  get: () => settings.desktopLyrics,
+  set: (value) => {
+    void settings.update({ desktopLyrics: Boolean(value) })
+      .catch((error) => setNotice(error?.message || '保存失败'));
+  }
+});
+
 const accountName = computed(() => {
   const profile = auth.profile;
   if (!profile) return '';
@@ -154,7 +162,10 @@ onBeforeUnmount(() => {
         <span>关闭或最小化时收起到托盘</span>
         <input v-model="minimizeToTray" type="checkbox" />
       </label>
-      <p class="hint">开启后关闭/最小化窗口不退出，应用继续后台播放；可从托盘恢复或退出。</p>
+      <label class="row check-row">
+        <span>显示桌面歌词</span>
+        <input v-model="desktopLyrics" type="checkbox" />
+      </label>
     </section>
 
     <p v-if="notice" class="notice">{{ notice }}</p>
@@ -256,6 +267,10 @@ onBeforeUnmount(() => {
 
 .row select:disabled {
   opacity: 0.55;
+}
+
+.check-row + .check-row {
+  margin-top: 8px;
 }
 
 .check-row input {

@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('jello', {
       return () => ipcRenderer.removeListener('auth:changed', handler);
     }
   },
+  desktopLyrics: {
+    update: (state) => ipcRenderer.send('desktop-lyrics:update', state)
+  },
   api: {
     request: (request) => ipcRenderer.invoke('api:request', request)
   }

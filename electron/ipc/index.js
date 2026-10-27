@@ -6,6 +6,8 @@ import { proxyApiRequest, resetDeviceRegistration } from '../services/apiProxy.j
 import { clearAuthSession, getProfile, resetDeviceCookies } from '../services/authSession.js';
 import { restartSidecar } from '../services/sidecar.js';
 import { syncTray } from '../tray.js';
+import { syncDesktopLyrics, sendDesktopLyricsState } from '../windows/desktopLyrics.js';
+import { sanitizeDesktopLyricState } from '../../shared/desktopLyrics.js';
 
 const assertTrusted = (event, getWindow) => {
   if (!isTrustedSender(event, getWindow())) {
@@ -48,6 +50,10 @@ export const registerIpc = (getWindow) => {
       syncTray(next.minimizeToTray);
     }
 
+    if (next.desktopLyrics !== previous.desktopLyrics) {
+      syncDesktopLyrics(next.desktopLyrics);
+    }
+
     broadcast(IPC.SETTINGS_CHANGED, next);
     return next;
   });
@@ -72,5 +78,10 @@ export const registerIpc = (getWindow) => {
       if (profile) broadcast(IPC.AUTH_CHANGED, profile);
     }
     return response;
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_UPDATE, (event, state) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    sendDesktopLyricsState(sanitizeDesktopLyricState(state));
   });
 };

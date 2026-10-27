@@ -3,7 +3,8 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { getLyrics } from './services/api/library.js';
 import { useAuthStore } from './stores/auth.js';
 import { usePlayerStore } from './stores/player.js';
 import { useSettingsStore } from './stores/settings.js';
@@ -11,11 +12,93 @@ import { useSettingsStore } from './stores/settings.js';
 const settings = useSettingsStore();
 const auth = useAuthStore();
 const player = usePlayerStore();
+const desktopLyricLines = ref([]);
+let desktopLyricToken = 0;
+let desktopLyricTimer = null;
+let lastDesktopState = '';
 let unsubscribeSettings = null;
 let unsubscribeAuth = null;
 
 watch(() => settings.quality, (next, previous) => {
   if (previous && next !== previous) player.reloadCurrent();
+});
+
+const buildDesktopState = () => {
+  const song = player.currentSong;
+  const audio = player.audio;
+  const time = Number.isFinite(audio?.currentTime) ? audio.currentTime + 0.15 : 0;
+  let index = -1;
+  for (let i = 0; i < desktopLyricLines.value.length; i += 1) {
+    if (desktopLyricLines.value[i].time > time) break;
+    index = i;
+  }
+  return {
+    title: song?.name || '',
+    artist: song?.author || '',
+    current: desktopLyricLines.value[index]?.text || '',
+    next: desktopLyricLines.value[index + 1]?.text || '',
+    playing: !!player.playing
+  };
+};
+
+const pushDesktopState = (force = false) => {
+  if (!settings.desktopLyrics) return;
+  const state = buildDesktopState();
+  const key = JSON.stringify(state);
+  if (!force && key === lastDesktopState) return;
+  lastDesktopState = key;
+  window.jello?.desktopLyrics?.update?.(state);
+};
+
+const loadDesktopLyrics = async () => {
+  const token = ++desktopLyricToken;
+  desktopLyricLines.value = [];
+  lastDesktopState = '';
+
+  if (!player.currentSong || !settings.desktopLyrics) {
+    pushDesktopState(true);
+    return;
+  }
+
+  try {
+    const result = await getLyrics(player.currentSong);
+    if (token !== desktopLyricToken || !settings.desktopLyrics) return;
+    desktopLyricLines.value = result.lines;
+  } catch {
+    if (token !== desktopLyricToken) return;
+    desktopLyricLines.value = [];
+  }
+  pushDesktopState(true);
+};
+
+const startDesktopLyrics = () => {
+  if (desktopLyricTimer) return;
+  desktopLyricTimer = setInterval(() => pushDesktopState(), 250);
+};
+
+const stopDesktopLyrics = () => {
+  if (desktopLyricTimer) clearInterval(desktopLyricTimer);
+  desktopLyricTimer = null;
+  lastDesktopState = '';
+};
+
+watch(() => settings.desktopLyrics, (enabled) => {
+  if (enabled) {
+    void loadDesktopLyrics();
+    startDesktopLyrics();
+  } else {
+    desktopLyricToken += 1;
+    desktopLyricLines.value = [];
+    stopDesktopLyrics();
+  }
+});
+
+watch(() => player.currentSong?.hash, () => {
+  if (settings.desktopLyrics) void loadDesktopLyrics();
+});
+
+watch(() => player.playing, () => {
+  if (settings.desktopLyrics) pushDesktopState(true);
 });
 
 const isInteractive = (target) => (
@@ -62,6 +145,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
+  stopDesktopLyrics();
   unsubscribeSettings?.();
   unsubscribeAuth?.();
 });
