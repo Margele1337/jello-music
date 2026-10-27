@@ -28,7 +28,10 @@ test('rejects absolute, traversal, and unknown paths', () => {
 });
 
 test('removes auth fields from login and user responses', () => {
-  const loginBody = { status: 1, data: { nickname: 'demo', token: 'secret', userid: 1 } };
+  const loginBody = {
+    status: 1,
+    data: { nickname: 'demo', token: 'secret', secu_params: 'secret2', userid: 1 }
+  };
   assert.deepEqual(sanitizeApiResponse('/login/qr/check', loginBody), {
     status: 1,
     data: { nickname: 'demo', userid: 1 }

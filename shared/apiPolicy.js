@@ -44,7 +44,7 @@ const stripAuthFields = (value) => {
 
   const next = {};
   for (const [key, item] of Object.entries(value)) {
-    if (['token', 'vip_token', 't1', 't', 'cookie'].includes(key)) continue;
+    if (['token', 'vip_token', 't1', 't', 'cookie', 'secu_params', 'access_token', 'refresh_token'].includes(key)) continue;
     next[key] = stripAuthFields(item);
   }
   return next;

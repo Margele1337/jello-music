@@ -87,7 +87,9 @@ api/                 KuGouMusicApi git submodule (MIT)
    this proxy. Covers are upgraded to HTTPS; audio URLs keep the CDN's original
    protocol because some concept-edition CDN hosts (`youthandroid2`) have a
    mismatched HTTPS certificate. `media-src` therefore allows `http:`. QR login
-   is available at `/login`.
+   is available at `/login`, together with phone/SMS-code login
+   (`/captcha/sent` → `/login/cellphone`). Login responses also strip
+   `secu_params` and other token-shaped fields before reaching the renderer.
 
 ## Playback
 
@@ -145,4 +147,6 @@ still open.
 7. Windows packaging with sidecar — done (unpacked build verified).
 8. Tray and minimize-to-tray — done; desktop lyrics — done.
 9. Auto-update plumbing — done (release upload/signing still open).
-10. Code signing, release workflow, sidecar token, broader tests.
+10. QR + phone/SMS login — done; username/password and multi-account selection
+    remain.
+11. Code signing, sidecar token, broader tests.
