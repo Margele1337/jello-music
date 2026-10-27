@@ -58,7 +58,7 @@ watch(() => auth.isAuthenticated, loadUserPlaylists);
 
 const items = computed(() => {
   const list = [];
-  if (!auth.isAuthenticated) {
+  if (auth.ready && !auth.isAuthenticated) {
     list.push({ key: 'login', type: 'login', name: '登录' });
   }
   list.push({ key: 'daily', type: 'daily', name: '每日推荐' });

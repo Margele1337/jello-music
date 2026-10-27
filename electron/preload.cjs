@@ -13,6 +13,15 @@ contextBridge.exposeInMainWorld('jello', {
       return () => ipcRenderer.removeListener('settings:changed', handler);
     }
   },
+  auth: {
+    get: () => ipcRenderer.invoke('auth:get'),
+    clear: () => ipcRenderer.invoke('auth:clear'),
+    onChange: (callback) => {
+      const handler = (_event, profile) => callback(profile);
+      ipcRenderer.on('auth:changed', handler);
+      return () => ipcRenderer.removeListener('auth:changed', handler);
+    }
+  },
   api: {
     request: (request) => ipcRenderer.invoke('api:request', request)
   }

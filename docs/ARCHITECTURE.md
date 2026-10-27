@@ -63,7 +63,10 @@ api/                 KuGouMusicApi git submodule (MIT)
    cookies/token held in main memory, and forwards to the sidecar.
 5. Login and user responses have token fields stripped before returning to the
    renderer; cookies and the fallback auth header stay in main.
-6. Search, public/user playlists, daily recommendations, and song URLs go through
+6. The login session (cookies, auth header, non-sensitive profile fields) is
+   persisted encrypted with Electron `safeStorage`. If OS encryption is not
+   available, it stays memory-only rather than being written in plaintext.
+7. Search, public/user playlists, daily recommendations, and song URLs go through
    this proxy; audio and cover URLs are upgraded to HTTPS before the renderer
    sees them. QR login is available at `/login`.
 
@@ -73,7 +76,7 @@ The renderer owns an `HTMLAudioElement` only; the song URL is requested from the
 main proxy with the user's quality setting and falls back to lower quality when
 the requested one is unavailable (for example 320 kbps → 128 kbps for guest
 accounts). The queue, repeat/shuffle modes, and volume live in the Pinia player
-store. Persistent auth and remote media proxying are follow-ups.
+store. Remote media proxying is a follow-up.
 
 ## Security baseline
 
@@ -88,5 +91,5 @@ store. Persistent auth and remote media proxying are follow-ups.
 1. Sigma UI port (owner-authored components/assets, Roboto atlas font) — done.
 2. KuGouMusicApi sidecar + main API proxy + QR login — done.
 3. Search/playlists/daily recommendations against the real API — done.
-4. Playback/queue engine — done; lyrics and settings UI remain.
-5. Updater, tray, packaging, sidecar token, persistent auth, tests/CI.
+4. Playback/queue engine — done; persistent login session — done.
+5. Lyrics, settings UI, updater, tray, packaging, sidecar token, tests/CI.

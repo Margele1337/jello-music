@@ -3,5 +3,8 @@ export const IPC = Object.freeze({
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_CHANGED: 'settings:changed',
+  AUTH_GET: 'auth:get',
+  AUTH_CLEAR: 'auth:clear',
+  AUTH_CHANGED: 'auth:changed',
   API_REQUEST: 'api:request'
 });

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { initSettings, getSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
+import { initAuthSession, flushAuthSession } from './services/authSession.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -58,6 +59,7 @@ app.on('web-contents-created', (_event, contents) => {
 
 app.whenReady().then(() => {
   initSettings();
+  initAuthSession();
   registerIpc(() => mainWindow);
   const platform = getSettings().dataSource === 'concept' ? 'lite' : 'official';
   startSidecar({ platform }).catch((error) => {
@@ -71,6 +73,7 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  flushAuthSession();
   stopSidecar();
 });
 
