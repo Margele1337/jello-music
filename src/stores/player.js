@@ -56,6 +56,7 @@ export const usePlayerStore = defineStore('player', {
 
   getters: {
     currentSong: (state) => state.queue[state.index] || null,
+    currentPlaybackModeIndex: (state) => state.mode,
     audio() {
       return ensureAudio(this);
     }
