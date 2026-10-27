@@ -103,8 +103,11 @@ sidecar is copied to `resources/api` (outside `app.asar`) together with its
 production `node_modules`; main resolves that path through `process.resourcesPath`
 when packaged. `tools/verify-pack.cjs` fails the build if the sidecar entry or its
 runtime dependencies are missing. Release builds should run
-`npm --prefix api prune --omit=dev` first so dev tooling is not shipped. Code
-signing and installer identity are not configured yet.
+`npm --prefix api prune --omit=dev` first so dev tooling is not shipped. Pushing a
+`v*` tag runs `.github/workflows/release.yml`, which builds on Windows and uploads
+the installer, `latest.yml`, and the blockmap through electron-builder; publish the
+draft release before clients can see it. Code signing and installer identity are
+not configured yet.
 
 ## Updates
 
