@@ -18,6 +18,7 @@ let desktopLyricTimer = null;
 let lastDesktopState = '';
 let unsubscribeSettings = null;
 let unsubscribeAuth = null;
+let unsubscribePlayer = null;
 
 watch(() => settings.quality, (next, previous) => {
   if (previous && next !== previous) player.reloadCurrent();
@@ -141,6 +142,11 @@ onMounted(async () => {
   await Promise.all([settings.load(), auth.load()]);
   unsubscribeSettings = window.jello?.settings?.onChange?.((next) => settings.apply(next)) || null;
   unsubscribeAuth = auth.subscribe();
+  unsubscribePlayer = window.jello?.player?.onCommand?.((command) => {
+    if (command === 'toggle') player.togglePlayPause();
+    else if (command === 'previous') player.playPrevious();
+    else if (command === 'next') player.playNext();
+  }) || null;
 });
 
 onBeforeUnmount(() => {
@@ -148,5 +154,6 @@ onBeforeUnmount(() => {
   stopDesktopLyrics();
   unsubscribeSettings?.();
   unsubscribeAuth?.();
+  unsubscribePlayer?.();
 });
 </script>

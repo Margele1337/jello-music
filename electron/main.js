@@ -30,6 +30,12 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
+function sendPlayerCommand(command) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('player:command', command);
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -102,7 +108,10 @@ app.whenReady().then(async () => {
     quit: () => {
       isQuitting = true;
       app.quit();
-    }
+    },
+    playPause: () => sendPlayerCommand('toggle'),
+    previous: () => sendPlayerCommand('previous'),
+    next: () => sendPlayerCommand('next')
   });
   syncTray(getSettings().minimizeToTray);
   const platform = getSettings().dataSource === 'concept' ? 'lite' : 'official';

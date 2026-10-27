@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld('jello', {
   desktopLyrics: {
     update: (state) => ipcRenderer.send('desktop-lyrics:update', state)
   },
+  player: {
+    onCommand: (callback) => {
+      const handler = (_event, command) => callback(command);
+      ipcRenderer.on('player:command', handler);
+      return () => ipcRenderer.removeListener('player:command', handler);
+    }
+  },
   updates: {
     get: () => ipcRenderer.invoke('update:get'),
     check: () => ipcRenderer.invoke('update:check'),
