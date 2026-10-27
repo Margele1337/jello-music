@@ -185,6 +185,7 @@ onBeforeUnmount(() => {
       <span class="version">{{ version ? `v${version}` : '' }}</span>
     </header>
 
+    <div class="settings-grid">
     <section class="card">
       <h2>播放</h2>
       <label class="row">
@@ -249,6 +250,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </section>
+    </div>
 
     <p v-if="notice" class="notice">{{ notice }}</p>
   </main>
@@ -308,12 +310,22 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .card {
-  margin-top: 12px;
   padding: 14px 16px;
   border: 1px solid #2a2434;
   border-radius: 14px;
   background: rgba(254, 254, 254, 0.045);
+}
+
+.update-card {
+  grid-column: 1 / -1;
 }
 
 .card h2 {

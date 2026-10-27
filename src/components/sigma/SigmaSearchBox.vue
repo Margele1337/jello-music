@@ -49,8 +49,8 @@ const resultsEl = ref(null);
 let requestToken = 0;
 
 const cardStyle = (index) => ({
-  left: `${[10, 183, 356][index % 3]}px`,
-  top: `${90 + Math.floor(index / 3) * 210}px`
+  left: `${[0, 183, 366][index % 3]}px`,
+  top: `${90 + Math.floor(index / 3) * 220}px`
 });
 
 const toSongCard = (song) => ({
@@ -71,7 +71,7 @@ const toPlaylistCard = (playlist) => ({
   idType: playlist.idType,
   listId: playlist.listId,
   name: playlist.name,
-  title: playlist.songCount ? `${playlist.name} · ${playlist.songCount}首` : playlist.name,
+  title: playlist.name,
   artist: playlist.creator,
   cover: playlist.cover || artworkImg
 });

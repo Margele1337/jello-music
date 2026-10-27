@@ -2,8 +2,7 @@ import { parseLrc } from '../lyrics/lrc.js';
 import { apiRequest } from './client.js';
 import {
   normalizePlaylistList,
-  normalizeSongList,
-  toHttps
+  normalizeSongList
 } from './normalize.js';
 
 const errorMessage = (payload, fallback) => {
@@ -129,7 +128,8 @@ export const getSongUrl = async (song, quality = '320') => {
     try {
       const payload = await apiRequest({ method: 'GET', path: '/song/url', params });
       const url = pickUrl(payload);
-      if (url) return { url: toHttps(url), quality: candidate };
+      // 概念版部分 CDN（youthandroid2）HTTPS 证书不匹配，保留接口返回的协议
+      if (url) return { url, quality: candidate };
       message = payload?.error || payload?.msg || payload?.data?.msg || message;
     } catch (error) {
       message = error?.message || message;

@@ -51,8 +51,9 @@ ships without dev tooling (the release workflow does this automatically).
 
 - The renderer never gets Node.js access.
 - `webSecurity` stays enabled; do not add `allowRunningInsecureContent`.
-- API calls go through the main-process allowlist proxy; audio and cover URLs
-  are upgraded to HTTPS and loaded directly from Kugou CDNs.
+- API calls go through the main-process allowlist proxy; covers are upgraded to
+  HTTPS, while audio keeps the CDN protocol because some concept hosts only
+  serve valid HTTP. Media is loaded directly from Kugou CDNs.
 - The sidecar is loopback-only on a random port; a per-launch token is still a
   follow-up.
 - Keep a strict CSP and review it whenever a new origin is added.

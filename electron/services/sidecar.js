@@ -88,6 +88,24 @@ export const startSidecar = async ({ platform = 'lite' } = {}) => {
 
 export const getSidecarBaseUrl = () => baseUrl;
 
+export const waitForSidecar = async (timeoutMs = 10000) => {
+  if (baseUrl) return baseUrl;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (baseUrl) return baseUrl;
+    if (starting) {
+      try {
+        return await starting;
+      } catch {
+        return '';
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return baseUrl;
+};
+
 export const stopSidecar = async () => {
   if (starting) {
     try {

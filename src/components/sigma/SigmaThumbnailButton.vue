@@ -8,10 +8,10 @@
     <img class="sigma-thumbnail-cover" :src="cover" loading="lazy" alt="" />
     <img class="sigma-thumbnail-cover-blur" :src="cover" loading="lazy" alt="" />
     <img class="sigma-thumbnail-play" :src="playIcon" alt="" />
-    <SigmaText v-if="type === 'playlist'" class="sigma-thumbnail-title single" :text="title" :size="12" family="sans" fluid :box-height="13" align="center" />
+    <SigmaText v-if="type === 'playlist'" class="sigma-thumbnail-title single" :text="title" :size="12" family="sans" :box-width="183" :box-height="13" truncate align="center" />
     <template v-else>
-      <SigmaText class="sigma-thumbnail-title" :text="title" :size="12" family="sans" fluid :box-height="13" align="center" />
-      <SigmaText class="sigma-thumbnail-artist" :text="artist" :size="12" family="sans" fluid :box-height="13" align="center" />
+      <SigmaText class="sigma-thumbnail-title" :text="title" :size="12" family="sans" :box-width="183" :box-height="13" truncate align="center" />
+      <SigmaText class="sigma-thumbnail-artist" :text="artist" :size="12" family="sans" :box-width="183" :box-height="13" truncate align="center" />
     </template>
   </button>
 </template>

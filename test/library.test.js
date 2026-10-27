@@ -25,7 +25,7 @@ test('searchSongs normalizes results and rejects api errors', async () => {
   await assert.rejects(() => searchSongs('x'), /参数错误/);
 });
 
-test('getSongUrl falls back through qualities and upgrades the URL', async () => {
+test('getSongUrl falls back through qualities and preserves the CDN protocol', async () => {
   const qualities = [];
   handler = async (request) => {
     qualities.push(request.params.quality);
@@ -36,7 +36,7 @@ test('getSongUrl falls back through qualities and upgrades the URL', async () =>
   const result = await getSongUrl({ hash: 'ABC' }, 'flac');
   assert.deepEqual(qualities, ['flac', '320', '128']);
   assert.equal(result.quality, '128');
-  assert.equal(result.url, 'https://fsandroid.kugou.com/song.mp3');
+  assert.equal(result.url, 'http://fsandroid.kugou.com/song.mp3');
 });
 
 test('getSongUrl surfaces the last api error', async () => {

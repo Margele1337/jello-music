@@ -9,6 +9,13 @@ let persistTimer = null;
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
 
+const playbackErrorText = (error) => {
+  if (error?.name === 'NotSupportedError') return '该音源格式不受支持';
+  if (error?.name === 'NotAllowedError') return '系统阻止了自动播放';
+  if (error?.name === 'AbortError') return '播放已取消';
+  return error?.message || '播放失败，请稍后重试';
+};
+
 const ensureAudio = (store) => {
   if (audio) return audio;
 
@@ -106,7 +113,7 @@ export const usePlayerStore = defineStore('player', {
       } catch (error) {
         if (token === loadToken) {
           this.playing = false;
-          this.error = error?.message || '播放失败';
+          this.error = playbackErrorText(error);
         }
       } finally {
         if (token === loadToken) this.loading = false;
@@ -139,7 +146,7 @@ export const usePlayerStore = defineStore('player', {
       if (element.paused) {
         void element.play().catch((error) => {
           this.playing = false;
-          this.error = error?.message || '播放失败';
+          this.error = playbackErrorText(error);
         });
       } else {
         element.pause();

@@ -18,6 +18,7 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
 let mainWindow = null;
 let isQuitting = false;
+let shutdownStarted = false;
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -91,9 +92,9 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   initSettings();
-  initAuthSession();
+  await initAuthSession();
   initUpdater();
   registerIpc(() => [mainWindow, getDesktopLyricsWindow()].filter(Boolean));
   initTray({
@@ -114,12 +115,19 @@ app.whenReady().then(() => {
   app.on('activate', showMainWindow);
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  if (shutdownStarted) return;
+
+  shutdownStarted = true;
+  event.preventDefault();
   stopUpdater();
   destroyDesktopLyrics();
-  flushAuthSession();
-  stopSidecar();
+  void stopSidecar();
+  void Promise.race([
+    flushAuthSession(),
+    new Promise((resolve) => setTimeout(resolve, 1500))
+  ]).finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {

@@ -1,5 +1,5 @@
 import { sanitizeApiRequest, sanitizeApiResponse } from '../../shared/apiPolicy.js';
-import { getSidecarBaseUrl } from './sidecar.js';
+import { getSidecarBaseUrl, waitForSidecar } from './sidecar.js';
 import {
   getAuthHeader,
   getCookieHeader,
@@ -37,7 +37,7 @@ const ensureDeviceCookie = async (baseUrl) => {
 
 export const proxyApiRequest = async (input) => {
   const request = sanitizeApiRequest(input);
-  const baseUrl = getSidecarBaseUrl();
+  const baseUrl = getSidecarBaseUrl() || await waitForSidecar();
   if (!baseUrl) throw new Error('API sidecar is not ready');
 
   await ensureDeviceCookie(baseUrl);

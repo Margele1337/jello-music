@@ -18,24 +18,31 @@ const pickProfile = (data) => {
   return Object.keys(next).length ? next : null;
 };
 
-const persistNow = () => {
+const persistNow = async () => {
   persistTimer = null;
   if (!initialized) return;
-  const saved = saveSession({
-    cookies: [...cookies.entries()],
-    authHeader,
-    profile
-  });
-  if (!saved && !warnedNoEncryption) {
-    warnedNoEncryption = true;
-    console.warn('[session] 系统加密不可用，登录态不会写入磁盘');
+
+  try {
+    const saved = await saveSession({
+      cookies: [...cookies.entries()],
+      authHeader,
+      profile
+    });
+    if (!saved && !warnedNoEncryption) {
+      warnedNoEncryption = true;
+      console.warn('[session] 系统加密不可用，登录态不会写入磁盘');
+    }
+  } catch (error) {
+    console.error('[session] 登录态写入失败:', error.message);
   }
 };
 
 const schedulePersist = () => {
   if (!initialized) return;
   if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(persistNow, 400);
+  persistTimer = setTimeout(() => {
+    void persistNow();
+  }, 400);
 };
 
 const parseSetCookie = (line) => {
@@ -45,8 +52,14 @@ const parseSetCookie = (line) => {
   return [pair.slice(0, index).trim(), pair.slice(index + 1).trim()];
 };
 
-export const initAuthSession = () => {
-  const session = loadSession();
+export const initAuthSession = async () => {
+  let session = null;
+  try {
+    session = await loadSession();
+  } catch (error) {
+    console.error('[session] 读取登录态失败:', error.message);
+  }
+
   if (session) {
     for (const entry of Array.isArray(session.cookies) ? session.cookies : []) {
       if (Array.isArray(entry) && entry.length === 2 && typeof entry[0] === 'string') {
@@ -65,11 +78,9 @@ export const initAuthSession = () => {
   initialized = true;
 };
 
-export const flushAuthSession = () => {
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-    persistNow();
-  }
+export const flushAuthSession = async () => {
+  if (persistTimer) clearTimeout(persistTimer);
+  await persistNow();
 };
 
 export const storeSetCookies = (setCookies = []) => {

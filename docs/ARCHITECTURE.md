@@ -70,7 +70,8 @@ api/                 KuGouMusicApi git submodule (MIT)
 ## API flow
 
 1. Main spawns the MIT KuGouMusicApi submodule as a child process on a random
-   loopback-only port; the process is stopped on app quit.
+   loopback-only port; the process is stopped on app quit. Requests that arrive
+   while it is starting (or restarting after a data-source switch) wait for it.
 2. Before the first forwarded request, main calls the sidecar's `/register/dev`
    once and keeps the returned device cookies (`dfid`, `KUGOU_API_*`) in memory.
 3. Renderer calls `api:request` with path/method/params/body.
@@ -79,18 +80,23 @@ api/                 KuGouMusicApi git submodule (MIT)
 5. Login and user responses have token fields stripped before returning to the
    renderer; cookies and the fallback auth header stay in main.
 6. The login session (cookies, auth header, non-sensitive profile fields) is
-   persisted encrypted with Electron `safeStorage`. If OS encryption is not
-   available, it stays memory-only rather than being written in plaintext.
+   persisted encrypted with Electron's async `safeStorage` APIs; quit waits
+   briefly for the write to finish. If OS encryption is not available, it stays
+   memory-only rather than being written in plaintext.
 7. Search, public/user playlists, daily recommendations, and song URLs go through
-   this proxy; audio and cover URLs are upgraded to HTTPS before the renderer
-   sees them. QR login is available at `/login`.
+   this proxy. Covers are upgraded to HTTPS; audio URLs keep the CDN's original
+   protocol because some concept-edition CDN hosts (`youthandroid2`) have a
+   mismatched HTTPS certificate. `media-src` therefore allows `http:`. QR login
+   is available at `/login`.
 
 ## Playback
 
 The renderer owns an `HTMLAudioElement` only; the song URL is requested from the
 main proxy with the user's quality setting and falls back to lower quality when
 the requested one is unavailable (for example 320 kbps → 128 kbps for guest
-accounts). The queue, repeat/shuffle modes, and volume live in the Pinia player
+accounts). Media URLs are loaded directly from the Kugou CDN, not proxied; some
+concept CDN hosts only serve valid HTTP, so the CSP media policy allows both
+protocols while scripts and API calls stay locked down. The queue, repeat/shuffle modes, and volume live in the Pinia player
 store. The in-app lyrics view (`/lyrics`) searches Kugou lyrics by hash, asks the
 sidecar to decode the LRC, highlights the current line from the audio clock, and
 seeks on line click. Desktop lyrics are a follow-up. Remote media proxying is a
