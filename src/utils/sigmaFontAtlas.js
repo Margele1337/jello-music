@@ -23,19 +23,16 @@ const PNG_IMPORTS = {
   'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.png?url')
 };
 
-// 高 DPI：1x 位图在小数缩放（150%）的屏幕上会被浏览器放大，文字发虚/带锯齿；
-// 2x 位图在 150% 屏被缩到 0.75 倍会把细笔画平滑掉（字发虚、看着像缺笔画）。
-// 因此按屏幕密度挑最贴近 1:1 物理像素的一套：dpr≈1.5 优先用 1.5x 图集（若该字号有），
-// 否则回退 2x；度量统一折算回 CSS px，布局代码不需要区分密度。
+// 高 DPI：1x 位图在 dpr=1.5/2 的屏幕上会被浏览器整体放大，文字发虚/带锯齿。
+// 这里按需改用同一套 Java2D 参数光栅化的 2x 图集（tools/font-atlas/FontAtlas.java，
+// 字号翻倍），度量统一折算回 CSS px，布局代码不需要区分密度。
 // 重新生成（只覆盖实际用到的字号；当前图集由 Selawik 光栅化，见 docs/CLEAN_ROOM.md）：
 //   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 12,13,14,20,25,40 atlas-light
 //   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 26,28,40,80 atlas2x-light
 //   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 12,25 atlas-sans
 //   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 24,50 atlas2x-sans
-//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 18 atlas15x-sans
 const HIGH_DPI_THRESHOLD = 1.25;
 const DENSITY_2X = 2;
-const DENSITY_1_5X = 1.5;
 
 const META_IMPORTS_2X = {
   'light-13': () => import('../assets/sigma/fonts/atlas2x-light-26.json'),
@@ -55,50 +52,35 @@ const PNG_IMPORTS_2X = {
   'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.png?url')
 };
 
-// 1.5x 图集：150% 缩放屏上与物理像素 1:1（字号 ×1.5 光栅化），比 2x 缩小 0.75 更锐利
-const META_IMPORTS_15X = {
-  'sans-12': () => import('../assets/sigma/fonts/atlas15x-sans-18.json')
-};
-
-const PNG_IMPORTS_15X = {
-  'sans-12': () => import('../assets/sigma/fonts/atlas15x-sans-18.png?url')
-};
+// 1.5x 图集实验已移除（150% 屏的半像素/细分歧路），保持 2x + 平滑
 
 const cache = new Map();
 
 const pickDensity = (key) => {
+  if (!META_IMPORTS_2X[key]) return 1;
   const dpr = typeof window === 'undefined' ? 1 : (window.devicePixelRatio || 1);
-  if (dpr >= 1.75 && META_IMPORTS_2X[key]) return DENSITY_2X;
-  if (dpr >= 1.4 && META_IMPORTS_15X[key]) return DENSITY_1_5X;
-  if (dpr >= HIGH_DPI_THRESHOLD && META_IMPORTS_2X[key]) return DENSITY_2X;
-  return 1;
+  return dpr >= HIGH_DPI_THRESHOLD ? DENSITY_2X : 1;
 };
 
-const importsFor = (density) => {
-  if (density === DENSITY_2X) return [META_IMPORTS_2X, PNG_IMPORTS_2X];
-  if (density === DENSITY_1_5X) return [META_IMPORTS_15X, PNG_IMPORTS_15X];
-  return [META_IMPORTS, PNG_IMPORTS];
-};
+const importsFor = (density) => (density === DENSITY_2X ? [META_IMPORTS_2X, PNG_IMPORTS_2X] : [META_IMPORTS, PNG_IMPORTS]);
 
-// 高密度图集的度量折算回 CSS px（字号越小，取整误差带来的偏移越明显，
-// 因此坐标/贴图尺寸保留小数，交给绘制端做设备像素吸附）。
-// advance 取整：Slick/original 排版本身就是整数像素步进，1.5x 折算出的
-// 6.67px 这类小数步进会让每个字的落点忽左忽右（观感「歪歪扭扭」）。
-const toCssMetrics = (meta, density) => {
-  const divide = (value) => value / density;
+// 2x 图集的度量折算回 CSS px（字号越小，取整误差带来的偏移越明显，
+// 因此保留小数而不是 Math.round，交给调用方现有的取整逻辑处理）
+const toCssMetrics = (meta) => {
+  const half = (value) => value / 2;
   const glyphs = {};
   for (const [code, glyph] of Object.entries(meta.glyphs)) {
     glyphs[code] = {
-      x: divide(glyph.x),
-      y: divide(glyph.y),
-      w: divide(glyph.w),
-      h: divide(glyph.h),
-      adv: Math.max(1, Math.round(divide(glyph.adv)))
+      x: half(glyph.x),
+      y: half(glyph.y),
+      w: half(glyph.w),
+      h: half(glyph.h),
+      adv: half(glyph.adv)
     };
   }
   return {
-    lineHeight: divide(meta.lineHeight),
-    ascent: divide(meta.ascent),
+    lineHeight: half(meta.lineHeight),
+    ascent: half(meta.ascent),
     glyphs
   };
 };
@@ -122,7 +104,7 @@ export const loadSigmaAtlas = (size, family = 'light') => {
       img.onerror = () => reject(new Error('failed to load atlas image'));
       img.src = url;
     });
-    const metrics = density === 1 ? raw : toCssMetrics(raw, density);
+    const metrics = density === DENSITY_2X ? toCssMetrics(raw) : raw;
     const atlas = {
       size: Number(size),
       family,
@@ -229,17 +211,12 @@ const getTintedAtlas = (atlas, color) => {
 
 // 与 Slick TrueTypeFont.drawString 一致：按 advance 逐字形贴图，(x, y) 为文本左上角。
 // 度量是 CSS px，位图是 atlas.density 倍密度，取源矩形时乘回去。
-// 目标坐标吸附到物理像素：1.5x 图集的行高折算后会把整行压在半像素上
-// （关掉平滑时表现为每字一边硬一边虚、间距忽宽忽窄 → 看着歪歪扭扭）。
 export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#ffffff') => {
   if (!atlas || !text) return 0;
   const source = getTintedAtlas(atlas, color);
   const density = atlas.density || 1;
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const snap = (value) => Math.round(value * dpr) / dpr;
   const prevAlpha = ctx.globalAlpha;
   if (alpha !== 1) ctx.globalAlpha = prevAlpha * alpha;
-  const destY = snap(y);
   let penX = x;
   for (const ch of String(text)) {
     const code = ch.codePointAt(0);
@@ -247,17 +224,16 @@ export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#fffff
     if (glyph) {
       ctx.drawImage(source,
         glyph.x * density, glyph.y * density, glyph.w * density, glyph.h * density,
-        snap(penX), destY, glyph.w, glyph.h);
+        penX, y, glyph.w, glyph.h);
       penX += glyph.adv;
       continue;
     }
-    // 图集缺失字形（中文等）：浏览器字体渲染，基线对齐图集 ascent。
-    // 基线同样吸附物理像素：落在半像素上时细横线会被抗锯齿摊薄没了（「十」变「|」）
+    // 图集缺失字形（中文等）：浏览器字体渲染，基线对齐图集 ascent
     ctx.save();
     ctx.font = atlas.size + 'px ' + FALLBACK_STACK;
     ctx.fillStyle = color;
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(ch, snap(penX), snap(y + atlas.ascent));
+    ctx.fillText(ch, penX, y + atlas.ascent);
     const w = Math.ceil(ctx.measureText(ch).width);
     ctx.restore();
     penX += w;
