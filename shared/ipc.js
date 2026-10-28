@@ -26,6 +26,7 @@ export const IPC = Object.freeze({
   SPECTRUM_REQUEST_CURRENT: 'spectrum:request-current',
   SPECTRUM_SETTINGS: 'spectrum:settings',
   SPECTRUM_LOCK_TOGGLE: 'spectrum:lock-toggle',
+  SPECTRUM_BOUNDS: 'spectrum:bounds',
   WINDOW_DOCK_TOGGLE: 'window:dock-toggle',
   WINDOW_DOCK_GET: 'window:dock-get',
   WINDOW_RESTORE: 'window:restore',

@@ -239,6 +239,34 @@ const handleDblClick = (event) => {
   window.jelloSpectrum?.setLocked?.(locked.value);
 };
 
+// ===== 解锁态拖动：mousedown 起手，mousemove 算新 bounds，IPC 交给主进程 setBounds =====
+let dragging = false;
+let dragStartScreen = { x: 0, y: 0 };
+let dragStartBounds = { x: 0, y: 0 };
+let dragSentAt = 0;
+
+const onDragStart = (event) => {
+  if (locked.value || event.button !== 0) return;
+  dragging = true;
+  dragStartScreen = { x: event.screenX, y: event.screenY };
+  dragStartBounds = { x: window.screenX, y: window.screenY };
+};
+
+const onDragMove = (event) => {
+  if (!dragging) return;
+  const now = performance.now();
+  if (now - dragSentAt < 16) return;
+  dragSentAt = now;
+  window.jelloSpectrum?.sendBounds?.({
+    x: Math.round(dragStartBounds.x + (event.screenX - dragStartScreen.x)),
+    y: Math.round(dragStartBounds.y + (event.screenY - dragStartScreen.y))
+  });
+};
+
+const onDragEnd = () => {
+  dragging = false;
+};
+
 onMounted(() => {
   document.body.style.backgroundColor = 'transparent';
   document.body.style.margin = '0';
@@ -246,6 +274,9 @@ onMounted(() => {
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
   document.addEventListener('dblclick', handleDblClick);
+  document.addEventListener('mousedown', onDragStart);
+  document.addEventListener('mousemove', onDragMove);
+  document.addEventListener('mouseup', onDragEnd);
 
   unsubscribe = window.jelloSpectrum?.onData?.(applyPayload) || null;
   unsubscribeSettings = window.jelloSpectrum?.onSettings?.(applySettings) || null;
@@ -262,6 +293,9 @@ onBeforeUnmount(() => {
   raf = null;
   window.removeEventListener('resize', resizeCanvas);
   document.removeEventListener('dblclick', handleDblClick);
+  document.removeEventListener('mousedown', onDragStart);
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup', onDragEnd);
 });
 </script>
 
@@ -275,29 +309,20 @@ html, body, #app { background: transparent !important; overflow: hidden; }
   position: fixed;
   inset: 0;
   user-select: none;
-  -webkit-app-region: no-drag;
 }
 
 .spectrum-hud.hud-editing {
-  -webkit-app-region: drag;
   border: 2px dashed rgba(255, 255, 255, 0.4);
   border-radius: 6px;
+  cursor: move;
 }
 
+/* 拖动走渲染层 mousedown + IPC setBounds（-webkit-app-region 在高 DPI 缩放屏
+   的 hit-test 不可靠），这里不再使用 app-region */
 .spectrum-canvas {
   position: absolute;
   inset: 0;
   display: block;
-  -webkit-app-region: no-drag;
-}
-
-.spectrum-canvas {
-  position: absolute;
-  inset: 0;
-  display: block;
-  /* -webkit-app-region 不继承：canvas 铺满整个窗口，不显式继承的话默认 none，
-     会把父级 .spectrum-hud.hud-editing 的 drag 区域整块挡住 → 解锁后拖不动窗口 */
-  -webkit-app-region: inherit;
 }
 
 .spectrum-info {
@@ -307,7 +332,6 @@ html, body, #app { background: transparent !important; overflow: hidden; }
   display: flex;
   align-items: center;
   gap: calc(10px * var(--info-scale, 1.25));
-  -webkit-app-region: no-drag;
   pointer-events: none;
 }
 

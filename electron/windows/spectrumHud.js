@@ -67,13 +67,14 @@ const anchorSpectrumWindow = () => {
     const x = Math.min(Math.max(bounds.x, area.x), area.x + area.width - bounds.width);
     const y = Math.min(Math.max(bounds.y, area.y), area.y + area.height - bounds.height);
     if (x !== bounds.x || y !== bounds.y) {
-      hudWindow.setBounds({ x, y, width: bounds.width, height: bounds.height });
+      // setPosition 不带宽高：150% 缩放下 setBounds 的 DIP↔物理往返取整会让尺寸 ±1 漂移
+      hudWindow.setPosition(Math.round(x), Math.round(y));
     }
     return;
   }
   const y = area.y + area.height - bounds.height;
   if (bounds.y === y) return;
-  hudWindow.setBounds({ x: bounds.x, y, width: bounds.width, height: bounds.height });
+  hudWindow.setPosition(bounds.x, Math.round(y));
 };
 
 const applySpectrumGeometry = () => {
@@ -164,7 +165,6 @@ export const showSpectrumHud = () => {
     resizable: true,
     skipTaskbar: true,
     alwaysOnTop: true,
-    focusable: false,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preloadSpectrum.cjs'),
       contextIsolation: true,
@@ -181,12 +181,23 @@ export const showSpectrumHud = () => {
 
   hudWindow.setAlwaysOnTop(true, 'screen-saver');
   hudWindow.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
+  applySpectrumHudMouseEvents(getSettings().spectrumLocked === true);
 
   const persistBounds = () => {
     if (!hudWindow || hudWindow.isDestroyed()) return;
     const bounds = hudWindow.getBounds();
     store.set('spectrumWindowPosition', { x: bounds.x, y: bounds.y });
     store.set('spectrumWindowSize', { width: bounds.width, height: bounds.height });
+  };
+
+  // 原生拖动/缩放期间 move 事件每秒几十次，同步落盘会卡住拖动循环；防抖到停手后再写
+  let boundsFlushTimer = null;
+  const flushBoundsSoon = () => {
+    if (boundsFlushTimer) clearTimeout(boundsFlushTimer);
+    boundsFlushTimer = setTimeout(() => {
+      boundsFlushTimer = null;
+      persistBounds();
+    }, 200);
   };
 
   const isAtAnchor = () => {
@@ -203,12 +214,15 @@ export const showSpectrumHud = () => {
     if (spectrumUserMoved) {
       const x = Math.min(Math.max(bounds.x, area.x), area.x + area.width - bounds.width);
       const y = Math.min(Math.max(bounds.y, area.y), area.y + area.height - bounds.height);
-      if (x !== bounds.x || y !== bounds.y) hudWindow.setBounds({ x, y, width: bounds.width, height: bounds.height });
+      if (x !== bounds.x || y !== bounds.y) {
+        // setPosition 不带宽高：150% 缩放下 setBounds 的 DIP↔物理往返取整会让尺寸 ±1 漂移
+        hudWindow.setPosition(Math.round(x), Math.round(y));
+      }
       return;
     }
     const targetY = area.y + area.height - bounds.height;
     if (bounds.y === targetY) return;
-    hudWindow.setBounds({ x: bounds.x, y: targetY, width: bounds.width, height: bounds.height });
+    hudWindow.setPosition(bounds.x, Math.round(targetY));
   };
 
   const reanchorAndSync = () => {
@@ -218,15 +232,15 @@ export const showSpectrumHud = () => {
 
   hudWindow.on('resize', () => {
     anchor();
-    persistBounds();
+    flushBoundsSoon();
   });
   hudWindow.on('move', () => {
-    persistBounds();
+    flushBoundsSoon();
+    // 区分「系统贴底锚定」与「用户手动拖动」：位置不是贴底目标 → 用户拖的，记住它
     if (!spectrumUserMoved && !isAtAnchor()) {
       spectrumUserMoved = true;
       store.set('spectrumUserMoved', true);
     }
-    applySpectrumGeometry();
   });
 
   hudWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -259,6 +273,10 @@ export const showSpectrumHud = () => {
     hudWindow = null;
     spectrumGeometryKey = '';
     spectrumDipScale = 0;
+    if (boundsFlushTimer) {
+      clearTimeout(boundsFlushTimer);
+      boundsFlushTimer = null;
+    }
   });
 
   const bindDisplayListeners = () => {
@@ -313,6 +331,17 @@ export const syncSpectrumHud = (enabled) => {
   else destroySpectrumHud();
 };
 
+// 锁定 = 鼠标完全穿透（forward 让 mousemove 仍转发，方便渲染层感知）；解锁 = 可拖动/缩放。
+// 解除穿透时不能带 forward 选项：Windows 上 (false, {forward:true}) 解除不干净，窗口仍然穿透
+export const applySpectrumHudMouseEvents = (locked) => {
+  if (!hudWindow || hudWindow.isDestroyed()) return;
+  if (locked === true) {
+    hudWindow.setIgnoreMouseEvents(true, { forward: true });
+  } else {
+    hudWindow.setIgnoreMouseEvents(false);
+  }
+};
+
 export const syncSpectrumHudSettings = (settings) => {
   const payload = {
     spectrumScale: settings.spectrumScale,
@@ -324,6 +353,7 @@ export const syncSpectrumHudSettings = (settings) => {
   };
   lastSettings = payload;
   if (!hudWindow || hudWindow.isDestroyed()) return;
+  applySpectrumHudMouseEvents(settings.spectrumLocked);
   if (hudWindow.webContents.isLoading()) return;
   hudWindow.webContents.send('spectrum:settings', payload);
 };

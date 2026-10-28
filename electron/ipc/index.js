@@ -16,7 +16,7 @@ import {
 } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
-import { sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
+import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
 import { setThumbarButtons } from '../windows/thumbarButtons.js';
 import { isMainWindowDocked, restoreMainWindow, toggleMainWindowDock } from '../windows/sigmaDock.js';
 import {
@@ -242,6 +242,25 @@ export const registerIpc = (getWindow) => {
     if (!isTrustedSender(event, getWindow())) return;
     updateSettings({ spectrumLocked: value === true });
     syncSpectrumHudSettings(getSettings());
+  });
+
+  // 解锁态的拖动：渲染层算好新 bounds，主进程 setBounds（CSS drag region 在
+  // 高 DPI 缩放屏上 hit-test 不可靠，桌面歌词窗口同款方案）
+  ipcMain.on(IPC.SPECTRUM_BOUNDS, (event, bounds) => {
+    if (!isTrustedSender(event, getSpectrumWindow())) return;
+    const window = getSpectrumWindow();
+    if (!window || window.isDestroyed() || !bounds || typeof bounds !== 'object') return;
+    const clamp = (value, fallback) => {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    };
+    const current = window.getBounds();
+    window.setBounds({
+      x: clamp(bounds.x, current.x),
+      y: clamp(bounds.y, current.y),
+      width: clamp(bounds.width, current.width),
+      height: clamp(bounds.height, current.height)
+    });
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {

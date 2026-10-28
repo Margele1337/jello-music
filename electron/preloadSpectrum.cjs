@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('jelloSpectrum', {
     return () => ipcRenderer.removeListener('spectrum:settings', handler);
   },
   setLocked: (value) => ipcRenderer.send('spectrum:lock-toggle', value === true),
+  sendBounds: (bounds) => ipcRenderer.send('spectrum:bounds', bounds),
   ready: () => ipcRenderer.send('spectrum:hud-ready')
 });
