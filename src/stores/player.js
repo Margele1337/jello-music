@@ -6,8 +6,11 @@ import {
   applyLoudnessData,
   applyOutputVolume,
   ensureAudioGraph,
+  prepareSelfDecode,
   setAudioOutputDevice,
   setLoudnessEnabled,
+  startDecodeAnalysis,
+  stopDecodeAnalysis,
   syncLookahead
 } from '../services/audio/spectrum.js';
 
@@ -160,13 +163,31 @@ export const usePlayerStore = defineStore('player', {
           void ensureAudioGraph(element);
         }
 
-        element.src = result.url;
+        // ===== mp3 自解码频谱链路：整首字节 fetch 一次，可听路径改用 blob URL，
+        // 分析路径由 WebCodecs Worker 解码（services/audio/spectrum.js）。
+        // 准入失败/取字节失败/帧头或解码配置无效 → media.decode 为 null，
+        // 静默回退：远程 URL 直接播放 + 原 tap+预读频谱链路，用户无感知。=====
+        stopDecodeAnalysis();   // 先停上一首的解码 Worker（旧 blob 在 src 切换后回收）
+        const media = await prepareSelfDecode({ url: result.url, extName: result.extName });
+        if (token !== loadToken) {
+          // 已被更新的加载取代：直接回收刚创建的 blob，避免泄漏
+          if (media.decode?.blobUrl) {
+            try { URL.revokeObjectURL(media.decode.blobUrl); } catch { /* ignore */ }
+          }
+          return;
+        }
+
+        element.src = media.src;
         element.volume = this.volume / 100;
         element.playbackRate = Number(settings.playbackRate) || 1;
         this.loudness = result.loudness || null;
         setLoudnessEnabled(!!settings.loudnessNormalization);
         applyLoudnessData(this.loudness);
         void setAudioOutputDevice(element, settings.audioOutputDevice || 'default');
+        // 分析链路在 play 之前挂好：play/seeked 事件会触发重锚，门控时间轴始终
+        // 由 element.currentTime 派生；回退曲目则清理上一会话并回收旧 blob
+        if (media.decode) startDecodeAnalysis(element, media.decode);
+        else stopDecodeAnalysis();
         if (resumeAt > 0) {
           element.addEventListener('loadedmetadata', () => {
             try {
@@ -385,6 +406,8 @@ export const usePlayerStore = defineStore('player', {
     setPlaybackRate(rate) {
       const next = Number(rate) || 1;
       const element = ensureAudio(this);
+      // 倍速只作用于可听元素：tap 回退链路的预读元素跟随倍速；
+      // mp3 自解码链路恒 1x（原版无倍速功能，syncLookahead 内部对其无操作）
       element.playbackRate = next;
       syncLookahead(element.currentTime, this.playing, next, true);
     },

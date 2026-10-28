@@ -259,7 +259,9 @@ const buildStreamResult = (url, candidate, payload, isTrial, qualityOptions) => 
     playHash: candidate.hash,
     qualityLabel: qualityLabel(candidate.quality),
     isTrial,
-    qualityOptions
+    qualityOptions,
+    // 音源真实扩展名（mp3/flac/…）：频谱自解码链路据此决定是否走 WebCodecs
+    extName: pickExtName(payload)
   };
   const loudness = pickLoudness(payload);
   if (loudness) result.loudness = loudness;
