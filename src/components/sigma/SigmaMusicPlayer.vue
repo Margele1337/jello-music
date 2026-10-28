@@ -313,14 +313,13 @@ const playGuessYouLike = async () => {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-    player?.playSongList?.(shuffled, shuffled[0].hash);
+    props.player?.playSongList?.(shuffled, shuffled[0].hash);
   } catch (error) {
     window.dispatchEvent(new CustomEvent('jello:toast', {
       detail: error?.message || '猜你喜欢加载失败'
     }));
   }
 };
-
 const docked = ref(false);
 const shellDocked = ref(false);
 const undockRequested = ref(false);
