@@ -1,11 +1,21 @@
 <template>
   <div class="spectrum-hud" :class="{ 'hud-editing': !locked }" :style="{ '--info-scale': infoScale }">
     <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
-    <div class="spectrum-info" v-show="infoVisible && (title || cover)">
-      <img v-if="cover" class="cover" :src="cover" alt="" />
+    <!-- 原版信息卡画在 renderSpectrum 内部，暂停时整体不绘制，这里用 playing 同步隐藏 -->
+    <div class="spectrum-info" v-show="infoVisible && playing && (title || cover)">
+      <div class="cover-pulse" v-if="cover" ref="coverPulseRef">
+        <img class="cover" :src="cover" alt="" />
+      </div>
       <div class="meta" v-if="title">
-        <div class="title">{{ title }}</div>
-        <div class="author" v-if="author">{{ author }}</div>
+        <!-- 原版把歌名同位置画两遍：深色底（阴影）+ 浅色主体 -->
+        <div class="title" :class="{ solo: !author }">
+          <span class="underlay" aria-hidden="true">{{ title }}</span>
+          <span class="main">{{ title }}</span>
+        </div>
+        <div class="author" v-if="author">
+          <span class="underlay" aria-hidden="true">{{ author }}</span>
+          <span class="main">{{ author }}</span>
+        </div>
       </div>
     </div>
   </div>
@@ -13,7 +23,8 @@
 
 <script setup>
 // 所有者原创频谱 HUD（sigmarebase MusicManager renderSpectrum）移植：
-// 114 条灰色底条 + 模糊封面条叠加，左下角封面/歌名信息。
+// 114 条灰色底条 + 模糊封面条全窗叠加 @0.4（原版 songThumbnail 即 blur15+底部20%条，
+// 见 processVideoThumbnail），左下角封面/歌名信息随低音脉冲缩放，暂停时整体消失。
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/600.css';
@@ -34,8 +45,10 @@ let displayScale = detectDisplayScale();
 const infoScale = ref(1.25);
 const infoVisible = ref(true);
 const locked = ref(true);
+const playing = ref(false);
 
 const canvasRef = ref(null);
+const coverPulseRef = ref(null);
 const cover = ref('');
 const title = ref('');
 const author = ref('');
@@ -47,6 +60,17 @@ const barStyles = new Array(BAR_COUNT);
 for (let i = 0; i < BAR_COUNT; i += 1) {
   barStyles[i] = `rgba(153, 153, 153, ${(0.2 * (1 - (i + 1) / BAR_COUNT)).toFixed(4)})`;
 }
+
+// 原版 renderSpectrum :206-212 低音脉冲：对平滑后的 bin0..2 取 max(sqrt(a) - 1000)（下限 0），
+// 按 (4750 - 1000) 归一化后 ×0.14，量化到 1/75 步长
+const computePulseScale = (smoothedLevels) => {
+  let bass = 0;
+  for (let i = 0; i < 3; i += 1) {
+    const value = Number(smoothedLevels[i]) || 0;
+    bass = Math.max(bass, Math.sqrt(value) - 1000);
+  }
+  return 1 + Math.round((bass / (4750 - 1000)) * 0.14 * 75) / 75;
+};
 
 let lastDrawTime = 0;
 let raf = null;
@@ -141,6 +165,14 @@ const draw = (now = performance.now()) => {
   const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 1000 / 60;
   lastDrawTime = now;
 
+  // 原版 onRender2D(EventRender2DCustom) 以 playing 门控整个 renderSpectrum：
+  // 暂停时什么都不画（信息卡也随之消失），不做平滑塌缩
+  if (!playing.value) {
+    levels.fill(0);
+    targets.fill(0);
+    return;
+  }
+
   const tauMs = 1000 / (Math.max(0.001, spectrumSmoothing) * 60);
   const alpha = Math.min(1, 1 - Math.exp(-dt / tauMs));
   for (let i = 0; i < BAR_COUNT; i += 1) {
@@ -177,21 +209,28 @@ const draw = (now = performance.now()) => {
     ctx.globalAlpha = 1;
     ctx.restore();
   }
-};
 
-let playingState = false;
+  // 低音脉冲：直接写元素 style，避免每帧触发 Vue 重渲染；
+  // 枢轴 (60, h-55) 即封面自身中心再下移 5%（transform-origin: 50% 55%）
+  const pulseEl = coverPulseRef.value;
+  if (pulseEl) {
+    const transform = `scale(${computePulseScale(levels).toFixed(4)})`;
+    if (pulseEl.style.transform !== transform) pulseEl.style.transform = transform;
+  }
+};
 
 const applyPayload = (data) => {
   if (!data) return;
 
   const nowPlaying = data.playing === true;
+  const wasPlaying = playing.value;
+  playing.value = nowPlaying;
   if (!nowPlaying) {
-    playingState = false;
     levels.fill(0);
     targets.fill(0);
+    if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
   } else {
-    if (!playingState) pendingSnap = true;
-    playingState = true;
+    if (!wasPlaying) pendingSnap = true;
 
     if (Array.isArray(data.levels) && data.levels.length) {
       const count = Math.min(BAR_COUNT, data.levels.length);
@@ -337,39 +376,84 @@ html, body, #app { background: transparent !important; overflow: hidden; }
   pointer-events: none;
 }
 
+/* 原版枢轴 (60, h-55)：封面中心再下移其高度的 5% */
+.spectrum-info .cover-pulse {
+  flex: none;
+  transform-origin: 50% 55%;
+  will-change: transform;
+}
+
 .spectrum-info .cover {
+  display: block;
   width: calc(64px * var(--info-scale, 1.25));
   height: calc(64px * var(--info-scale, 1.25));
-  border-radius: calc(10px * var(--info-scale, 1.25));
   object-fit: cover;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  /* 原版 drawRoundedRect(…, 14, 0.3)：LIGHT_GREYISH_BLUE(#fefefe) @0.3、
+     向外延展 14px 的柔边阴影（RenderUtil.java:730），不是内部填充 */
+  box-shadow: 0 0 calc(14px * var(--info-scale, 1.25)) rgba(254, 254, 254, 0.3);
 }
 
 .spectrum-info .meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  gap: calc(5px * var(--info-scale, 1.25));
 }
 
-.spectrum-info .title {
-  color: #fff;
-  font-family: 'JetBrains Mono', Consolas, 'Microsoft YaHei', monospace;
-  font-size: calc(15px * var(--info-scale, 1.25));
-  font-weight: 600;
-  white-space: nowrap;
-  max-width: 40vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
+.spectrum-info .title,
 .spectrum-info .author {
-  color: rgba(255, 255, 255, 0.75);
+  position: relative;
   font-family: 'JetBrains Mono', Consolas, 'Microsoft YaHei', monospace;
-  font-size: calc(12px * var(--info-scale, 1.25));
-  white-space: nowrap;
+}
+
+.spectrum-info .title .main,
+.spectrum-info .title .underlay,
+.spectrum-info .author .main,
+.spectrum-info .author .underlay {
+  display: block;
   max-width: 40vw;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+/* 同位置叠两层：underlay 是原版同坐标的深色阴影遍，main 在其上 */
+.spectrum-info .title .underlay,
+.spectrum-info .author .underlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+}
+
+.spectrum-info .title .main,
+.spectrum-info .author .main {
+  position: relative;
+}
+
+/* 有作者时：part[0] = JelloMediumFont20，LIGHT_GREYISH_BLUE@0.6 / DEEP_TEAL@0.4 */
+.spectrum-info .title {
+  font-size: calc(20px * var(--info-scale, 1.25));
+  font-weight: 600;
+}
+
+.spectrum-info .title .main { color: rgba(254, 254, 254, 0.6); }
+.spectrum-info .title .underlay { color: rgba(1, 1, 1, 0.4); }
+
+/* 无作者（原版 split 不开）：JelloLightFont18，LIGHT_GREYISH_BLUE@0.7 / DEEP_TEAL@0.5 */
+.spectrum-info .title.solo {
+  font-size: calc(18px * var(--info-scale, 1.25));
+  font-weight: 400;
+}
+
+.spectrum-info .title.solo .main { color: rgba(254, 254, 254, 0.7); }
+.spectrum-info .title.solo .underlay { color: rgba(1, 1, 1, 0.5); }
+
+/* part[1] = JelloLightFont18，LIGHT_GREYISH_BLUE@0.7 / DEEP_TEAL@0.5 */
+.spectrum-info .author {
+  font-size: calc(18px * var(--info-scale, 1.25));
+  font-weight: 400;
+}
+
+.spectrum-info .author .main { color: rgba(254, 254, 254, 0.7); }
+.spectrum-info .author .underlay { color: rgba(1, 1, 1, 0.5); }
 </style>
