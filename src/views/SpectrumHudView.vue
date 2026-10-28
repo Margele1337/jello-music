@@ -15,6 +15,8 @@
 // 所有者原创频谱 HUD（sigmarebase MusicManager renderSpectrum）移植：
 // 114 条灰色底条 + 模糊封面条叠加，左下角封面/歌名信息。
 import { onBeforeUnmount, onMounted, ref } from 'vue';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/600.css';
 
 const BAR_COUNT = 114;
 const SPECTRUM_SMOOTHING = 0.335;
