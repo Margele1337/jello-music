@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, shell } from 'electron';
+import { app, BrowserWindow, dialog, screen, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC, SETTINGS_ARG, findDeepLinkArg, hasSettingsArg, parseDeepLink, formatTrayTooltip } from '../shared/ipc.js';
@@ -120,28 +120,39 @@ if (startupLink) {
 // 注册 jello:// 协议。dev 模式必须带应用根目录参数，否则系统会用裸 electron
 // 打开链接（空白窗口）；打包后无额外参数
 const registerDeepLinkProtocol = () => {
-  const devArgs = app.isPackaged ? [] : [path.resolve(__dirname, '..')];
-  app.setAsDefaultProtocolClient('jello', process.execPath, devArgs);
+  try {
+    const devArgs = app.isPackaged ? [] : [path.resolve(__dirname, '..')];
+    app.setAsDefaultProtocolClient('jello', process.execPath, devArgs);
+  } catch (error) {
+    console.warn('[protocol] jello:// 注册失败:', error?.message || error);
+  }
 };
 
-// Windows 跳转列表：任务栏图标右键 → 任务 → 设置
+// Windows 跳转列表：任务栏图标右键 → 任务 → 设置。
+// 外壳装饰类接口失败绝不能中断启动流程，否则后面的 createWindow 不会执行
 const setupJumpList = () => {
   if (process.platform !== 'win32') return;
-  app.setJumpList([
-    {
-      type: 'tasks',
-      items: [
-        {
-          program: process.execPath,
-          arguments: SETTINGS_ARG,
-          title: '设置',
-          description: '打开 Jello Music 设置',
-          iconPath: process.execPath,
-          iconIndex: 0
-        }
-      ]
-    }
-  ]);
+  try {
+    const status = app.setJumpList([
+      {
+        type: 'tasks',
+        items: [
+          {
+            type: 'task',
+            program: process.execPath,
+            args: SETTINGS_ARG,
+            title: '设置',
+            description: '打开 Jello Music 设置',
+            iconPath: process.execPath,
+            iconIndex: 0
+          }
+        ]
+      }
+    ]);
+    if (status !== 'ok') console.warn('[jumplist] 设置未生效:', status);
+  } catch (error) {
+    console.warn('[jumplist] 设置异常:', error?.message || error);
+  }
 };
 
 function showMainWindow() {
@@ -386,6 +397,17 @@ app.whenReady().then(async () => {
   });
 
   app.on('activate', showMainWindow);
+}).catch((error) => {
+  // 启动链中任一步抛错都会跳过 createWindow，留下无窗口、无托盘却仍占着
+  // 单实例锁的僵尸进程（之后再启动会静默退出）。显式报错并用 app.exit 跳过
+  // before-quit 清理链（此时部分服务尚未初始化）
+  console.error('[startup] 初始化失败:', error?.stack || error);
+  try {
+    dialog.showErrorBox('Jello Music 启动失败', String(error?.stack || error));
+  } catch {
+    /* 对话框不可用时至少留下控制台记录 */
+  }
+  app.exit(1);
 });
 
 app.on('before-quit', (event) => {
