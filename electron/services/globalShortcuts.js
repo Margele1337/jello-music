@@ -30,6 +30,7 @@ export const initGlobalShortcuts = ({
   register('Alt+CommandOrControl+Up', () => sendCommand('volume-up'));
   register('Alt+CommandOrControl+Down', () => sendCommand('volume-down'));
   register('Alt+CommandOrControl+M', () => sendCommand('toggle-mute'));
+  register('Alt+CommandOrControl+L', () => sendCommand('like'));
   register('Alt+CommandOrControl+D', toggleDesktopLyrics);
   register('Alt+CommandOrControl+S', toggleSpectrum);
   register('CmdOrCtrl+Shift+S', toggleMainWindow);

@@ -49,6 +49,12 @@
     </button>
     <SigmaQueueList ref="queueListRef" :player="player" />
 
+    <!-- 收藏到歌单按钮 + 弹窗 -->
+    <button type="button" class="smp-collect-btn" title="收藏到歌单" @click="openCollect">
+      <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.7-9.2C.7 8.6 2.4 5 5.9 5c2 0 3.4 1.1 4.1 2.3h4c.7-1.2 2.1-2.3 4.1-2.3 3.5 0 5.2 3.6 3.6 6.8C19.5 16.1 12 21 12 21z" transform="scale(0.92) translate(1,0)" /></svg>
+    </button>
+    <SigmaCollectModal ref="collectModalRef" :player="player" />
+
     <!-- 搜索框 + 结果网格 -->
     <SigmaSearchBox
       ref="searchBoxRef"
@@ -64,6 +70,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useAuthStore } from '../../stores/auth.js';
 import playImg from '../../assets/sigma/music/play.png';
 import pauseImg from '../../assets/sigma/music/pause.png';
 import forwardsImg from '../../assets/sigma/music/forwards.png';
@@ -79,12 +86,15 @@ import SigmaSpectrumButton from './SigmaSpectrumButton.vue';
 import SigmaSearchBox from './SigmaSearchBox.vue';
 import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
 import SigmaQueueList from './SigmaQueueList.vue';
+import SigmaCollectModal from './SigmaCollectModal.vue';
 import SigmaText from './SigmaText.vue';
 
 const props = defineProps({
   player: { type: Object, default: null },
   spectrumEnabled: { type: Boolean, default: false }
 });
+
+const auth = useAuthStore();
 
 const emit = defineEmits(['request-login', 'request-settings', 'request-lyrics', 'toggle-spectrum']);
 
@@ -237,6 +247,19 @@ const repeatType = computed(() => {
 const searchBoxRef = ref(null);
 const temporaryPlaylist = ref(null);
 const queueListRef = ref(null);
+const collectModalRef = ref(null);
+
+const openCollect = () => {
+  if (!props.player?.currentSong) {
+    window.dispatchEvent(new CustomEvent('jello:toast', { detail: '没有正在播放的歌曲' }));
+    return;
+  }
+  if (!auth.isAuthenticated) {
+    emit('request-login');
+    return;
+  }
+  collectModalRef.value?.open?.();
+};
 
 const onOpenSearchPlaylist = (playlist = {}) => {
   if (!playlist.id) return;
@@ -612,6 +635,34 @@ onBeforeUnmount(() => {
   height: 2px;
   border-radius: 1px;
   background: rgba(254, 254, 254, 0.7);
+}
+
+/* 收藏到歌单按钮（队列按钮左侧） */
+.smp-collect-btn {
+  position: absolute;
+  left: 674px;
+  top: 534px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.smp-collect-btn:hover {
+  background: rgba(254, 254, 254, 0.12);
+}
+
+.smp-collect-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: rgba(255, 105, 180, 0.75);
 }
 
 /* 左栏歌单列表（原版 tabs 区域，位于封面之下） */

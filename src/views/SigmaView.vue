@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import SigmaMusicPlayer from '../components/sigma/SigmaMusicPlayer.vue';
 import SigmaHotkeyIntro from '../components/sigma/SigmaHotkeyIntro.vue';
@@ -37,7 +37,22 @@ watch(() => player.error, (message) => {
   }, 4000);
 });
 
-onBeforeUnmount(() => clearTimeout(toastTimer));
+onBeforeUnmount(() => {
+  clearTimeout(toastTimer);
+  window.removeEventListener('jello:toast', onToastEvent);
+});
+
+const onToastEvent = (event) => {
+  toast.value = String(event.detail || '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.value = '';
+  }, 3000);
+};
+
+onMounted(() => {
+  window.addEventListener('jello:toast', onToastEvent);
+});
 </script>
 
 <template>

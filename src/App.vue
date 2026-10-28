@@ -4,6 +4,7 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, watch } from 'vue';
+import { collectSongToLiked } from './services/api/collect.js';
 import { getKaraokeLyrics, getLyrics } from './services/api/library.js';
 import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
 import { useAuthStore } from './stores/auth.js';
@@ -110,6 +111,10 @@ watch(() => player.playing, (playing) => {
 
 const sendSpectrum = (payload) => window.jello?.spectrum?.update?.(payload);
 
+const showToast = (message) => {
+  window.dispatchEvent(new CustomEvent('jello:toast', { detail: message }));
+};
+
 let lastVolumeBeforeMute = 0;
 
 const handlePlayerCommand = (command) => {
@@ -126,6 +131,10 @@ const handlePlayerCommand = (command) => {
     } else {
       player.setVolumePercent(lastVolumeBeforeMute || 50);
     }
+  } else if (command === 'like') {
+    collectSongToLiked(player.currentSong)
+      .then(() => showToast('已添加到「我喜欢」'))
+      .catch((error) => showToast(error?.message || '收藏失败'));
   }
 };
 
