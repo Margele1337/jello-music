@@ -51,7 +51,7 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
     items.push(toPlaylistItem(playlist, name));
   }
 
-  items.push({ key: 'lyrics', type: 'lyrics', name: '歌词' });
-  items.push({ key: 'settings', type: 'settings', name: '设置' });
+  // 歌词/设置入口已从侧栏移除：歌词功能暂无创新点仅保留接口（/lyrics 路由与
+  // SigmaMusicPlayer 的 type 分支仍在），设置走托盘菜单
   return items;
 };
