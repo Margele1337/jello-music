@@ -1,5 +1,5 @@
 const LIKED_NAMES = new Set(['我的喜欢', '我喜欢', '我喜欢的音乐']);
-const RESERVED_NAMES = new Set(['每日推荐', '歌词', '设置']);
+const RESERVED_NAMES = new Set(['猜你喜欢', '每日推荐', '歌词', '设置']);
 
 const displayName = (playlist) => String(playlist?.name || '').trim();
 
@@ -17,6 +17,7 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
   if (ready && !authenticated) {
     items.push({ key: 'login', type: 'login', name: '登录' });
   }
+  items.push({ key: 'guess', type: 'guess', name: '猜你喜欢' });
   items.push({ key: 'daily', type: 'daily', name: '每日推荐' });
 
   const source = Array.isArray(playlists) ? playlists : [];

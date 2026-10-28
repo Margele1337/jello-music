@@ -69,6 +69,18 @@ export const getDailyRecommend = async () => {
   return normalizeSongList(payload?.data?.song_list);
 };
 
+// 猜你喜欢（主页「私人专属好歌推荐」/top/card?card_id=1）。
+// timestamp 绕过 KuGouMusicApi 的同 URL 缓存，保证每次都重新推荐。
+export const getGuessYouLike = async () => {
+  const payload = await apiRequest({
+    method: 'GET',
+    path: '/top/card',
+    params: { card_id: 1, timestamp: Date.now() }
+  });
+  ensureOk(payload, '获取猜你喜欢失败');
+  return normalizeSongList(payload?.data?.song_list);
+};
+
 export const getUserPlaylists = async () => {
   const payload = await apiRequest({
     method: 'GET',

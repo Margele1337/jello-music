@@ -71,6 +71,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useAuthStore } from '../../stores/auth.js';
+import { getGuessYouLike } from '../../services/api/library.js';
 import playImg from '../../assets/sigma/music/play.png';
 import pauseImg from '../../assets/sigma/music/pause.png';
 import forwardsImg from '../../assets/sigma/music/forwards.png';
@@ -290,8 +291,33 @@ const onPlaylistSelect = (item) => {
     searchBoxRef.value?.loadDailyRecommend?.();
     return;
   }
+  if (item.type === 'guess') {
+    void playGuessYouLike();
+    return;
+  }
   if (item.id) {
     searchBoxRef.value?.showPlaylist?.(item);
+  }
+};
+
+// 猜你喜欢：点击直接播放推荐列表，右侧保持为空。
+// 推荐顺序稳定，打乱后从随机一首开始，每次点击都有变化。
+const playGuessYouLike = async () => {
+  searchBoxRef.value?.clear?.();
+  temporaryPlaylist.value = null;
+  try {
+    const songs = await getGuessYouLike();
+    if (!songs.length) return;
+    const shuffled = [...songs];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    player?.playSongList?.(shuffled, shuffled[0].hash);
+  } catch (error) {
+    window.dispatchEvent(new CustomEvent('jello:toast', {
+      detail: error?.message || '猜你喜欢加载失败'
+    }));
   }
 };
 

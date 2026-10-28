@@ -11,8 +11,8 @@ test('collapses the liked aliases into one entry', () => {
     { id: 'daily', name: '每日推荐' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['每日推荐', '我喜欢']);
-  assert.equal(items[1].id, 'liked');
+  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '我喜欢']);
+  assert.equal(items[2].id, 'liked');
 });
 
 test('prefers the literal 我喜欢 playlist when no default flag is present', () => {
@@ -21,8 +21,8 @@ test('prefers the literal 我喜欢 playlist when no default flag is present', (
     { id: 'liked', name: '我喜欢' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['每日推荐', '我喜欢']);
-  assert.equal(items[1].id, 'liked');
+  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '我喜欢']);
+  assert.equal(items[2].id, 'liked');
 });
 
 test('prefers the real 我喜欢 playlist over an empty default collection', () => {
@@ -32,8 +32,8 @@ test('prefers the real 我喜欢 playlist over an empty default collection', () 
     { id: 'other', name: '今日有酒今朝醉' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['每日推荐', '我喜欢', '今日有酒今朝醉']);
-  assert.equal(items[1].id, 'liked');
+  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '我喜欢', '今日有酒今朝醉']);
+  assert.equal(items[2].id, 'liked');
 });
 
 test('falls back to 我的喜欢 when it is the only liked-named playlist', () => {
@@ -41,8 +41,8 @@ test('falls back to 我的喜欢 when it is the only liked-named playlist', () =
     { id: 'mine', name: '我的喜欢' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['每日推荐', '我喜欢']);
-  assert.equal(items[1].id, 'mine');
+  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '我喜欢']);
+  assert.equal(items[2].id, 'mine');
 });
 
 test('deduplicates ids and names and reserves fixed entries', () => {
@@ -53,7 +53,7 @@ test('deduplicates ids and names and reserves fixed entries', () => {
     { id: 'c', name: '歌词' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['每日推荐', '夜车电台']);
+  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '夜车电台']);
 });
 
 test('shows login for guests and preserves playlist metadata', () => {
@@ -61,8 +61,8 @@ test('shows login for guests and preserves playlist metadata', () => {
     { id: 'collection_1', name: '收藏', idType: 'collection', listId: 7 }
   ], { authenticated: false, ready: true });
 
-  assert.deepEqual(names(items), ['登录', '每日推荐', '收藏']);
-  assert.deepEqual(items[2], {
+  assert.deepEqual(names(items), ['登录', '猜你喜欢', '每日推荐', '收藏']);
+  assert.deepEqual(items[3], {
     key: 'pl-collection_1',
     type: 'playlist',
     id: 'collection_1',
