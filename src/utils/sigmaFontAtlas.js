@@ -251,12 +251,13 @@ export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#fffff
       penX += glyph.adv;
       continue;
     }
-    // 图集缺失字形（中文等）：浏览器字体渲染，基线对齐图集 ascent
+    // 图集缺失字形（中文等）：浏览器字体渲染，基线对齐图集 ascent。
+    // 基线同样吸附物理像素：落在半像素上时细横线会被抗锯齿摊薄没了（「十」变「|」）
     ctx.save();
     ctx.font = atlas.size + 'px ' + FALLBACK_STACK;
     ctx.fillStyle = color;
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText(ch, penX, y + atlas.ascent);
+    ctx.fillText(ch, snap(penX), snap(y + atlas.ascent));
     const w = Math.ceil(ctx.measureText(ch).width);
     ctx.restore();
     penX += w;
