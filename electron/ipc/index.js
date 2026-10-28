@@ -245,22 +245,18 @@ export const registerIpc = (getWindow) => {
   });
 
   // 解锁态的拖动：渲染层算好新 bounds，主进程 setBounds（CSS drag region 在
-  // 高 DPI 缩放屏上 hit-test 不可靠，桌面歌词窗口同款方案）
+  // 高 DPI 缩放屏上 hit-test 不可靠，桌面歌词窗口同款方案）。
+  // 只写提供的字段：宽高跟着写回会在 150% 缩放的 DIP↔物理往返中 ±1 漂移
   ipcMain.on(IPC.SPECTRUM_BOUNDS, (event, bounds) => {
     if (!isTrustedSender(event, getSpectrumWindow())) return;
     const window = getSpectrumWindow();
     if (!window || window.isDestroyed() || !bounds || typeof bounds !== 'object') return;
-    const clamp = (value, fallback) => {
-      const num = Number(value);
-      return Number.isFinite(num) ? num : fallback;
-    };
-    const current = window.getBounds();
-    window.setBounds({
-      x: clamp(bounds.x, current.x),
-      y: clamp(bounds.y, current.y),
-      width: clamp(bounds.width, current.width),
-      height: clamp(bounds.height, current.height)
-    });
+    const next = {};
+    for (const key of ['x', 'y', 'width', 'height']) {
+      const num = Number(bounds[key]);
+      if (Number.isFinite(num)) next[key] = Math.round(num);
+    }
+    if (Object.keys(next).length) window.setBounds(next);
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {
