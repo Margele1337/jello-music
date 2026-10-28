@@ -40,6 +40,9 @@ const isOverlayRoute = computed(() => ['/settings', '/login', '/lyrics'].include
 // 弹出：若还有待切的收起计时，瞬时切回播放器（无过渡），看到的直接是面板自己的滑出动画
 let dockSwitchTimer = null;
 let unsubscribeDockForView = null;
+let unsubscribeNavigate = null;
+
+const NAVIGABLE_PATHS = ['/', '/settings', '/login', '/lyrics'];
 
 const goPlayerView = (instant) => {
   if (route.path === '/') return;
@@ -264,6 +267,11 @@ onMounted(async () => {
   unsubscribeSettings = window.jello?.settings?.onChange?.((next) => settings.apply(next)) || null;
   unsubscribeAuth = auth.subscribe();
   unsubscribeDockForView = window.jello?.windowControl?.onDockChanged?.(onDockChangedForView) || null;
+  unsubscribeNavigate = window.jello?.ui?.onNavigate?.((payload) => {
+    // 托盘菜单「设置」等入口：主进程要求主窗口导航到指定路由
+    const path = String(payload?.path || '');
+    if (NAVIGABLE_PATHS.includes(path)) router.push(path);
+  }) || null;
   unsubscribePlayer = window.jello?.player?.onCommand?.((command) => {
     handlePlayerCommand(command);
   }) || null;
@@ -291,7 +299,9 @@ onBeforeUnmount(() => {
   unsubscribePlayer?.();
   unsubscribeSpectrumRequest?.();
   unsubscribeDockForView?.();
+  unsubscribeNavigate?.();
   unsubscribeDockForView = null;
+  unsubscribeNavigate = null;
   if (dockSwitchTimer) {
     clearTimeout(dockSwitchTimer);
     dockSwitchTimer = null;

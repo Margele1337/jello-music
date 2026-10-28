@@ -5,7 +5,8 @@ import { initSettings, getSettings, updateSettings } from './services/settingsSt
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
-import { hasTray, initTray, syncTray } from './tray.js';
+import { getTrayInstance, hasTray, initTray, syncTray } from './tray.js';
+import customTrayMenu from './services/customTrayMenu.js';
 import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from './windows/desktopLyrics.js';
 import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
@@ -169,8 +170,47 @@ app.whenReady().then(async () => {
     },
     playPause: () => sendPlayerCommand('toggle'),
     previous: () => sendPlayerCommand('previous'),
-    next: () => sendPlayerCommand('next')
+    next: () => sendPlayerCommand('next'),
+    showHide: () => {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+        mainWindow.hide();
+        return;
+      }
+      showMainWindow();
+    },
+    openSettings: () => {
+      showMainWindow();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('ui:navigate', { path: '/settings' });
+      }
+    }
   });
+  customTrayMenu.init(
+    () => mainWindow,
+    () => getTrayInstance(),
+    {
+      showHide: () => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+          mainWindow.hide();
+          return;
+        }
+        showMainWindow();
+      },
+      openSettings: () => {
+        showMainWindow();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ui:navigate', { path: '/settings' });
+        }
+      },
+      playPause: () => sendPlayerCommand('toggle'),
+      previous: () => sendPlayerCommand('previous'),
+      next: () => sendPlayerCommand('next'),
+      quit: () => {
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  );
   syncTray(getSettings().minimizeToTray);
   const platform = getSettings().dataSource === 'concept' ? 'lite' : 'official';
   startSidecar({ platform }).catch((error) => {
@@ -200,6 +240,7 @@ app.on('before-quit', (event) => {
   stopGlobalKeyListener();
   stopDockAnimation();
   stopUpdater();
+  customTrayMenu.cleanup();
   destroyDesktopLyrics();
   destroySpectrumHud();
   void stopSidecar();

@@ -34,6 +34,13 @@ contextBridge.exposeInMainWorld('jello', {
       return () => ipcRenderer.removeListener('player:command', handler);
     }
   },
+  ui: {
+    onNavigate: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('ui:navigate', handler);
+      return () => ipcRenderer.removeListener('ui:navigate', handler);
+    }
+  },
   spectrum: {
     update: (payload) => ipcRenderer.send('spectrum:update', payload),
     onRequestCurrent: (callback) => {
