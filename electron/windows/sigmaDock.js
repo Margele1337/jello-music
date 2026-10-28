@@ -6,10 +6,24 @@ import { IPC } from '../../shared/ipc.js';
 const DOCK_VISIBLE = 40;   // 收起后保留可见宽度（原版 var8 = parentWidth - 40）
 const RESTORE_MARGIN = 20; // 滑出后距右缘间距（原版 var11 = parentWidth - 20 - width）
 
-// 窗口尺寸按设计恒定：动画/吸附一律用常量而不是 getBounds 实测值，
-// 跨缩放显示器拖动时 WM_DPICHANGED 可能瞬时改坏尺寸，回写会把漂移固化
+// 窗口尺寸按设计恒定（无边框，bounds=content）：拖拽/吸附路径一律用常量而不是
+// getBounds 的实测值：跨缩放比例显示器拖动时 WM_DPICHANGED 可能瞬时改坏
+// 尺寸，若用 bounds.width 回写会把漂移固化。
 const WINDOW_WIDTH = 800;
 const WINDOW_HEIGHT = 600;
+
+// 拖拽中的「右缘是否越过屏幕右缘」信号（连续，1:1 对齐原版
+// MusicPlayer.draw 的 getXA() + getWidthA() > parent.getWidthA()）。
+// 与 docked 分开：后者是离散吸附态，前者只描述几何位置。
+let overhanging = false;
+const setOverhanging = (value) => {
+  if (overhanging === value) return;
+  overhanging = value;
+  const win = getWindow();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.WINDOW_OVERHANG_CHANGED, value);
+  }
+};
 
 // 缓动动画（复刻原版 updatePanelDimensions：var7 = dt / 18.1ms，每帧 x 0.25 × var7、y 0.2 × var7）
 // 首选渲染进程 rAF 驱动（与显示器垂直同步）；窗口离屏导致 rAF 降频/停发时，
@@ -82,10 +96,9 @@ const animationBlocked = () => {
 };
 
 const setBoundsAt = (win, x, y) => {
-  // 旧版这里重申固定 800x600 防 WM_DPICHANGED 漂移；新版窗口带系统边框
-  // （content 800x600），重申常量会把窗口压小，改为重申实测尺寸。
-  const bounds = win.getBounds();
-  win.setBounds({ x: Math.round(x), y: Math.round(y), width: bounds.width, height: bounds.height });
+  // 重申固定 800x600 而不能只 setPosition：WM_DPICHANGED 后系统可能改大窗口，
+  // 动画期间只改位置会把漂移留到收起结束，下方露出额外透明背景
+  win.setBounds({ x: Math.round(x), y: Math.round(y), width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
 };
 
 // 主进程接管推进（渲染进程 rAF 不可用时兜底，公式与渲染层完全一致）
@@ -235,7 +248,7 @@ export const dockMainWindow = () => {
   const area = areaFor(win);
   const bounds = win.getBounds();
   const right = area.x + area.width;
-  const centerY = centerYFor(area, bounds.height);
+  const centerY = centerYFor(area);
 
   // 收起 = 用户明确不再需要面板在前：立即撤掉呼出时的置顶
   if (raiseTimer) {
@@ -272,8 +285,7 @@ export const restoreMainWindow = () => {
 
   docked = false;
   emitDockState(false);
-  // 旧版用常量 800（无边框窗口 bounds=content）；新版窗口带边框，用实测尺寸
-  startAnimation(win, right - bounds.width - RESTORE_MARGIN, centerYFor(area, bounds.height));
+  startAnimation(win, right - WINDOW_WIDTH - RESTORE_MARGIN, centerYFor(area));
   return true;
 };
 
@@ -282,4 +294,80 @@ export const toggleMainWindowDock = () => {
   if (now - lastToggleAt < TOGGLE_THROTTLE_MS) return false;
   lastToggleAt = now;
   return docked ? restoreMainWindow() : dockMainWindow();
+};
+
+// 拖动过程中，1:1 对齐原版 AnimatedIconPanel.handleMovementAndCheckBoundaries
+// 与 MusicPlayer.updatePanelDimensions 的 else（拖拽中）分支。原版每 tick 顺序：
+//   1) AnimatedIconPanel 先 setXA(desired)，再把 xA 精确夹在 [0, parentW - width]
+//   2) MusicPlayer 再判 desired + width > parentW + 200 && movedX > 70
+//      成立则 var15 = desired - xA - 200，xA = (int)(xA + var15 * 0.5)
+//
+// 关键：第 2 步的基准 xA 是「本 tick 刚从 desired 夹出来的值」，不是上一次留下的
+// 窗口位置。基准取错会让橡皮筋不动点从「纯光标函数」退化成「完整超出量」。
+export const moveMainWindow = (x, y, movedX = 0) => {
+  const win = getWindow();
+  if (!win || win.isDestroyed() || animationBlocked()) return;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  const bounds = win.getBounds();
+  const display = screen.getDisplayMatching({
+    x: Math.round(x), y: Math.round(y), width: WINDOW_WIDTH, height: WINDOW_HEIGHT
+  });
+  const area = display.workArea;
+  const right = area.x + area.width;
+  const bottom = area.y + area.height;
+  const nextY = Math.min(Math.max(Math.round(y), area.y), bottom - WINDOW_HEIGHT);
+
+  // 原版第 1 步：精确夹取，无越界余量
+  const clampedX = Math.min(Math.max(Math.round(x), area.x), right - WINDOW_WIDTH);
+
+  // 原版第 2 步：var14 = 200, movedX > 70 时橡皮筋
+  if (x + WINDOW_WIDTH > right + 200 && movedX > 70) {
+    const pushedX = clampedX + Math.trunc((x - clampedX - 200) * 0.5);
+    setOverhanging(pushedX + WINDOW_WIDTH > right);
+    if (pushedX !== bounds.x || nextY !== bounds.y) {
+      win.setBounds({ x: pushedX, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
+    }
+    return;
+  }
+
+  setOverhanging(clampedX + WINDOW_WIDTH > right);
+  if (clampedX !== bounds.x || nextY !== bounds.y) {
+    win.setBounds({ x: clampedX, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
+  }
+};
+
+// 松手：若窗口右缘越过屏幕右缘（严格 >，1:1 对齐原版 MusicPlayer.java:309）→ 吸附收起
+export const finishMainWindowDrag = () => {
+  const win = getWindow();
+  if (!win || win.isDestroyed() || animationBlocked()) return;
+  const bounds = win.getBounds();
+  const area = areaFor(win);
+  const right = area.x + area.width;
+  const bottom = area.y + area.height;
+  const centerY = centerYFor(area);
+
+  if (bounds.x + WINDOW_WIDTH > right) {
+    docked = true;
+    emitDockState(true);
+    setOverhanging(true);
+    startAnimation(win, right - DOCK_VISIBLE, centerY);
+    return;
+  }
+
+  docked = false;
+  emitDockState(false);
+  // 未收起：清掉拖拽期的越界信号，之后透明度只跟 dock-changed 走
+  setOverhanging(false);
+  const nextX = Math.min(Math.max(bounds.x, area.x), right - WINDOW_WIDTH);
+  const nextY = Math.min(Math.max(bounds.y, area.y), bottom - WINDOW_HEIGHT);
+  if (nextX !== bounds.x || nextY !== bounds.y) {
+    win.setBounds({ x: nextX, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
+  }
+};
+
+export const getMainWindowBounds = () => {
+  const win = getWindow();
+  if (!win || win.isDestroyed()) return null;
+  return win.getBounds();
 };

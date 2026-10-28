@@ -8,9 +8,15 @@ import {
   isLoginSuccess
 } from '../services/api/auth.js';
 import { useAuthStore } from '../stores/auth.js';
+import { useSigmaWindowDrag } from '../composables/useSigmaWindowDrag.js';
 
 const router = useRouter();
 const auth = useAuthStore();
+
+// 无边框窗口：登录页非控件区域拖动窗口
+const { onPointerDown: onLoginDragPointerDown } = useSigmaWindowDrag({
+  noDragSelector: 'button, input, a, .login-card'
+});
 
 const tab = ref('qr');
 const qrCode = ref('');
@@ -228,7 +234,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="login-page">
+  <main class="login-page" @pointerdown="onLoginDragPointerDown">
     <section class="login-card">
       <p class="eyebrow">JELLO MUSIC</p>
       <h1>{{ title }}</h1>

@@ -3,9 +3,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 import { getLyrics } from '../services/api/library.js';
 import { usePlayerStore } from '../stores/player.js';
+import { useSigmaWindowDrag } from '../composables/useSigmaWindowDrag.js';
 
 const router = useRouter();
 const player = usePlayerStore();
+
+// 无边框窗口：歌词页非控件区域拖动窗口
+const { onPointerDown: onLyricsDragPointerDown } = useSigmaWindowDrag({
+  noDragSelector: 'button, input, a'
+});
 
 const lines = ref([]);
 const activeIndex = ref(-1);
@@ -97,7 +103,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="lyrics-page">
+  <main class="lyrics-page" @pointerdown="onLyricsDragPointerDown">
     <header class="lyrics-header">
       <button type="button" class="back-button" aria-label="返回" @click="goBack">←</button>
       <div class="song-info">
@@ -125,6 +131,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .lyrics-page {
   height: 100%;
+  /* 无边框透明窗口：歌词页自铺近不透明底 */
+  background: rgba(16, 17, 20, 0.96);
   display: flex;
   flex-direction: column;
   padding: 26px 40px 30px;

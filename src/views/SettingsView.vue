@@ -4,10 +4,22 @@ import { useRouter } from 'vue-router';
 import { claimDailyVip, formatVipDate } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useSettingsStore } from '../stores/settings.js';
+import { useSigmaWindowDrag } from '../composables/useSigmaWindowDrag.js';
 
 const router = useRouter();
 const settings = useSettingsStore();
 const auth = useAuthStore();
+
+// 无边框窗口：设置页非控件区域拖动窗口（四边夹屏、右缘橡皮筋由主进程处理）
+const SETTINGS_NO_DRAG_SELECTOR = [
+  'button', 'input', 'select', 'textarea', 'a',
+  '.chip', '.pill', '.switch', '.seg', '.slider',
+  '.modal', '.modal-content', '.collect-modal', '.collect-content',
+  '.queue-popup'
+].join(', ');
+const { onPointerDown: onSettingsDragPointerDown } = useSigmaWindowDrag({
+  noDragSelector: SETTINGS_NO_DRAG_SELECTOR
+});
 
 const version = ref('');
 const switching = ref(false);
@@ -376,7 +388,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="settings-page">
+  <main class="settings-page" @pointerdown="onSettingsDragPointerDown">
     <header class="settings-header">
       <button type="button" class="back-button" aria-label="返回" @click="goBack">←</button>
       <div class="title-block">
@@ -684,11 +696,20 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .settings-page {
-  min-height: 100%;
-  max-width: 620px;
-  margin: 0 auto;
+  min-height: 100vh;
+  /* 无边框透明窗口：设置页自铺近不透明底（对齐旧版 sigma-view--settings） */
+  background: rgba(16, 17, 20, 0.96);
+  box-sizing: border-box;
   padding: 24px 36px 28px;
   overflow-y: auto;
+}
+
+/* 内容仍按 620px 居中，背景铺满整个窗口 */
+.settings-page > * {
+  width: 100%;
+  max-width: 620px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .settings-header {

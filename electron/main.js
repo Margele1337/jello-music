@@ -21,6 +21,7 @@ import {
   toggleMainWindowDock
 } from './windows/sigmaDock.js';
 import { setThumbarButtons } from './windows/thumbarButtons.js';
+import { installSigmaSizeGuard } from './services/sigmaSizeGuard.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -86,10 +87,15 @@ function createWindow() {
     minHeight: 600,
     maxWidth: 800,
     maxHeight: 600,
-    useContentSize: true,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
     show: false,
     icon: path.join(__dirname, 'assets', 'app-icon.png'),
-    backgroundColor: '#0e0c12',
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -105,6 +111,10 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   if (process.platform === 'win32') setThumbarButtons(mainWindow, false);
 
+  // 尺寸守卫：跨缩放显示器拖动/系统缩放变化时 WM_DPICHANGED 可能改坏
+  // 无边框透明窗口尺寸（Chromium issue 40813134），双层校验并自动修复
+  const disposeSizeGuard = installSigmaSizeGuard(() => mainWindow, 800, 600);
+
   mainWindow.on('close', (event) => {
     if (isQuitting || !getSettings().minimizeToTray || !hasTray()) return;
     event.preventDefault();
@@ -118,6 +128,7 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    disposeSizeGuard();
     resetDockState();
     mainWindow = null;
     // 桌面歌词窗口是 closable:false 的辅助窗口，不能让它把应用留在后台

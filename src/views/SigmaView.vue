@@ -89,7 +89,8 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: radial-gradient(120% 120% at 25% 0%, #2a2233 0%, #17121d 55%, #0e0c12 100%);
+  /* 无边框透明窗口：页面自身不再铺底色，桌面透出半透明面板（原版观感） */
+  background: transparent;
 }
 
 .sigma-stage {
@@ -100,11 +101,12 @@ onMounted(() => {
   overflow: hidden;
 }
 
-/* 呼出时播 elastic reveal 动画在 SigmaMusicPlayer 的 .revealing 上处理 */
+/* 面板自身唯一的背衬：alpha 对齐原版 ClickGuiScreen.draw:309 的 DEEP_TEAL 0.2×a 静息值 */
 .sigma-shell {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: rgba(6, 8, 12, 0.2);
 }
 
 .sigma-toast {

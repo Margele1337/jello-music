@@ -1,5 +1,5 @@
 <template>
-  <div class="sigma-music-player" :class="{ translucent, revealing, docked }" @pointerdown="onPointerDown">
+  <div class="sigma-music-player" :class="{ translucent, revealing: !shellDocked, docked: shellDocked }" @pointerdown="onPointerDown">
     <!-- 右侧面板 #262626 80% -->
     <div class="smp-right-panel"></div>
     <!-- 左侧面板 black 95% -->
@@ -88,6 +88,7 @@ import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
 import SigmaQueueList from './SigmaQueueList.vue';
 import SigmaCollectModal from './SigmaCollectModal.vue';
 import SigmaText from './SigmaText.vue';
+import { useSigmaWindowDrag } from '../../composables/useSigmaWindowDrag.js';
 
 const props = defineProps({
   player: { type: Object, default: null },
@@ -295,11 +296,46 @@ const onPlaylistSelect = (item) => {
 };
 
 const docked = ref(false);
+const shellDocked = ref(false);
 const undockRequested = ref(false);
-const revealing = ref(false);
 const translucent = computed(() => docked.value && !undockRequested.value);
+const revealing = computed(() => !shellDocked.value);
 let unsubscribeDock = null;
-let revealTimer = null;
+let unsubscribeOverhang = null;
+let dockedTimer = null;
+
+/* ================= 自绘拖拽（原版面板拖动） ================= */
+const NO_DRAG_SELECTOR = 'button, input, .sigma-search-box, .sigma-scrollable-panel, .sigma-text-field, .sigma-progress-bar, .sigma-volume-slider, .sigma-small-image, .sigma-changing-button, .sigma-spectrum-button, .smp-dock-trigger';
+
+const { onPointerDown, endDrag } = useSigmaWindowDrag({
+  noDragSelector: NO_DRAG_SELECTOR,
+  capturePointer: true,
+  // 拖动优先：取消进行中的窗口动画
+  onBeforeDrag: () => stopWindowAnimation(true)
+});
+
+/* ================= 贴边收起（原版 dock / reShowView 行为） =================
+   docked = 几何越界（收起条的显示条件）；shellDocked = 主进程吸附态
+   （elastic reveal 类的翻转依据）；undockRequested = 「已请求滑出」
+   （半透明判据的否定项，滑出瞬时变亮 —— 原版 field20874）。 */
+let ipcOverhang = null;
+
+const readDockedByPosition = () => {
+  const screenRef = window.screen || {};
+  const areaLeft = Number.isFinite(screenRef.availLeft) ? screenRef.availLeft : 0;
+  const areaWidth = Number.isFinite(screenRef.availWidth) ? screenRef.availWidth : Number(screenRef.width) || 0;
+  const areaRight = areaLeft + areaWidth;
+  const windowRight = window.screenX + (window.outerWidth || 0);
+  // 1:1 对齐原版 MusicPlayer.draw 的判据 getXA() + getWidthA() > parent.getWidthA()
+  return areaWidth > 0 && windowRight > areaRight;
+};
+
+const updateDockedState = () => {
+  const byPosition = ipcOverhang !== null ? ipcOverhang : readDockedByPosition();
+  // 重新回到屏幕内即视为滑出结束，清掉请求标志（原版 field20874 在滑出结束时置回 false）
+  if (!byPosition) undockRequested.value = false;
+  docked.value = byPosition;
+};
 
 /* ================= 窗口进出动画（rAF 与显示器垂直同步；主进程 150ms 收不到帧则接管）
    原版 updatePanelDimensions：var7 = dt / 18.10361ms，x 每帧 0.25 × var7、y 0.2 × var7，
@@ -374,11 +410,8 @@ if (window.jello?.windowControl) {
 
 
 const restoreWindow = () => {
-  undockRequested.value = true;
   window.jello?.windowControl?.restore?.();
 };
-
-const onPointerDown = () => {};
 
 const setupStripCanvas = () => {
   const canvas = stripCanvas.value;
@@ -402,36 +435,38 @@ onMounted(() => {
   syncPlaybackState();
   setupStripCanvas();
   tickTimer = setInterval(syncPlaybackState, 250);
+  updateDockedState();
+  dockedTimer = setInterval(updateDockedState, 200);
   unsubscribeDock = window.jello?.windowControl?.onDockChanged?.((value) => {
-    const wasDocked = docked.value;
-    docked.value = !!value;
+    // value=true → 吸附收起，undockRequested=false；value=false → 主进程开始滑出，
+    // undockRequested 置 true —— 点击瞬间就开始 150ms 变亮（原版「醒来」效果）。
+    // shellDocked 翻转驱动 elastic reveal 重放（主进程状态不变时 early-return，
+    // 收到的 dock 事件必然是真·状态切换，CSS animation 每次都会重放）。
     undockRequested.value = !value;
-    // 呼出（dock → undock）时播 elastic reveal
-    if (wasDocked && !value) {
-      revealing.value = true;
-      if (revealTimer) clearTimeout(revealTimer);
-      revealTimer = setTimeout(() => { revealing.value = false; }, 500);
-    }
+    shellDocked.value = !!value;
+    ipcOverhang = value ? true : null;
+    updateDockedState();
   }) || null;
-  const getDocked = window.jello?.windowControl?.getDocked;
-  if (getDocked) {
-    getDocked().then((value) => {
-      docked.value = !!value;
-      undockRequested.value = !value;
-    }).catch(() => {});
-  }
+  unsubscribeOverhang = window.jello?.windowControl?.onOverhangChanged?.((value) => {
+    // 拖拽越界的权威信号：右缘越过屏幕右缘时半透明（原版 MusicPlayer.draw）
+    ipcOverhang = !!value;
+    updateDockedState();
+  }) || null;
 });
 
 onBeforeUnmount(() => {
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
-  if (revealTimer) clearTimeout(revealTimer);
-  revealTimer = null;
+  if (dockedTimer) clearInterval(dockedTimer);
+  dockedTimer = null;
   stopWindowAnimation();
+  endDrag();
   unsubscribeDock?.();
+  unsubscribeOverhang?.();
   unsubscribeAnimateTo?.();
   unsubscribeAnimateStop?.();
   unsubscribeDock = null;
+  unsubscribeOverhang = null;
   unsubscribeAnimateTo = null;
   unsubscribeAnimateStop = null;
 });
