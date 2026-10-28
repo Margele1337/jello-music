@@ -1002,8 +1002,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* 无边框透明窗口：设置页自铺近不透明底（对齐旧版 sigma-view--settings） */
-  background: rgba(16, 17, 20, 0.96);
+  /* 无边框透明窗口：设置页自铺不透明底。旧版设置是 v-if 换页、播放器不在
+     底下，0.96 的底看不出透影；新版播放器常驻、设置叠在上面，半透明会把
+     播放器透出来，故用实色还原旧版观感 */
+  background: #101114;
   font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
   color: #ece9f1;
   overflow: hidden;

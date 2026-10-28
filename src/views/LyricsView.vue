@@ -131,8 +131,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .lyrics-page {
   height: 100%;
-  /* 无边框透明窗口：歌词页自铺近不透明底 */
-  background: rgba(16, 17, 20, 0.96);
+  /* 无边框透明窗口：歌词页自铺不透明底（同设置页：播放器常驻，半透明会透影） */
+  background: #101114;
   display: flex;
   flex-direction: column;
   padding: 26px 40px 30px;
