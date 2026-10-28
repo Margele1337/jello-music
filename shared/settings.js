@@ -14,7 +14,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumInfoVisible: true,
   spectrumSigmaSmoothing: 0.335,
   spectrumAvDelayMs: 590,
-  spectrumLocked: true
+  spectrumLocked: true,
+  hotkeyIntroSeen: false
 });
 
 export const SETTING_KEYS = Object.freeze(Object.keys(SETTING_DEFAULTS));
@@ -34,7 +35,7 @@ export const sanitizeSettings = (patch) => {
     }
 
     if (key === 'minimizeToTray' || key === 'desktopLyrics' || key === 'spectrum'
-      || key === 'spectrumInfoVisible' || key === 'spectrumLocked') {
+      || key === 'spectrumInfoVisible' || key === 'spectrumLocked' || key === 'hotkeyIntroSeen') {
       if (typeof value === 'boolean') next[key] = value;
       continue;
     }

@@ -1,5 +1,5 @@
 <template>
-  <div class="sigma-music-player" :class="{ translucent }" @pointerdown="onPointerDown">
+  <div class="sigma-music-player" :class="{ translucent, revealing, docked }" @pointerdown="onPointerDown">
     <!-- 右侧面板 #262626 80% -->
     <div class="smp-right-panel"></div>
     <!-- 左侧面板 black 95% -->
@@ -265,8 +265,11 @@ const onPlaylistSelect = (item) => {
 
 const docked = ref(false);
 const undockRequested = ref(false);
+const revealing = ref(false);
 const translucent = computed(() => docked.value && !undockRequested.value);
 let unsubscribeDock = null;
+let revealTimer = null;
+
 
 const restoreWindow = () => {
   undockRequested.value = true;
@@ -298,8 +301,15 @@ onMounted(() => {
   setupStripCanvas();
   tickTimer = setInterval(syncPlaybackState, 250);
   unsubscribeDock = window.jello?.windowControl?.onDockChanged?.((value) => {
+    const wasDocked = docked.value;
     docked.value = !!value;
     undockRequested.value = !value;
+    // 呼出（dock → undock）时播 elastic reveal
+    if (wasDocked && !value) {
+      revealing.value = true;
+      if (revealTimer) clearTimeout(revealTimer);
+      revealTimer = setTimeout(() => { revealing.value = false; }, 500);
+    }
   }) || null;
   const getDocked = window.jello?.windowControl?.getDocked;
   if (getDocked) {
@@ -313,6 +323,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
+  if (revealTimer) clearTimeout(revealTimer);
+  revealTimer = null;
   unsubscribeDock?.();
   unsubscribeDock = null;
 });
@@ -338,6 +350,49 @@ onBeforeUnmount(() => {
 .sigma-music-player.translucent {
   opacity: 0.5;
   transition-duration: 80ms;
+}
+
+/* 呼出（dock → undock）时播 elastic reveal 动画（原版 ClickGuiScreen.draw 1:1 复刻）：
+   elastic(p,period) = 2^(-10p) × sin((p - period/4) × 2π / period) + 1
+   打开：a = elastic(p, 0.8) × 0.5 + 0.5
+   scale = 1.5 - a × 0.5（以自身中心为原点），26 点离线采样。 */
+.sigma-music-player.revealing {
+  animation: sigma-reveal 450ms linear both;
+}
+
+/* 收起态：不给缩放动画（原版 sigma-shell--docked 行为） */
+.sigma-music-player.docked {
+  animation: none;
+}
+
+@keyframes sigma-reveal {
+  0% { transform: scale(1.25); opacity: 0.5; }
+  3.85% { transform: scale(1.1828); opacity: 0.6343; }
+  7.69% { transform: scale(1.1207); opacity: 0.7586; }
+  11.54% { transform: scale(1.0693); opacity: 0.8614; }
+  15.38% { transform: scale(1.0305); opacity: 0.939; }
+  19.23% { transform: scale(1.004); opacity: 0.992; }
+  23.08% { transform: scale(0.9879); opacity: 1; }
+  26.92% { transform: scale(0.98); opacity: 1; }
+  30.77% { transform: scale(0.9778); opacity: 1; }
+  34.62% { transform: scale(0.9793); opacity: 1; }
+  38.46% { transform: scale(0.9827); opacity: 1; }
+  42.31% { transform: scale(0.9869); opacity: 1; }
+  46.15% { transform: scale(0.991); opacity: 1; }
+  50% { transform: scale(0.9945); opacity: 1; }
+  53.85% { transform: scale(0.9972); opacity: 1; }
+  57.69% { transform: scale(0.9992); opacity: 1; }
+  61.54% { transform: scale(1.0004); opacity: 0.9992; }
+  65.38% { transform: scale(1.0011); opacity: 0.9978; }
+  69.23% { transform: scale(1.0014); opacity: 0.9973; }
+  73.08% { transform: scale(1.0014); opacity: 0.9973; }
+  76.92% { transform: scale(1.0012); opacity: 0.9977; }
+  80.77% { transform: scale(1.0009); opacity: 0.9982; }
+  84.62% { transform: scale(1.0007); opacity: 0.9987; }
+  88.46% { transform: scale(1.0004); opacity: 0.9991; }
+  92.31% { transform: scale(1.0002); opacity: 0.9995; }
+  96.15% { transform: scale(1.0001); opacity: 0.9998; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 /* ===== 面板 ===== */
