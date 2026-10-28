@@ -43,6 +43,12 @@
     <!-- 频谱按钮 40x40 @ (15,460) -->
     <SigmaSpectrumButton class="smp-spectrum" :active="spectrumEnabled" @click="$emit('toggle-spectrum')" />
 
+    <!-- 播放队列按钮 + 队列弹窗 -->
+    <button type="button" class="smp-queue-btn" title="播放列表" @click="queueListRef?.toggle?.()">
+      <i></i><i></i><i></i>
+    </button>
+    <SigmaQueueList ref="queueListRef" :player="player" />
+
     <!-- 搜索框 + 结果网格 -->
     <SigmaSearchBox
       ref="searchBoxRef"
@@ -72,6 +78,7 @@ import SigmaProgressBar from './SigmaProgressBar.vue';
 import SigmaSpectrumButton from './SigmaSpectrumButton.vue';
 import SigmaSearchBox from './SigmaSearchBox.vue';
 import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
+import SigmaQueueList from './SigmaQueueList.vue';
 import SigmaText from './SigmaText.vue';
 
 const props = defineProps({
@@ -229,6 +236,7 @@ const repeatType = computed(() => {
 
 const searchBoxRef = ref(null);
 const temporaryPlaylist = ref(null);
+const queueListRef = ref(null);
 
 const onOpenSearchPlaylist = (playlist = {}) => {
   if (!playlist.id) return;
@@ -572,6 +580,38 @@ onBeforeUnmount(() => {
   top: 460px;
   width: 40px;
   height: 40px;
+}
+
+/* 播放队列按钮（进度条右上方） */
+.smp-queue-btn {
+  position: absolute;
+  left: 706px;
+  top: 534px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.smp-queue-btn:hover {
+  background: rgba(254, 254, 254, 0.12);
+}
+
+.smp-queue-btn i {
+  display: block;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(254, 254, 254, 0.7);
 }
 
 /* 左栏歌单列表（原版 tabs 区域，位于封面之下） */

@@ -159,6 +159,26 @@ export const usePlayerStore = defineStore('player', {
       void this.loadCurrent();
     },
 
+    playIndex(index) {
+      if (index < 0 || index >= this.queue.length) return;
+      this.index = index;
+      void this.loadCurrent();
+    },
+
+    removeFromQueue(index) {
+      if (index < 0 || index >= this.queue.length) return;
+      this.queue.splice(index, 1);
+      if (index < this.index) this.index -= 1;
+      else if (this.index >= this.queue.length) {
+        this.index = this.queue.length - 1;
+      }
+    },
+
+    clearQueue() {
+      this.queue = [];
+      this.index = -1;
+    },
+
     togglePlayPause() {
       const element = ensureAudio(this);
       if (!element.src || element.error || !this.currentSong) {
