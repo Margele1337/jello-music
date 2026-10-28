@@ -12,7 +12,8 @@ Sigma player backed by the real KuGou API:
   cookies/token never reach the renderer
 - Real search, public/user playlists, daily recommendations, queue playback,
   quality fallback (FLAC/320/128), in-app lyrics, desktop lyrics, tray mode,
-  real-time spectrum HUD, and quality/data-source settings
+  real-time spectrum HUD, right-Shift dock/collapse, and quality/data-source
+  settings
 - Manual one-click concept-VIP daily claim (concept data source + login required)
 - KuGouMusicApi sidecar on a random loopback port; the renderer only uses the
   allowlisted `api:request` IPC proxy

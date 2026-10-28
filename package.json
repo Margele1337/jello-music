@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "electron-store": "^12.0.0",
-    "electron-updater": "^6.8.12"
+    "electron-updater": "^6.8.12",
+    "koffi": "^3.3.4"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
@@ -40,6 +41,10 @@
     "productName": "Jello Music",
     "icon": "build/icon.ico",
     "electronDist": "node_modules/electron/dist",
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
+    ],
     "afterPack": "tools/verify-pack.cjs",
     "directories": {
       "output": "dist_electron"

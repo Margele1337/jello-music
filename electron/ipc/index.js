@@ -10,6 +10,7 @@ import { syncDesktopLyrics, sendDesktopLyricsState } from '../windows/desktopLyr
 import { sanitizeDesktopLyricState } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
 import { sendSpectrumData, syncSpectrumHud } from '../windows/spectrumHud.js';
+import { isMainWindowDocked, restoreMainWindow, toggleMainWindowDock } from '../windows/sigmaDock.js';
 import {
   checkForUpdates,
   downloadUpdate,
@@ -100,6 +101,21 @@ export const registerIpc = (getWindow) => {
   ipcMain.on(IPC.SPECTRUM_UPDATE, (event, payload) => {
     if (!isTrustedSender(event, getWindow())) return;
     sendSpectrumData(sanitizeSpectrumPayload(payload));
+  });
+
+  ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    toggleMainWindowDock();
+  });
+
+  ipcMain.handle(IPC.WINDOW_DOCK_GET, (event) => {
+    assertTrusted(event, getWindow);
+    return isMainWindowDocked();
+  });
+
+  ipcMain.on(IPC.WINDOW_RESTORE, (event) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    restoreMainWindow();
   });
 
   ipcMain.handle(IPC.UPDATE_GET, (event) => {

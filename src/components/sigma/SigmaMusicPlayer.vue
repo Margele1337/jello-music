@@ -264,8 +264,15 @@ const onPlaylistSelect = (item) => {
 };
 
 const docked = ref(false);
-const translucent = computed(() => false);
-const restoreWindow = () => {};
+const undockRequested = ref(false);
+const translucent = computed(() => docked.value && !undockRequested.value);
+let unsubscribeDock = null;
+
+const restoreWindow = () => {
+  undockRequested.value = true;
+  window.jello?.windowControl?.restore?.();
+};
+
 const onPointerDown = () => {};
 
 const setupStripCanvas = () => {
@@ -290,11 +297,24 @@ onMounted(() => {
   syncPlaybackState();
   setupStripCanvas();
   tickTimer = setInterval(syncPlaybackState, 250);
+  unsubscribeDock = window.jello?.windowControl?.onDockChanged?.((value) => {
+    docked.value = !!value;
+    undockRequested.value = !value;
+  }) || null;
+  const getDocked = window.jello?.windowControl?.getDocked;
+  if (getDocked) {
+    getDocked().then((value) => {
+      docked.value = !!value;
+      undockRequested.value = !value;
+    }).catch(() => {});
+  }
 });
 
 onBeforeUnmount(() => {
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
+  unsubscribeDock?.();
+  unsubscribeDock = null;
 });
 </script>
 

@@ -9,6 +9,15 @@ import { hasTray, initTray, syncTray } from './tray.js';
 import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from './windows/desktopLyrics.js';
 import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
+import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
+import {
+  initDockController,
+  isMainWindowDocked,
+  resetDockState,
+  restoreMainWindow,
+  stopDockAnimation,
+  toggleMainWindowDock
+} from './windows/sigmaDock.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -37,6 +46,15 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+  if (isMainWindowDocked()) restoreMainWindow();
+}
+
+function handleRightShift() {
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized()) {
+    showMainWindow();
+    return;
+  }
+  toggleMainWindowDock();
 }
 
 function sendPlayerCommand(command) {
@@ -82,6 +100,7 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => {
+    resetDockState();
     mainWindow = null;
     // 桌面歌词窗口是 closable:false 的辅助窗口，不能让它把应用留在后台
     if (!isQuitting) app.quit();
@@ -112,6 +131,7 @@ app.whenReady().then(async () => {
   initSettings();
   await initAuthSession();
   initUpdater();
+  initDockController(() => mainWindow);
   registerIpc(() => [mainWindow, getDesktopLyricsWindow(), getSpectrumWindow()].filter(Boolean));
   initTray({
     showWindow: showMainWindow,
@@ -131,6 +151,7 @@ app.whenReady().then(async () => {
   createWindow();
   syncDesktopLyrics(getSettings().desktopLyrics);
   syncSpectrumHud(getSettings().spectrum);
+  initGlobalKeyListener({ onRightShift: handleRightShift });
 
   app.on('activate', showMainWindow);
 });
@@ -141,6 +162,8 @@ app.on('before-quit', (event) => {
 
   shutdownStarted = true;
   event.preventDefault();
+  stopGlobalKeyListener();
+  stopDockAnimation();
   stopUpdater();
   destroyDesktopLyrics();
   destroySpectrumHud();

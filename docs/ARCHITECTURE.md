@@ -2,10 +2,13 @@
 
 ## Decisions
 
-- **One main window** contains the Sigma UI and audio playback. Optional
+- **One main window** contains the Sigma UI and audio playback. It can be docked
+  to the right edge (40 px visible) with a 260 ms slide animation; right Shift
+  toggles it globally through a Windows `GetAsyncKeyState` poll (`koffi`), since
+  Electron `globalShortcut` cannot distinguish left/right Shift. Optional
   desktop-lyrics and spectrum-HUD windows are transparent, always-on-top,
   click-through windows with dedicated narrow preloads; they only receive
-  sanitized lyric text or 48 spectrum band values.
+  sanitized lyric text or spectrum levels.
 - **The main process owns settings, auth state, and API access.** The renderer
   never receives tokens, cookies, or the sidecar port.
 - **Renderer is sandboxed:** `contextIsolation: true`, `nodeIntegration: false`,
@@ -133,6 +136,16 @@ the installer, `latest.yml`, and the blockmap through electron-builder; publish 
 draft release before clients can see it. The release workflow reads optional
 `CSC_LINK` and `CSC_KEY_PASSWORD` repository secrets; without them the installer
 is unsigned and SmartScreen warnings remain.
+
+## Dock / right Shift
+
+The main process owns the window dock state. `right Shift` (global, polled via
+`GetAsyncKeyState`) or the visible 41 px strip toggles between the normal position
+and a 40 px visible strip at the right edge of the current display. The window
+slides with an ease-out animation; the renderer receives `window:dock-changed`
+and fades the Sigma UI to 50% while docked. The strip click sends
+`window:restore`; tray "show" also restores a docked window. The poll only reads
+the Shift virtual-key state and never installs a keyboard hook.
 
 ## Updates
 
