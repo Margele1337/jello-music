@@ -21,9 +21,9 @@
     <SigmaText class="smp-time-left" :text="elapsedText" :size="14" :box-height="16" />
     <SigmaText class="smp-time-right" :text="durationText" :size="14" :box-width="50" :box-height="16" align="right" />
 
-    <!-- Logo -->
-    <SigmaText class="smp-logo" text="Jello" :size="40" :box-height="44" />
-    <SigmaText class="smp-logo-sub" text="music" :size="20" :box-height="22" />
+    <!-- Logo：可变细字重，贴近旧 Jello 图标的字标 -->
+    <span class="smp-logo">Jello</span>
+    <span class="smp-logo-sub">music</span>
 
     <!-- 左栏歌单（每日推荐 / 我喜欢 / 我的歌单…），位于封面之下 -->
     <SigmaPlaylistPanel class="smp-playlist" :temporary-playlist="temporaryPlaylist" @select="onPlaylistSelect" />
@@ -81,14 +81,18 @@ const props = defineProps({
 const emit = defineEmits(['request-login', 'request-settings', 'request-lyrics']);
 
 const FONT_STYLE_ID = 'sigma-ui-fonts';
-if (typeof document !== 'undefined' && !document.getElementById(FONT_STYLE_ID)) {
-  const style = document.createElement('style');
-  style.id = FONT_STYLE_ID;
+if (typeof document !== 'undefined') {
+  let style = document.getElementById(FONT_STYLE_ID);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = FONT_STYLE_ID;
+    document.head.appendChild(style);
+  }
   style.textContent = `
     @font-face { font-family: 'SigmaLight'; src: url('${sigmaFontUrl}') format('truetype'); font-weight: 400; font-style: normal; }
     @font-face { font-family: 'SigmaMedium'; src: url('${sigmaFontUrl}') format('truetype'); font-weight: 400; font-style: normal; }
+    @font-face { font-family: 'SigmaVariable'; src: url('${sigmaFontUrl}') format('truetype'); font-weight: 100 900; font-style: normal; }
   `;
-  document.head.appendChild(style);
 }
 
 const currentSong = computed(() => props.player?.currentSong || null);
@@ -431,7 +435,8 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 55px;
   top: 14px;
-  font-family: 'SigmaLight', sans-serif;
+  font-family: 'SigmaVariable', 'SigmaLight', sans-serif;
+  font-weight: 200;
   font-size: 40px;
   line-height: 44px;
   color: #fefefe;
@@ -442,7 +447,8 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 135px;
   top: 42px;
-  font-family: 'SigmaLight', sans-serif;
+  font-family: 'SigmaVariable', 'SigmaLight', sans-serif;
+  font-weight: 300;
   font-size: 20px;
   line-height: 22px;
   color: #fefefe;
