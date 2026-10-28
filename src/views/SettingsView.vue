@@ -596,14 +596,14 @@ const settingSections = [
         action: () => openLogs()
       },
       {
-        key: 'securityVerify',
+        key: 'update',
         control: 'action',
-        icon: 'shield',
-        label: '安全验证',
-        tag: '风控',
-        getText: () => (verifying.value ? '验证中…' : '重新验证'),
-        isDisabled: () => verifying.value,
-        action: () => runSecurityVerify()
+        icon: 'refresh',
+        label: () => updateText.value,
+        description: () => `当前版本 ${version.value ? `v${version.value}` : '未知'}`,
+        getText: () => updateLabel.value,
+        isDisabled: () => updateDisabled.value,
+        action: () => onUpdateAction()
       }
     ]
   },
@@ -627,16 +627,27 @@ const settingSections = [
   {
     title: '账号',
     custom: 'account',
-    items: []
-  },
-  {
-    title: '更新',
-    custom: 'update',
-    items: []
+    items: [
+      {
+        key: 'securityVerify',
+        control: 'action',
+        icon: 'shield',
+        label: '安全验证',
+        tag: '风控',
+        getText: () => (verifying.value ? '验证中…' : '重新验证'),
+        isDisabled: () => verifying.value,
+        action: () => runSecurityVerify()
+      }
+    ]
   }
 ];
 
 // ===== 通用行渲染 =====
+// label/description 允许传函数：更新行的文案要随 updateState 实时变化
+const labelText = (item) => (typeof item.label === 'function' ? item.label() : item.label);
+const descText = (item) => (
+  typeof item.description === 'function' ? item.description() : (item.description || '')
+);
 const pillText = (item) => (item.getText ? item.getText() : (item.customText || ''));
 const pillDisabled = (item) => (item.isDisabled ? !!item.isDisabled() : false);
 
@@ -859,27 +870,12 @@ onBeforeUnmount(() => {
             </template>
           </template>
 
-          <!-- 更新：状态 + 检查/下载/重启安装 -->
-          <template v-else-if="section.custom === 'update'">
-            <div class="setting-row">
-              <div class="row-main">
-                <SvgIcon name="refresh" class="row-icon" />
-                <span class="row-label">{{ updateText }}</span>
-              </div>
-              <button type="button" class="row-pill" :disabled="updateDisabled" @click.stop="onUpdateAction">
-                <span>{{ updateLabel }}</span>
-                <SvgIcon name="chevron" />
-              </button>
-            </div>
-            <p class="row-desc">当前版本 {{ version ? `v${version}` : '未知' }}</p>
-          </template>
-
-          <!-- 通用行渲染 -->
-          <template v-else v-for="(item, itemIndex) in section.items" :key="itemIndex">
+          <!-- 通用行渲染（账号分区先渲染自定义块，再继续渲染自己的 items） -->
+          <template v-for="(item, itemIndex) in section.items" :key="itemIndex">
             <div class="setting-row">
               <div class="row-main">
                 <SvgIcon :name="item.icon" class="row-icon" />
-                <span class="row-label">{{ item.label }}</span>
+                <span class="row-label">{{ labelText(item) }}</span>
                 <span v-if="item.experimental" class="row-tag">实验性</span>
                 <span v-else-if="item.tag" class="row-tag">{{ item.tag }}</span>
               </div>
@@ -887,7 +883,7 @@ onBeforeUnmount(() => {
               <!-- 开关型：行内开关 -->
               <button v-if="item.control === 'toggle'" type="button" class="row-switch"
                 :class="{ 'is-on': !!settings[item.key] }" role="switch" :aria-checked="!!settings[item.key]"
-                :aria-label="item.label" @click.stop="updateSetting(item.key, !settings[item.key])">
+                :aria-label="labelText(item)" @click.stop="updateSetting(item.key, !settings[item.key])">
                 <i></i>
               </button>
 
@@ -915,7 +911,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <p v-if="item.description" class="row-desc">{{ item.description }}</p>
+            <p v-if="descText(item)" class="row-desc">{{ descText(item) }}</p>
           </template>
         </div>
         <p v-if="section.description" class="group-desc">{{ section.description }}</p>
