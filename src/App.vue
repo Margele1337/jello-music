@@ -1,9 +1,15 @@
 <template>
-  <RouterView />
+  <RouterView v-slot="{ Component }">
+    <Transition name="view-fade" :css="!skipRouteTransition">
+      <component :is="Component" :key="route.fullPath" />
+    </Transition>
+  </RouterView>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { skipNextRouteTransition, skipRouteTransition } from './services/viewTransition.js';
 import { collectSongToLiked } from './services/api/collect.js';
 import { getKaraokeLyrics, getLyrics } from './services/api/library.js';
 import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
@@ -14,6 +20,42 @@ import { useSettingsStore } from './stores/settings.js';
 const settings = useSettingsStore();
 const auth = useAuthStore();
 const player = usePlayerStore();
+const route = useRoute();
+const router = useRouter();
+
+// ===== 收起/弹出时的视图回切（1:1 对齐旧版 SigmaUI.onSigmaDockChanged）=====
+// 收起：若停留在设置/登录页，300ms 后带 0.3s 淡出切回播放器（40px 条显示的是播放器右缘）；
+// 弹出：若还有待切的收起计时，瞬时切回播放器（无过渡），看到的直接是面板自己的滑出动画
+let dockSwitchTimer = null;
+let unsubscribeDockForView = null;
+
+const goPlayerView = (instant) => {
+  if (route.path === '/') return;
+  if (instant) skipNextRouteTransition();
+  router.push('/');
+};
+
+const onDockChangedForView = (docked) => {
+  if (docked) {
+    if (route.path === '/' || dockSwitchTimer) return;
+    dockSwitchTimer = setTimeout(() => {
+      dockSwitchTimer = null;
+      goPlayerView(false);
+    }, 300);
+    return;
+  }
+  if (dockSwitchTimer) {
+    clearTimeout(dockSwitchTimer);
+    dockSwitchTimer = null;
+    goPlayerView(true);
+  }
+};
+
+watch(() => route.path, () => {
+  nextTick(() => {
+    skipRouteTransition.value = false;
+  });
+});
 let desktopLyricToken = 0;
 let desktopLyricTimer = null;
 
@@ -214,6 +256,7 @@ onMounted(async () => {
   await Promise.all([settings.load(), auth.load()]);
   unsubscribeSettings = window.jello?.settings?.onChange?.((next) => settings.apply(next)) || null;
   unsubscribeAuth = auth.subscribe();
+  unsubscribeDockForView = window.jello?.windowControl?.onDockChanged?.(onDockChangedForView) || null;
   unsubscribePlayer = window.jello?.player?.onCommand?.((command) => {
     handlePlayerCommand(command);
   }) || null;
@@ -240,5 +283,23 @@ onBeforeUnmount(() => {
   unsubscribeAuth?.();
   unsubscribePlayer?.();
   unsubscribeSpectrumRequest?.();
+  unsubscribeDockForView?.();
+  unsubscribeDockForView = null;
+  if (dockSwitchTimer) {
+    clearTimeout(dockSwitchTimer);
+    dockSwitchTimer = null;
+  }
 });
 </script>
+
+<style>
+/* 视图过渡（对齐旧版 sigma-view-fade）：离开 0.3s 淡出，进入无过渡瞬时出现 */
+.view-fade-leave-active {
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.view-fade-leave-to {
+  opacity: 0;
+}
+</style>
