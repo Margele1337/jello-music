@@ -63,10 +63,20 @@ api/                 KuGouMusicApi git submodule (MIT)
 4. All windows mirror the same broadcast; no direct `localStorage` writes.
 5. A data-source change restarts the sidecar with the matching platform and
    resets device cookies. A quality change reloads the current track at the new
-   quality while preserving playback position. `/settings` exposes both, plus
-   the account/login entry, minimize-to-tray, desktop lyrics, and update status.
+   quality while preserving playback position. `/settings` is a chip-tab panel
+   (界面/声音/歌词/频谱/系统/数据源/账号/更新) exposing playback quality, playback
+   rate, loudness normalization, audio output device, desktop lyrics + font,
+   spectrum controls, auto-start (login item), sleep blocker, tray behavior,
+   log directory, account/VIP, and update status.
 6. With minimize-to-tray enabled, close/minimize hides the window and the tray
    menu restores it or quits; audio keeps playing because the renderer stays alive.
+6b. Loudness normalization runs in the shared Web Audio graph
+   (source → volumeGain → loudnessGain → destination): the song-url response's
+   `{volume, volume_gain, volume_peak}` metadata is converted to a gain targeting
+   -14 LUFS with peak clipping protection (gain clamped to [0.1, 3]). The graph
+   can be started independently of the spectrum via `ensureAudioGraph`, and the
+   output device is switched with `setSinkId` on the AudioContext (element sink
+   is bypassed once the graph owns the routing).
 7. With desktop lyrics enabled, the main renderer fetches the current song's
    KRC karaoke lyrics (falling back to plain LRC), pushes the full per-character
    payload on song change, and streams `{time, playing}` progress ticks every

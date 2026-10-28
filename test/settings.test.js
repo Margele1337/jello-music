@@ -42,4 +42,24 @@ test('sanitize rejects unknown quality and data source values', () => {
     quality: 'flac',
     dataSource: 'official'
   });
+  assert.deepEqual(sanitizeSettings({ quality: 'high' }), { quality: 'high' });
+});
+
+test('sanitize validates new audio/system settings', () => {
+  assert.deepEqual(sanitizeSettings({ playbackRate: 1.25 }), { playbackRate: 1.25 });
+  assert.deepEqual(sanitizeSettings({ playbackRate: 1.1 }), {});
+  assert.deepEqual(sanitizeSettings({ loudnessNormalization: true }), { loudnessNormalization: true });
+  assert.deepEqual(sanitizeSettings({ loudnessNormalization: 'yes' }), {});
+  assert.deepEqual(sanitizeSettings({ autoStart: true, preventAppSuspension: true }), {
+    autoStart: true,
+    preventAppSuspension: true
+  });
+  assert.deepEqual(sanitizeSettings({ audioOutputDevice: 'abc:123-def_4.5' }), {
+    audioOutputDevice: 'abc:123-def_4.5'
+  });
+  assert.deepEqual(sanitizeSettings({ audioOutputDevice: 'bad id with spaces' }), {});
+  assert.deepEqual(sanitizeSettings({ audioOutputDevice: 'x'.repeat(129) }), {});
+  assert.deepEqual(sanitizeSettings({ desktopLyricsFont: 'Noto Sans SC' }), {
+    desktopLyricsFont: 'Noto Sans SC'
+  });
 });

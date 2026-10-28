@@ -28,8 +28,12 @@ const highlightColor = ref(localStorage.getItem('lyrics-highlight-color') || '#f
 const FALLBACK_COLOR = '#D4D4D4';
 
 const isHovering = ref(false);
+const lyricsFont = ref('');
 const currentLineStyle = computed(() => ({
   transform: `translateX(${currentLineScrollX.value}px)`
+}));
+const containerFontStyle = computed(() => ({
+  fontFamily: lyricsFont.value ? `"${lyricsFont.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}", 'Segoe UI', 'Microsoft YaHei', sans-serif` : ''
 }));
 
 const throttle = (func, delay) => {
@@ -423,6 +427,7 @@ const normalizeLyricLines = (lines) => (
 
 let unsubscribeState = null;
 let unsubscribeProgress = null;
+let unsubscribeFont = null;
 
 const handleState = (data) => {
   const hash = data?.hash || '';
@@ -624,6 +629,7 @@ onMounted(() => {
   window.jelloLyrics?.ready?.();
   unsubscribeState = window.jelloLyrics?.onState?.(handleState) || null;
   unsubscribeProgress = window.jelloLyrics?.onProgress?.(handleProgress) || null;
+  unsubscribeFont = window.jelloLyrics?.onFont?.((font) => { lyricsFont.value = typeof font === 'string' ? font : ''; }) || null;
   fontSize.value = parseInt(localStorage.getItem('lyrics-font-size') || '32', 10);
 
   document.addEventListener('mousemove', checkMousePosition);
@@ -643,8 +649,10 @@ onBeforeUnmount(() => {
   }
   unsubscribeState?.();
   unsubscribeProgress?.();
+  unsubscribeFont?.();
   unsubscribeState = null;
   unsubscribeProgress = null;
+  unsubscribeFont = null;
   document.removeEventListener('mousemove', checkMousePosition);
   document.removeEventListener('mouseleave', handleMouseLeave);
   document.removeEventListener('mousedown', startDrag);
@@ -656,7 +664,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="lyrics-container" :class="{ 'locked': isLocked, 'hovering': isHovering && !isLocked }"
-    :style="resizeCursor ? { cursor: resizeCursor } : null" @mouseleave="handleMouseLeave">
+    :style="[containerFontStyle, resizeCursor ? { cursor: resizeCursor } : null]" @mouseleave="handleMouseLeave">
     <div class="lyrics-panel">
       <!-- 控制栏 -->
       <div class="controls-overlay">

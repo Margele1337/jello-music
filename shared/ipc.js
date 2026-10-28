@@ -1,5 +1,6 @@
 export const IPC = Object.freeze({
   APP_VERSION: 'app:version',
+  APP_OPEN_LOGS: 'app:open-logs',
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_CHANGED: 'settings:changed',
@@ -17,6 +18,7 @@ export const IPC = Object.freeze({
   DESKTOP_LYRICS_BOUNDS: 'desktop-lyrics:bounds',
   DESKTOP_LYRICS_FIXED_SIZE: 'desktop-lyrics:fixed-size',
   DESKTOP_LYRICS_POINTER_STATE: 'desktop-lyrics:pointer-state',
+  DESKTOP_LYRICS_FONT: 'desktop-lyrics:font',
   SPECTRUM_UPDATE: 'spectrum:update',
   SPECTRUM_DATA: 'spectrum:data',
   SPECTRUM_HUD_READY: 'spectrum:hud-ready',

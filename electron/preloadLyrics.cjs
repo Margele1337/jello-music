@@ -9,6 +9,7 @@ const subscribe = (channel, callback) => {
 contextBridge.exposeInMainWorld('jelloLyrics', {
   onState: (callback) => subscribe('desktop-lyrics:state', callback),
   onProgress: (callback) => subscribe('desktop-lyrics:progress', callback),
+  onFont: (callback) => subscribe('desktop-lyrics:font', callback),
   ready: () => ipcRenderer.send('desktop-lyrics:ready'),
   sendAction: (action) => ipcRenderer.send('desktop-lyrics:action', String(action)),
   setIgnoreMouseEvents: (ignore) => ipcRenderer.send('desktop-lyrics:ignore-mouse', ignore === true),

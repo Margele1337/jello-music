@@ -153,7 +153,18 @@ export const getSongUrl = async (song, quality = '320') => {
       const payload = await apiRequest({ method: 'GET', path: '/song/url', params });
       const url = pickUrl(payload);
       // 概念版部分 CDN（youthandroid2）HTTPS 证书不匹配，保留接口返回的协议
-      if (url) return { url, quality: candidate };
+      if (url) {
+        const data = payload?.data || payload || {};
+        const result = { url, quality: candidate };
+        if (data.volume !== undefined || data.volume_gain !== undefined) {
+          result.loudness = {
+            volume: data.volume,
+            volumeGain: data.volume_gain,
+            volumePeak: data.volume_peak
+          };
+        }
+        return result;
+      }
       message = payload?.error || payload?.msg || payload?.data?.msg || message;
     } catch (error) {
       message = error?.message || message;

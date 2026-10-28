@@ -70,6 +70,7 @@ const pendingFrames = [];
 let context = null;
 let sourceNode = null;
 let volumeGainNode = null;
+let loudnessGainNode = null;
 let tapNode = null;
 let mainTapGainNode = null;
 let lookaheadAudio = null;
@@ -221,6 +222,60 @@ export const applyOutputVolume = (percent, muted) => {
   return false;
 };
 
+// ===== 响度规格化（目标 -14 LUFS，与旧版算法一致） =====
+let loudnessEnabled = false;
+let currentLoudnessGain = 1;
+
+export const setLoudnessEnabled = (value) => {
+  loudnessEnabled = value === true;
+};
+
+export const getLoudnessGain = () => currentLoudnessGain;
+
+export const applyLoudnessData = (data) => {
+  let gain = 1;
+  if (loudnessEnabled && data && typeof data === 'object') {
+    const volume = Number(data.volume) || 0;
+    const volumeGain = Number(data.volumeGain) || 0;
+    const volumePeak = Number(data.volumePeak) || 0;
+    let adjustment = Math.pow(10, (-14 - volume) / 20);
+    if (volumeGain !== 0) adjustment *= Math.pow(10, volumeGain / 20);
+    // 防止削波：峰值超 0.95 时限增益
+    if (volumePeak > 0 && volumePeak * adjustment > 0.95) adjustment = 0.95 / volumePeak;
+    gain = Math.max(0.1, Math.min(3, adjustment));
+  }
+  currentLoudnessGain = gain;
+  if (context && loudnessGainNode) {
+    try {
+      loudnessGainNode.gain.setValueAtTime(gain, context.currentTime);
+    } catch {
+      /* ignore */
+    }
+  }
+  return gain;
+};
+
+// ===== 输出设备切换（音频图激活时必须切 AudioContext，否则元素 setSinkId 无效） =====
+export const setAudioOutputDevice = async (audio, deviceId) => {
+  if (!deviceId || deviceId === 'default') return true;
+  try {
+    if (context && typeof context.setSinkId === 'function') {
+      await context.setSinkId(deviceId);
+      return true;
+    }
+    if (audio && typeof audio.setSinkId === 'function') {
+      await audio.setSinkId(deviceId);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+// 独立启用音频图（响度规格化/输出设备切换不需要开频谱）
+export const ensureAudioGraph = async (audio) => ensureGraph(audio);
+
 const ensureGraph = async (audio) => {
   if (!audio || typeof window === 'undefined') return false;
   if (context) {
@@ -250,6 +305,8 @@ const ensureGraph = async (audio) => {
 
     const volumeGain = localContext.createGain();
     volumeGain.gain.value = 1;
+    const loudnessGain = localContext.createGain();
+    loudnessGain.gain.value = currentLoudnessGain;
     const tap = new AudioWorkletNode(localContext, 'spectrum-tap', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -269,7 +326,8 @@ const ensureGraph = async (audio) => {
     lookaheadTapGain.gain.value = 0;
 
     localSource.connect(volumeGain);
-    volumeGain.connect(localContext.destination);
+    volumeGain.connect(loudnessGain);
+    loudnessGain.connect(localContext.destination);
     localSource.connect(mainTapGain);
     mainTapGain.connect(tap);
     lookaheadSource.connect(lookaheadTapGain);
@@ -280,6 +338,7 @@ const ensureGraph = async (audio) => {
     context = localContext;
     sourceNode = localSource;
     volumeGainNode = volumeGain;
+    loudnessGainNode = loudnessGain;
     tapNode = tap;
     mainTapGainNode = mainTapGain;
     lookaheadSourceNode = lookaheadSource;

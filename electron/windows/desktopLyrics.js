@@ -10,6 +10,7 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 let lyricsWindow = null;
 let lastLyrics = { hash: '', title: '', artist: '', lines: [] };
 let lastProgress = { time: 0, playing: false };
+let lyricsFont = '';
 let boundsStore = null;
 
 const getBoundsStore = () => {
@@ -122,6 +123,7 @@ export const showDesktopLyrics = () => {
     if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
     lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_STATE, lastLyrics);
     lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_PROGRESS, lastProgress);
+    lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_FONT, lyricsFont);
   });
 
   lyricsWindow.once('ready-to-show', () => lyricsWindow?.showInactive());
@@ -173,4 +175,12 @@ export const resendDesktopLyricsState = () => {
   if (lyricsWindow.webContents.isLoading()) return;
   lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_STATE, lastLyrics);
   lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_PROGRESS, lastProgress);
+  lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_FONT, lyricsFont);
+};
+
+export const setDesktopLyricsFont = (font) => {
+  lyricsFont = typeof font === 'string' ? font.slice(0, 100) : '';
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+  if (lyricsWindow.webContents.isLoading()) return;
+  lyricsWindow.webContents.send(IPC.DESKTOP_LYRICS_FONT, lyricsFont);
 };

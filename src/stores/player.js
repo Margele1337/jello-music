@@ -1,7 +1,14 @@
 import { defineStore } from 'pinia';
 import { useSettingsStore } from './settings.js';
 import { getSongUrl } from '../services/api/library.js';
-import { applyOutputVolume } from '../services/audio/spectrum.js';
+import {
+  applyLoudnessData,
+  applyOutputVolume,
+  ensureAudioGraph,
+  setAudioOutputDevice,
+  setLoudnessEnabled,
+  syncLookahead
+} from '../services/audio/spectrum.js';
 
 let audio = null;
 let boundStore = null;
@@ -54,6 +61,7 @@ export const usePlayerStore = defineStore('player', {
     volume: 100,
     mode: 1,
     error: '',
+    loudness: null,
     initialized: false
   }),
 
@@ -102,8 +110,18 @@ export const usePlayerStore = defineStore('player', {
         const result = await getSongUrl(song, settings.quality || '320');
         if (token !== loadToken) return;
 
+        // 响度规格化/自定义输出设备需要 Web Audio 音频图（MediaElementSource 只能绑定一次）
+        if (settings.loudnessNormalization || settings.audioOutputDevice !== 'default') {
+          void ensureAudioGraph(element);
+        }
+
         element.src = result.url;
         element.volume = this.volume / 100;
+        element.playbackRate = Number(settings.playbackRate) || 1;
+        this.loudness = result.loudness || null;
+        setLoudnessEnabled(!!settings.loudnessNormalization);
+        applyLoudnessData(this.loudness);
+        void setAudioOutputDevice(element, settings.audioOutputDevice || 'default');
         if (resumeAt > 0) {
           element.addEventListener('loadedmetadata', () => {
             try {
@@ -215,6 +233,24 @@ export const usePlayerStore = defineStore('player', {
 
     changeVolume(delta) {
       this.setVolumePercent(this.volume + delta);
+    },
+
+    setPlaybackRate(rate) {
+      const next = Number(rate) || 1;
+      const element = ensureAudio(this);
+      element.playbackRate = next;
+      syncLookahead(element.currentTime, this.playing, next, true);
+    },
+
+    // 响度开关变化时重算增益（保留当前歌曲的响度数据）
+    applyLoudnessSetting(enabled) {
+      setLoudnessEnabled(enabled === true);
+      if (enabled) void ensureAudioGraph(ensureAudio(this));
+      applyLoudnessData(this.loudness);
+    },
+
+    applyOutputDevice(deviceId) {
+      void setAudioOutputDevice(ensureAudio(this), deviceId || 'default');
     },
 
     setVolumePercent(value) {

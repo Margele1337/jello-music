@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, powerSaveBlocker, screen, shell } from 'electron';
 import { IPC } from '../../shared/ipc.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
@@ -11,6 +11,7 @@ import {
   resendDesktopLyricsState,
   sendDesktopLyricsLyrics,
   sendDesktopLyricsProgress,
+  setDesktopLyricsFont,
   syncDesktopLyrics
 } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../shared/desktopLyrics.js';
@@ -30,6 +31,22 @@ const assertTrusted = (event, getWindow) => {
   }
 };
 
+let sleepBlockerId = null;
+
+const applySystemSettings = (previous, next) => {
+  if (next.autoStart !== previous.autoStart) {
+    app.setLoginItemSettings({ openAtLogin: next.autoStart });
+  }
+  if (next.preventAppSuspension !== previous.preventAppSuspension) {
+    if (next.preventAppSuspension && sleepBlockerId === null) {
+      sleepBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    } else if (!next.preventAppSuspension && sleepBlockerId !== null) {
+      powerSaveBlocker.stop(sleepBlockerId);
+      sleepBlockerId = null;
+    }
+  }
+};
+
 const broadcast = (channel, payload) => {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(channel, payload);
@@ -40,6 +57,11 @@ export const registerIpc = (getWindow) => {
   ipcMain.handle(IPC.APP_VERSION, (event) => {
     assertTrusted(event, getWindow);
     return app.getVersion();
+  });
+
+  ipcMain.handle(IPC.APP_OPEN_LOGS, (event) => {
+    assertTrusted(event, getWindow);
+    return shell.openPath(app.getPath('userData'));
   });
 
   ipcMain.handle(IPC.SETTINGS_GET, (event) => {
@@ -68,6 +90,12 @@ export const registerIpc = (getWindow) => {
     if (next.desktopLyrics !== previous.desktopLyrics) {
       syncDesktopLyrics(next.desktopLyrics);
     }
+
+    if (next.desktopLyricsFont !== previous.desktopLyricsFont) {
+      setDesktopLyricsFont(next.desktopLyricsFont);
+    }
+
+    applySystemSettings(previous, next);
 
     if (next.spectrum !== previous.spectrum) {
       syncSpectrumHud(next.spectrum);

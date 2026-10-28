@@ -1,13 +1,18 @@
-export const QUALITY_VALUES = Object.freeze(['128', '320', 'flac']);
+export const QUALITY_VALUES = Object.freeze(['128', '320', 'flac', 'high']);
 export const DATA_SOURCE_VALUES = Object.freeze(['concept', 'official']);
+export const PLAYBACK_RATES = Object.freeze([0.75, 1, 1.25, 1.5, 2]);
 
 export const SETTING_DEFAULTS = Object.freeze({
   language: '',
   quality: '320',
   dataSource: 'concept',
   volume: 1,
+  playbackRate: 1,
+  loudnessNormalization: false,
+  audioOutputDevice: 'default',
   minimizeToTray: true,
   desktopLyrics: false,
+  desktopLyricsFont: '',
   spectrum: false,
   spectrumScale: 1,
   spectrumInfoScale: 1.25,
@@ -15,6 +20,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumSigmaSmoothing: 0.335,
   spectrumAvDelayMs: 590,
   spectrumLocked: true,
+  autoStart: false,
+  preventAppSuspension: false,
   hotkeyIntroSeen: false
 });
 
@@ -34,8 +41,15 @@ export const sanitizeSettings = (patch) => {
       continue;
     }
 
+    if (key === 'playbackRate') {
+      const number = Number(value);
+      if (Number.isFinite(number) && PLAYBACK_RATES.includes(number)) next.playbackRate = number;
+      continue;
+    }
+
     if (key === 'minimizeToTray' || key === 'desktopLyrics' || key === 'spectrum'
-      || key === 'spectrumInfoVisible' || key === 'spectrumLocked' || key === 'hotkeyIntroSeen') {
+      || key === 'spectrumInfoVisible' || key === 'spectrumLocked' || key === 'hotkeyIntroSeen'
+      || key === 'loudnessNormalization' || key === 'autoStart' || key === 'preventAppSuspension') {
       if (typeof value === 'boolean') next[key] = value;
       continue;
     }
@@ -71,6 +85,14 @@ export const sanitizeSettings = (patch) => {
 
     if (key === 'dataSource') {
       if (DATA_SOURCE_VALUES.includes(value)) next.dataSource = value;
+      continue;
+    }
+
+    if (key === 'audioOutputDevice') {
+      // 设备 ID 为浏览器枚举值，仅做长度与字符白名单限制
+      if (typeof value === 'string' && value.length <= 128 && /^[A-Za-z0-9._\-:=+/]*$/.test(value)) {
+        next.audioOutputDevice = value || 'default';
+      }
       continue;
     }
 

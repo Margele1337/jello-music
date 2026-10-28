@@ -135,6 +135,16 @@ watch(() => player.playing, () => {
   if (settings.spectrum) refreshSpectrum();
 });
 
+watch(() => settings.playbackRate, (rate) => {
+  player.setPlaybackRate(Number(rate) || 1);
+});
+watch(() => settings.loudnessNormalization, (enabled) => {
+  player.applyLoudnessSetting(enabled);
+});
+watch(() => settings.audioOutputDevice, (deviceId) => {
+  player.applyOutputDevice(deviceId);
+});
+
 const isInteractive = (target) => (
   ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target?.tagName)
   || target?.isContentEditable
@@ -186,6 +196,12 @@ onMounted(async () => {
   if (settings.desktopLyrics) {
     void loadDesktopLyrics();
     startDesktopLyrics();
+  }
+  if (Number.isFinite(Number(settings.playbackRate)) && Number(settings.playbackRate) !== 1) {
+    player.setPlaybackRate(Number(settings.playbackRate));
+  }
+  if (settings.audioOutputDevice && settings.audioOutputDevice !== 'default') {
+    player.applyOutputDevice(settings.audioOutputDevice);
   }
 });
 

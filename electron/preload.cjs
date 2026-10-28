@@ -2,7 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('jello', {
   app: {
-    getVersion: () => ipcRenderer.invoke('app:version')
+    getVersion: () => ipcRenderer.invoke('app:version'),
+    openLogs: () => ipcRenderer.invoke('app:open-logs')
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
