@@ -1,5 +1,7 @@
-const LIKED_NAMES = new Set(['我喜欢', '我喜欢的音乐']);
+const LIKED_NAMES = new Set(['我的喜欢', '我喜欢', '我喜欢的音乐']);
 const RESERVED_NAMES = new Set(['每日推荐', '歌词', '设置']);
+
+const displayName = (playlist) => String(playlist?.name || '').trim();
 
 const toPlaylistItem = (playlist, name) => ({
   key: `pl-${playlist.id}`,
@@ -18,17 +20,20 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
   items.push({ key: 'daily', type: 'daily', name: '每日推荐' });
 
   const source = Array.isArray(playlists) ? playlists : [];
-  const liked = source.find((playlist) => playlist?.isDefault)
-    || source.find((playlist) => String(playlist?.name || '').trim() === '我喜欢')
-    || source.find((playlist) => String(playlist?.name || '').trim() === '我喜欢的音乐');
+  const liked = source.find((playlist) => displayName(playlist) === '我的喜欢')
+    || source.find((playlist) => playlist?.isDefault)
+    || source.find((playlist) => displayName(playlist) === '我喜欢')
+    || source.find((playlist) => displayName(playlist) === '我喜欢的音乐');
+  // 入口名称沿用“我喜欢”，但优先绑定到用户有歌曲的“我的喜欢”歌单
+  const likedLabel = '我喜欢';
 
   const seenIds = new Set();
   const seenNames = new Set(RESERVED_NAMES);
 
   if (liked?.id) {
     seenIds.add(liked.id);
-    seenNames.add('我喜欢');
-    items.push(toPlaylistItem(liked, '我喜欢'));
+    seenNames.add(likedLabel);
+    items.push(toPlaylistItem(liked, likedLabel));
   }
 
   for (const playlist of source) {
