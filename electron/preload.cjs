@@ -51,7 +51,19 @@ contextBridge.exposeInMainWorld('jello', {
       const handler = (_event, docked) => callback(docked);
       ipcRenderer.on('window:dock-changed', handler);
       return () => ipcRenderer.removeListener('window:dock-changed', handler);
-    }
+    },
+    onAnimateTo: (callback) => {
+      const handler = (_event, target) => callback(target);
+      ipcRenderer.on('window:animate-to', handler);
+      return () => ipcRenderer.removeListener('window:animate-to', handler);
+    },
+    onAnimateStop: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('window:animate-stop', handler);
+      return () => ipcRenderer.removeListener('window:animate-stop', handler);
+    },
+    sendAnimatePosition: (pos) => ipcRenderer.send('window:animate-position', pos),
+    sendAnimateDone: () => ipcRenderer.send('window:animate-done')
   },
   updates: {
     get: () => ipcRenderer.invoke('update:get'),

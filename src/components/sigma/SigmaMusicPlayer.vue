@@ -301,6 +301,77 @@ const translucent = computed(() => docked.value && !undockRequested.value);
 let unsubscribeDock = null;
 let revealTimer = null;
 
+/* ================= 窗口进出动画（rAF 与显示器垂直同步；主进程 150ms 收不到帧则接管）
+   原版 updatePanelDimensions：var7 = dt / 18.10361ms，x 每帧 0.25 × var7、y 0.2 × var7，
+   按方向夹到目标。收起期间窗口离屏 rAF 会被节流，主进程用同一公式接管推进。 */
+let animateRaf = null;
+let animateActive = false;
+let unsubscribeAnimateTo = null;
+let unsubscribeAnimateStop = null;
+
+const stopWindowAnimation = (notifyMain = false) => {
+  animateActive = false;
+  if (animateRaf !== null) {
+    cancelAnimationFrame(animateRaf);
+    animateRaf = null;
+  }
+  if (notifyMain) {
+    window.jello?.windowControl?.sendAnimateDone?.();
+  }
+};
+
+const startWindowAnimation = (target) => {
+  if (!target) return;
+  stopWindowAnimation();
+  animateActive = true;
+
+  let currentX = Number(target.fromX);
+  let currentY = Number(target.fromY);
+  if (!Number.isFinite(currentX)) currentX = window.screenX;
+  if (!Number.isFinite(currentY)) currentY = window.screenY;
+  // 不预设 lastTime：收起期间窗口离屏 rAF 被节流，重新显示后第一帧 dt 会很大
+  // （钳到 40ms → frameFactor 2.2，一步走出 45% 路程），表现为「弹出时猛跳一下」。
+  // 第一帧用最小步长。
+  let lastTime = 0;
+
+  const step = (now) => {
+    if (!animateActive) return;
+    let dt;
+    if (!lastTime) {
+      lastTime = now;
+      dt = 1;
+    } else {
+      dt = Math.min(40, Math.max(1, now - lastTime));
+      lastTime = now;
+    }
+    const frameFactor = dt / 18.10361;
+    currentX = target.x > currentX
+      ? Math.min(currentX + (target.x - currentX) * 0.25 * frameFactor, target.x)
+      : Math.max(currentX + (target.x - currentX) * 0.25 * frameFactor, target.x);
+    currentY = target.y > currentY
+      ? Math.min(currentY + (target.y - currentY) * 0.2 * frameFactor, target.y)
+      : Math.max(currentY + (target.y - currentY) * 0.2 * frameFactor, target.y);
+
+    if (Math.abs(target.x - currentX) < 0.5 && Math.abs(target.y - currentY) < 0.5) {
+      window.jello?.windowControl?.sendAnimatePosition?.({ x: target.x, y: target.y });
+      window.jello?.windowControl?.sendAnimateDone?.();
+      animateActive = false;
+      animateRaf = null;
+      return;
+    }
+
+    window.jello?.windowControl?.sendAnimatePosition?.({ x: currentX, y: currentY });
+    animateRaf = requestAnimationFrame(step);
+  };
+
+  animateRaf = requestAnimationFrame(step);
+};
+
+if (window.jello?.windowControl) {
+  unsubscribeAnimateTo = window.jello.windowControl.onAnimateTo?.(startWindowAnimation) || null;
+  unsubscribeAnimateStop = window.jello.windowControl.onAnimateStop?.(() => stopWindowAnimation()) || null;
+}
+
 
 const restoreWindow = () => {
   undockRequested.value = true;
@@ -356,8 +427,13 @@ onBeforeUnmount(() => {
   tickTimer = null;
   if (revealTimer) clearTimeout(revealTimer);
   revealTimer = null;
+  stopWindowAnimation();
   unsubscribeDock?.();
+  unsubscribeAnimateTo?.();
+  unsubscribeAnimateStop?.();
   unsubscribeDock = null;
+  unsubscribeAnimateTo = null;
+  unsubscribeAnimateStop = null;
 });
 </script>
 

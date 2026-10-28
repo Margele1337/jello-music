@@ -18,7 +18,7 @@ import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
 import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
 import { setThumbarButtons } from '../windows/thumbarButtons.js';
-import { isMainWindowDocked, restoreMainWindow, toggleMainWindowDock } from '../windows/sigmaDock.js';
+import { isMainWindowDocked, restoreMainWindow, toggleMainWindowDock, applyAnimatePosition, finishAnimate } from '../windows/sigmaDock.js';
 import {
   checkForUpdates,
   downloadUpdate,
@@ -272,6 +272,16 @@ export const registerIpc = (getWindow) => {
   ipcMain.on(IPC.WINDOW_RESTORE, (event) => {
     if (!isTrustedSender(event, getWindow())) return;
     restoreMainWindow();
+  });
+
+  ipcMain.on(IPC.WINDOW_ANIMATE_POSITION, (event, pos) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    applyAnimatePosition(Number(pos?.x), Number(pos?.y));
+  });
+
+  ipcMain.on(IPC.WINDOW_ANIMATE_DONE, (event) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    finishAnimate();
   });
 
   ipcMain.handle(IPC.UPDATE_GET, (event) => {

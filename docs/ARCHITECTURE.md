@@ -156,11 +156,19 @@ is unsigned and SmartScreen warnings remain.
 
 The main process owns the window dock state. `right Shift` (global, polled via
 `GetAsyncKeyState`) or the visible 41 px strip toggles between the normal position
-and a 40 px visible strip at the right edge of the current display. The window
-slides with an ease-out animation; the renderer receives `window:dock-changed`
-and fades the Sigma UI to 50% while docked. The strip click sends
-`window:restore`; tray "show" also restores a docked window. The poll only reads
-the Shift virtual-key state and never installs a keyboard hook.
+and a 40 px visible strip at the right edge of the current display. The slide
+animation is renderer-rAF driven and replicates the original
+`updatePanelDimensions`: each frame `x += (target - x) * 0.25 * (dt / 18.10361ms)`
+and `y` with a 0.2 factor, so the motion is an exponential approach synced to
+the display. If the renderer stops sending frames for 150 ms (window off-screen,
+rAF throttled), the main process takes over with the same formula on a 4 ms tick.
+Toggles are throttled to 120 ms; a running animation is cancelled and reversed
+from the current position. Revealing the panel raises it above other windows for
+600 ms (held while a fullscreen app is foreground, then dropped). The renderer
+receives `window:dock-changed` and fades the Sigma UI to 50% while docked. The
+strip click sends `window:restore`; tray "show" also restores a docked window.
+The poll only reads the Shift virtual-key state and never installs a keyboard
+hook.
 
 ## Updates
 

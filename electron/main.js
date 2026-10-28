@@ -14,6 +14,7 @@ import { initGlobalShortcuts, stopGlobalShortcuts } from './services/globalShort
 import {
   initDockController,
   isMainWindowDocked,
+  raiseMainWindow,
   resetDockState,
   restoreMainWindow,
   stopDockAnimation,
@@ -46,8 +47,8 @@ function showMainWindow() {
     return;
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  // 呼出即视为用户要面板在前：置顶 600ms（全屏前台时保持），再自动降回
+  raiseMainWindow();
   if (isMainWindowDocked()) restoreMainWindow();
 }
 
@@ -56,7 +57,10 @@ function handleRightShift() {
     showMainWindow();
     return;
   }
+  const wasDocked = isMainWindowDocked();
   toggleMainWindowDock();
+  // 与旧版 toggleSigmaWindowFromHotkey 一致：滑出后置顶，否则按了像没反应
+  if (wasDocked && !isMainWindowDocked()) raiseMainWindow();
 }
 
 function sendPlayerCommand(command) {
@@ -80,6 +84,8 @@ function createWindow() {
     height: 600,
     minWidth: 800,
     minHeight: 600,
+    maxWidth: 800,
+    maxHeight: 600,
     useContentSize: true,
     show: false,
     icon: path.join(__dirname, 'assets', 'app-icon.png'),
