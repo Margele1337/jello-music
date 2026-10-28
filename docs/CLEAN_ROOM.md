@@ -58,6 +58,7 @@ Conservative classification for this clean-room project:
 | Roboto atlas font | Google Fonts / google/fonts | SIL OFL 1.1 | 2026-10-27 | Import check |
 | KuGouMusicApi sidecar | MakcRe/KuGouMusicApi | MIT | 2026-10-27 | Import check |
 | Jello/Sigma app & tray icon | Owner-authored Jello branding (stored in the legacy repo) | MIT (owner-authorized) | 2026-10-28 | Owner |
+| Spectrum HUD / FFT / AudioWorklet | Owner-authored sigmarebase spectrum (ported from the legacy repo with owner authorization) | MIT (owner-authorized) | 2026-10-28 | Owner |
 
 ## Limits
 

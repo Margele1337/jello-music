@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('jello', {
     }
   },
   spectrum: {
-    update: (bands) => ipcRenderer.send('spectrum:update', bands)
+    update: (payload) => ipcRenderer.send('spectrum:update', payload)
   },
   updates: {
     get: () => ipcRenderer.invoke('update:get'),

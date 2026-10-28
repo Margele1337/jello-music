@@ -5,18 +5,28 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
-let hudWindow = null;
-let lastBands = null;
+const REFERENCE_HEIGHT = 1080;
+const BASE_HEIGHT = 280;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 4;
 
-const position = () => {
+let hudWindow = null;
+let lastData = null;
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const geometry = () => {
   const display = screen.getPrimaryDisplay();
-  const width = Math.min(900, Math.max(600, Math.round(display.workArea.width * 0.62)));
-  const height = 150;
+  const factor = display.scaleFactor > 0 ? display.scaleFactor : 1;
+  const pixelHeight = display.size.height * factor;
+  const pixelScale = clamp(pixelHeight / REFERENCE_HEIGHT, MIN_SCALE, MAX_SCALE);
+  const dipScale = pixelScale / factor;
+  const height = Math.min(display.workArea.height, Math.round(BASE_HEIGHT * dipScale));
   return {
-    width,
+    width: display.workArea.width,
     height,
-    x: display.workArea.x + Math.round((display.workArea.width - width) / 2),
-    y: display.workArea.y + 40
+    x: display.workArea.x,
+    y: display.workArea.y + display.workArea.height - height
   };
 };
 
@@ -31,7 +41,7 @@ export const showSpectrumHud = () => {
   }
 
   hudWindow = new BrowserWindow({
-    ...position(),
+    ...geometry(),
     show: false,
     frame: false,
     transparent: true,
@@ -51,11 +61,13 @@ export const showSpectrumHud = () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
+      webSecurity: true,
+      backgroundThrottling: false
     }
   });
 
-  hudWindow.setAlwaysOnTop(true, 'floating');
+  hudWindow.setAlwaysOnTop(true, 'screen-saver');
+  hudWindow.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
   hudWindow.setIgnoreMouseEvents(true, { forward: true });
 
   hudWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -68,7 +80,7 @@ export const showSpectrumHud = () => {
   });
 
   hudWindow.webContents.on('did-finish-load', () => {
-    if (lastBands) hudWindow?.webContents.send('spectrum:data', lastBands);
+    if (lastData) hudWindow?.webContents.send('spectrum:data', lastData);
   });
 
   hudWindow.once('ready-to-show', () => hudWindow?.showInactive());
@@ -90,7 +102,7 @@ export const showSpectrumHud = () => {
 export const destroySpectrumHud = () => {
   if (hudWindow && !hudWindow.isDestroyed()) hudWindow.destroy();
   hudWindow = null;
-  lastBands = null;
+  lastData = null;
 };
 
 export const syncSpectrumHud = (enabled) => {
@@ -100,9 +112,9 @@ export const syncSpectrumHud = (enabled) => {
 
 export const getSpectrumWindow = () => hudWindow;
 
-export const sendSpectrumBands = (bands) => {
-  lastBands = bands;
+export const sendSpectrumData = (data) => {
+  lastData = data;
   if (!hudWindow || hudWindow.isDestroyed()) return;
   if (hudWindow.webContents.isLoading()) return;
-  hudWindow.webContents.send('spectrum:data', bands);
+  hudWindow.webContents.send('spectrum:data', data);
 };

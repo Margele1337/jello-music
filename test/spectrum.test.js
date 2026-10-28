@@ -1,36 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SPECTRUM_BANDS,
-  SPECTRUM_MAX,
-  sanitizeSpectrumBands
+  SPECTRUM_BAR_COUNT,
+  SPECTRUM_MAX_LEVEL,
+  sanitizeSpectrumPayload
 } from '../shared/spectrum.js';
-import { computeBands } from '../src/services/audio/spectrum.js';
 
-test('spectrum sanitizer clamps, rounds, and pads bands', () => {
-  const bands = sanitizeSpectrumBands([12.6, -5, 999, 'x', 4], 8);
-  assert.equal(bands.length, 8);
-  assert.deepEqual(bands, [13, 0, 255, 0, 4, 0, 0, 0]);
-  assert.equal(SPECTRUM_MAX, 255);
+test('spectrum sanitizer clamps and pads the 114 FFT levels', () => {
+  const payload = sanitizeSpectrumPayload({
+    levels: [12.5, -5, 99999999, 'x', 4],
+    reset: true,
+    cover: 'cover.jpg',
+    title: '晴天',
+    author: '周杰伦',
+    playing: true
+  });
+
+  assert.equal(payload.levels.length, SPECTRUM_BAR_COUNT);
+  assert.equal(payload.levels[0], 12.5);
+  assert.equal(payload.levels[1], 0);
+  assert.equal(payload.levels[2], SPECTRUM_MAX_LEVEL);
+  assert.equal(payload.levels[3], 0);
+  assert.equal(payload.levels[4], 4);
+  assert.equal(payload.reset, true);
+  assert.equal(payload.cover, 'cover.jpg');
+  assert.equal(payload.title, '晴天');
+  assert.equal(payload.playing, true);
 });
 
-test('spectrum sanitizer returns a zero array for malformed input', () => {
-  assert.deepEqual(sanitizeSpectrumBands(null), new Array(SPECTRUM_BANDS).fill(0));
-  assert.deepEqual(sanitizeSpectrumBands('nope', 3), [0, 0, 0]);
+test('spectrum sanitizer drops optional metadata when absent', () => {
+  const payload = sanitizeSpectrumPayload({ levels: [] });
+  assert.deepEqual(payload.levels, new Array(SPECTRUM_BAR_COUNT).fill(0));
+  assert.equal(payload.playing, false);
+  assert.equal('cover' in payload, false);
+  assert.equal('reset' in payload, false);
 });
 
-test('computeBands produces bounded log-spaced bands', () => {
-  const silent = computeBands(new Uint8Array(1024), 48000, 48);
-  assert.equal(silent.length, 48);
-  assert.ok(silent.every((value) => value === 0));
-
-  const loud = new Uint8Array(1024).fill(255);
-  const bands = computeBands(loud, 48000, 48);
-  assert.equal(bands.length, 48);
-  assert.ok(bands.every((value) => value === SPECTRUM_MAX));
-
-  const low = new Uint8Array(1024);
-  low[1] = 200;
-  const lowBands = computeBands(low, 48000, 48);
-  assert.ok(lowBands[0] > lowBands[47]);
+test('spectrum sanitizer tolerates malformed input', () => {
+  assert.equal(sanitizeSpectrumPayload(null).levels.length, SPECTRUM_BAR_COUNT);
+  assert.equal(sanitizeSpectrumPayload('nope').playing, false);
 });

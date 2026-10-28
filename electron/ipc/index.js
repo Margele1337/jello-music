@@ -8,8 +8,8 @@ import { restartSidecar } from '../services/sidecar.js';
 import { syncTray } from '../tray.js';
 import { syncDesktopLyrics, sendDesktopLyricsState } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricState } from '../../shared/desktopLyrics.js';
-import { sanitizeSpectrumBands } from '../../shared/spectrum.js';
-import { sendSpectrumBands, syncSpectrumHud } from '../windows/spectrumHud.js';
+import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
+import { sendSpectrumData, syncSpectrumHud } from '../windows/spectrumHud.js';
 import {
   checkForUpdates,
   downloadUpdate,
@@ -97,9 +97,9 @@ export const registerIpc = (getWindow) => {
     sendDesktopLyricsState(sanitizeDesktopLyricState(state));
   });
 
-  ipcMain.on(IPC.SPECTRUM_UPDATE, (event, bands) => {
+  ipcMain.on(IPC.SPECTRUM_UPDATE, (event, payload) => {
     if (!isTrustedSender(event, getWindow())) return;
-    sendSpectrumBands(sanitizeSpectrumBands(bands));
+    sendSpectrumData(sanitizeSpectrumPayload(payload));
   });
 
   ipcMain.handle(IPC.UPDATE_GET, (event) => {

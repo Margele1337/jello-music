@@ -68,10 +68,12 @@ api/                 KuGouMusicApi git submodule (MIT)
    song's LRC, then pushes a change-only `{title, artist, current, next, playing}`
    state to main. Main sanitizes it and forwards it to a transparent, always-on-top,
    click-through window whose preload exposes only the state subscription.
-8. With the spectrum HUD enabled, the main renderer taps the shared audio element
-   with a Web Audio `AnalyserNode` (CORS-enabled media), computes 48 log-spaced
-   bands at ~30 fps, and sends them to main. Main clamps/pads the array and
-   forwards it to the click-through HUD, which renders mirrored bars.
+8. With the spectrum HUD enabled, the owner-authored spectrum pipeline taps the
+   shared audio element with an `AudioWorklet` (CORS-enabled media), performs the
+   sigmarebase-style 1024-point FFT on each MP3 frame, and sends 114 raw levels
+   plus song metadata to main. Main clamps/pads the levels and forwards them to
+   the click-through HUD, which renders the gray bars, blurred-cover overlay, and
+   bottom-left song info.
 
 ## API flow
 

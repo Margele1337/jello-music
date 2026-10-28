@@ -1,104 +1,299 @@
+<template>
+  <div class="spectrum-hud" :style="{ '--info-scale': infoScale }">
+    <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
+    <div class="spectrum-info" v-show="infoVisible && (title || cover)">
+      <img v-if="cover" class="cover" :src="cover" alt="" />
+      <div class="meta" v-if="title">
+        <div class="title">{{ title }}</div>
+        <div class="author" v-if="author">{{ author }}</div>
+      </div>
+    </div>
+  </div>
+</template>
+
 <script setup>
+// 所有者原创频谱 HUD（sigmarebase MusicManager renderSpectrum）移植：
+// 114 条灰色底条 + 模糊封面条叠加，左下角封面/歌名信息。
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
+const BAR_COUNT = 114;
+const SPECTRUM_SMOOTHING = 0.335;
+const REFERENCE_DISPLAY_HEIGHT = 1080;
+const REFERENCE_GAME_HEIGHT = 1009;
+const REFERENCE_BAR_RATIO = REFERENCE_GAME_HEIGHT / REFERENCE_DISPLAY_HEIGHT;
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const detectDisplayScale = () => {
+  const pixelHeight = (window.screen?.height || 0) * (window.devicePixelRatio || 1);
+  return pixelHeight ? clamp(pixelHeight / REFERENCE_DISPLAY_HEIGHT, 0.5, 4) : 1;
+};
+
+let displayScale = detectDisplayScale();
+const infoScale = 1.25;
+const infoVisible = true;
+
 const canvasRef = ref(null);
-let target = new Uint8Array(48);
-let displayed = new Float32Array(48);
-let frame = null;
-let unsubscribe = null;
+const cover = ref('');
+const title = ref('');
+const author = ref('');
+
+const levels = new Float32Array(BAR_COUNT);
+const targets = new Float32Array(BAR_COUNT);
+const heights = new Float32Array(BAR_COUNT);
+const barStyles = new Array(BAR_COUNT);
+for (let i = 0; i < BAR_COUNT; i += 1) {
+  barStyles[i] = `rgba(153, 153, 153, ${(0.2 * (1 - (i + 1) / BAR_COUNT)).toFixed(4)})`;
+}
+
+let lastDrawTime = 0;
+let raf = null;
+let pendingSnap = false;
+const spectrumScale = 1;
+const spectrumSmoothing = SPECTRUM_SMOOTHING;
+
+let coverImage = null;
+let blurredCover = null;
+let blurredCoverStrip = null;
+let coverLoadToken = 0;
+
+const bumpCoverUrl = (url) => (typeof url === 'string'
+  ? url.replace('/150/', '/480/').replace('{size}', '480')
+  : url);
+
+const loadCover = (url) => {
+  if (!url) {
+    coverLoadToken += 1;
+    coverImage = null;
+    blurredCover = null;
+    blurredCoverStrip = null;
+    return;
+  }
+  if (url === coverImage?.src) return;
+
+  const token = ++coverLoadToken;
+  coverImage = null;
+  blurredCover = null;
+  blurredCoverStrip = null;
+
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.onload = () => {
+    if (token !== coverLoadToken) return;
+    coverImage = image;
+    try {
+      const canvas = document.createElement('canvas');
+      const width = 400;
+      const height = Math.max(1, Math.round((width * image.naturalHeight) / image.naturalWidth));
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.filter = 'blur(15px)';
+      ctx.drawImage(image, 0, 0, width, height);
+      blurredCover = canvas;
+
+      const stripHeight = Math.max(1, Math.round(height * 0.2));
+      const strip = document.createElement('canvas');
+      strip.width = width;
+      strip.height = stripHeight;
+      const stripCtx = strip.getContext('2d');
+      stripCtx.drawImage(canvas, 0, Math.round(height * 0.75), width, stripHeight, 0, 0, width, stripHeight);
+      blurredCoverStrip = strip;
+    } catch {
+      blurredCover = null;
+      blurredCoverStrip = null;
+    }
+  };
+  image.onerror = () => {
+    if (token !== coverLoadToken) return;
+    coverImage = null;
+    blurredCover = null;
+    blurredCoverStrip = null;
+  };
+  image.src = url;
+};
 
 const resizeCanvas = () => {
   const canvas = canvasRef.value;
   if (!canvas) return;
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const width = Math.max(1, Math.round(canvas.clientWidth * dpr));
-  const height = Math.max(1, Math.round(canvas.clientHeight * dpr));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
+  const dpr = window.devicePixelRatio || 1;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
 };
 
-const draw = () => {
+const draw = (now = performance.now()) => {
+  raf = requestAnimationFrame(draw);
   const canvas = canvasRef.value;
   if (!canvas) return;
-  resizeCanvas();
-
   const ctx = canvas.getContext('2d');
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const width = canvas.width / dpr;
-  const height = canvas.height / dpr;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!ctx) return;
+
+  const width = canvas.width;
+  const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
 
-  if (displayed.length !== target.length) {
-    displayed = new Float32Array(target.length);
+  const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 1000 / 60;
+  lastDrawTime = now;
+
+  const tauMs = 1000 / (Math.max(0.001, spectrumSmoothing) * 60);
+  const alpha = Math.min(1, 1 - Math.exp(-dt / tauMs));
+  for (let i = 0; i < BAR_COUNT; i += 1) {
+    const next = levels[i] + (targets[i] - levels[i]) * alpha;
+    levels[i] = Number.isFinite(next) ? Math.max(0, Math.min(2.256e7, next)) : 0;
   }
 
-  const count = target.length;
-  const gap = Math.max(2, (width / count) * 0.32);
-  const barWidth = Math.max(1, (width - gap * (count - 1)) / count);
-  const center = height / 2;
-  const maxBar = center - 10;
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, 'rgba(255, 105, 180, 0.9)');
-  gradient.addColorStop(0.5, 'rgba(254, 254, 254, 0.95)');
-  gradient.addColorStop(1, 'rgba(255, 105, 180, 0.9)');
-  ctx.fillStyle = gradient;
-
-  for (let index = 0; index < count; index += 1) {
-    const next = Number(target[index]) || 0;
-    displayed[index] += (next - displayed[index]) * 0.3;
-    const barHeight = Math.max(0, (displayed[index] / 255) * maxBar);
-    ctx.fillRect(index * (barWidth + gap), center - barHeight, barWidth, barHeight * 2);
+  const barWidth = Math.ceil(width / BAR_COUNT);
+  const sigmaAmp = REFERENCE_BAR_RATIO * displayScale * spectrumScale;
+  for (let i = 0; i < BAR_COUNT; i += 1) {
+    const refHeight = Math.sqrt(levels[i]) / 12 - 5;
+    heights[i] = Math.min(height, Math.max(0, refHeight) * sigmaAmp);
   }
 
-  ctx.fillStyle = 'rgba(254, 254, 254, 0.1)';
-  ctx.fillRect(0, center - 0.5, width, 1);
+  for (let i = 0; i < BAR_COUNT; i += 1) {
+    const x = i * barWidth;
+    if (x >= width) break;
+    ctx.fillStyle = barStyles[i];
+    ctx.fillRect(x, height - heights[i], barWidth, heights[i]);
+  }
 
-  frame = requestAnimationFrame(draw);
+  const overlay = blurredCoverStrip || blurredCover;
+  if (overlay) {
+    ctx.save();
+    ctx.beginPath();
+    for (let i = 0; i < BAR_COUNT; i += 1) {
+      const x = i * barWidth;
+      if (x >= width) break;
+      ctx.rect(x, height - heights[i], barWidth, heights[i]);
+    }
+    ctx.clip();
+    ctx.globalAlpha = 0.4;
+    ctx.drawImage(overlay, 0, 0, width, height);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
 };
 
+let playingState = false;
+
+const applyPayload = (data) => {
+  if (!data) return;
+
+  const nowPlaying = data.playing === true;
+  if (!nowPlaying) {
+    playingState = false;
+    levels.fill(0);
+    targets.fill(0);
+  } else {
+    if (!playingState) pendingSnap = true;
+    playingState = true;
+
+    if (Array.isArray(data.levels) && data.levels.length) {
+      const count = Math.min(BAR_COUNT, data.levels.length);
+      for (let i = 0; i < count; i += 1) targets[i] = Number(data.levels[i]) || 0;
+    }
+    if (data.reset || pendingSnap) {
+      levels.set(targets);
+      pendingSnap = false;
+    }
+  }
+
+  if (data.cover != null) {
+    const url = bumpCoverUrl(data.cover);
+    if (url !== cover.value) {
+      cover.value = url;
+      loadCover(url);
+    }
+  }
+  if (data.title != null) title.value = data.title;
+  if (data.author != null) author.value = data.author;
+};
+
+let unsubscribe = null;
+
 onMounted(() => {
-  unsubscribe = window.jelloSpectrum?.onData?.((bands) => {
-    if (Array.isArray(bands)) target = bands;
-  }) || null;
-  frame = requestAnimationFrame(draw);
+  document.body.style.backgroundColor = 'transparent';
+  document.body.style.margin = '0';
+  document.body.style.overflow = 'hidden';
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  unsubscribe = window.jelloSpectrum?.onData?.(applyPayload) || null;
+  raf = requestAnimationFrame(draw);
 });
 
 onBeforeUnmount(() => {
   unsubscribe?.();
   unsubscribe = null;
-  if (frame) cancelAnimationFrame(frame);
-  frame = null;
+  if (raf) cancelAnimationFrame(raf);
+  raf = null;
+  window.removeEventListener('resize', resizeCanvas);
 });
 </script>
 
-<template>
-  <main class="spectrum-hud">
-    <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
-  </main>
-</template>
-
-<style scoped>
-:global(html),
-:global(body),
-:global(#app) {
-  background: transparent !important;
-  overflow: hidden;
-}
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: transparent; overflow: hidden; }
 
 .spectrum-hud {
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+  position: fixed;
+  inset: 0;
   user-select: none;
+  -webkit-app-region: no-drag;
 }
 
 .spectrum-canvas {
+  position: absolute;
+  inset: 0;
   display: block;
-  width: 100%;
-  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.spectrum-info {
+  position: absolute;
+  left: calc(14px * var(--info-scale, 1.25));
+  bottom: calc(12px * var(--info-scale, 1.25));
+  display: flex;
+  align-items: center;
+  gap: calc(10px * var(--info-scale, 1.25));
+  pointer-events: none;
+}
+
+.spectrum-info .cover {
+  width: calc(64px * var(--info-scale, 1.25));
+  height: calc(64px * var(--info-scale, 1.25));
+  border-radius: calc(10px * var(--info-scale, 1.25));
+  object-fit: cover;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+.spectrum-info .meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.spectrum-info .title {
+  color: #fff;
+  font-family: 'JetBrains Mono', Consolas, 'Microsoft YaHei', monospace;
+  font-size: calc(15px * var(--info-scale, 1.25));
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spectrum-info .author {
+  color: rgba(255, 255, 255, 0.75);
+  font-family: 'JetBrains Mono', Consolas, 'Microsoft YaHei', monospace;
+  font-size: calc(12px * var(--info-scale, 1.25));
+  white-space: nowrap;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

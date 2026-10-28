@@ -5,7 +5,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getLyrics } from './services/api/library.js';
-import { startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
+import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
 import { useAuthStore } from './stores/auth.js';
 import { usePlayerStore } from './stores/player.js';
 import { useSettingsStore } from './stores/settings.js';
@@ -103,7 +103,7 @@ watch(() => player.playing, () => {
   if (settings.desktopLyrics) pushDesktopState(true);
 });
 
-const sendSpectrum = (bands) => window.jello?.spectrum?.update?.(bands);
+const sendSpectrum = (payload) => window.jello?.spectrum?.update?.(payload);
 
 const syncSpectrum = () => {
   if (settings.spectrum) {
@@ -111,13 +111,23 @@ const syncSpectrum = () => {
       player.audio.crossOrigin = 'anonymous';
       player.reloadCurrent();
     }
-    startSpectrum(player.audio, sendSpectrum);
+    void startSpectrum(player.audio, {
+      getSong: () => player.currentSong,
+      isPlaying: () => player.playing,
+      send: sendSpectrum
+    });
   } else {
     stopSpectrum(sendSpectrum);
   }
 };
 
 watch(() => settings.spectrum, syncSpectrum);
+watch(() => player.currentSong?.hash, () => {
+  if (settings.spectrum) refreshSpectrum();
+});
+watch(() => player.playing, () => {
+  if (settings.spectrum) refreshSpectrum();
+});
 
 const isInteractive = (target) => (
   ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target?.tagName)
