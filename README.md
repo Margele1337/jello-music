@@ -2,14 +2,6 @@
 
 Clean-room, MIT-licensed desktop client for Kugou Music.
 
-This repository is an independent implementation. It is **not** a fork of
-MoeKoeMusic, MoeKoe-NextGen, or the legacy Jello Music GPL repository, and it
-must not contain code copied from them.
-
-- Legacy GPL-2.0 app (releases + source archive):
-  https://github.com/Margele1337/jello-music-temp
-- This repository: https://github.com/Margele1337/jello-music
-
 ## Status
 
 Sigma player backed by the real KuGou API:
