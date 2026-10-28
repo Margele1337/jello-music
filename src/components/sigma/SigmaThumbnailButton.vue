@@ -8,10 +8,10 @@
     <img class="sigma-thumbnail-cover" :src="cover" loading="lazy" alt="" />
     <img class="sigma-thumbnail-cover-blur" :src="cover" loading="lazy" alt="" />
     <img class="sigma-thumbnail-play" :src="playIcon" alt="" />
-    <SigmaText v-if="type === 'playlist'" class="sigma-thumbnail-title single" :text="title" :size="12" family="sans" :box-width="183" :box-height="13" truncate align="center" />
+    <SigmaText v-if="type === 'playlist'" class="sigma-thumbnail-title single" :text="title" :size="14" family="sans" :box-width="183" :box-height="15" truncate align="center" />
     <template v-else>
-      <SigmaText class="sigma-thumbnail-title" :text="title" :size="12" family="sans" :box-width="183" :box-height="13" truncate align="center" />
-      <SigmaText class="sigma-thumbnail-artist" :text="artist" :size="12" family="sans" :box-width="183" :box-height="13" truncate align="center" />
+      <SigmaText class="sigma-thumbnail-title" :text="title" :size="14" family="sans" :box-width="183" :box-height="15" truncate align="center" />
+      <SigmaText class="sigma-thumbnail-artist" :text="artist" :size="14" family="sans" :box-width="183" :box-height="15" truncate align="center" />
     </template>
   </button>
 </template>
@@ -99,8 +99,8 @@ defineEmits(['click']);
   right: 0;
   /* 与 sigmarebase 一致：Jello 原版字体 */
   font-family: 'SigmaLight', sans-serif;
-  font-size: 12px;
-  line-height: 13px;
+  font-size: 14px;
+  line-height: 15px;
   color: #fefefe;
   text-align: center;
   white-space: nowrap;
@@ -109,14 +109,14 @@ defineEmits(['click']);
 }
 
 .sigma-thumbnail-title {
-  top: 181px;
+  top: 179px;
 }
 
 .sigma-thumbnail-title.single {
-  top: 187px;
+  top: 186px;
 }
 
 .sigma-thumbnail-artist {
-  top: 194px;
+  top: 196px;
 }
 </style>

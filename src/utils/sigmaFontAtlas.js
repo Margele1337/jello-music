@@ -9,6 +9,7 @@ const META_IMPORTS = {
   'light-40': () => import('../assets/sigma/fonts/atlas-light-40.json'),
   // sans：Java 逻辑字体，对应 ResourceRegistry.getChineseFont（缩略图卡片/输入框用）
   'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.json'),
+  'sans-14': () => import('../assets/sigma/fonts/atlas-sans-14.json'),
   'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.json')
 };
 
@@ -20,15 +21,18 @@ const PNG_IMPORTS = {
   'light-25': () => import('../assets/sigma/fonts/atlas-light-25.png?url'),
   'light-40': () => import('../assets/sigma/fonts/atlas-light-40.png?url'),
   'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.png?url'),
+  'sans-14': () => import('../assets/sigma/fonts/atlas-sans-14.png?url'),
   'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.png?url')
 };
 
 // 高 DPI：1x 位图在 dpr=1.5/2 的屏幕上会被浏览器整体放大，文字发虚/带锯齿。
 // 这里按需改用同一套 Java2D 参数光栅化的 2x 图集（tools/font-atlas/FontAtlas.java，
 // 字号翻倍），度量统一折算回 CSS px，布局代码不需要区分密度。
-// 重新生成（只覆盖实际用到的字号）：
-//   java tools/font-atlas/FontAtlas.java src/assets/sigma/fonts/Roboto-Variable.ttf src/assets/sigma/fonts 26,28,40,80 atlas2x-light
-//   java tools/font-atlas/FontAtlas.java SansSerif src/assets/sigma/fonts 24,50 atlas2x-sans
+// 重新生成（只覆盖实际用到的字号；当前图集由 Selawik 光栅化，见 docs/CLEAN_ROOM.md）：
+//   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 12,13,14,20,25,40 atlas-light
+//   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 26,28,40,80 atlas2x-light
+//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 12,14,25 atlas-sans
+//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 24,28,50 atlas2x-sans
 const HIGH_DPI_THRESHOLD = 1.25;
 const DENSITY_2X = 2;
 
@@ -38,6 +42,7 @@ const META_IMPORTS_2X = {
   'light-20': () => import('../assets/sigma/fonts/atlas2x-light-40.json'),
   'light-40': () => import('../assets/sigma/fonts/atlas2x-light-80.json'),
   'sans-12': () => import('../assets/sigma/fonts/atlas2x-sans-24.json'),
+  'sans-14': () => import('../assets/sigma/fonts/atlas2x-sans-28.json'),
   'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.json')
 };
 
@@ -47,6 +52,7 @@ const PNG_IMPORTS_2X = {
   'light-20': () => import('../assets/sigma/fonts/atlas2x-light-40.png?url'),
   'light-40': () => import('../assets/sigma/fonts/atlas2x-light-80.png?url'),
   'sans-12': () => import('../assets/sigma/fonts/atlas2x-sans-24.png?url'),
+  'sans-14': () => import('../assets/sigma/fonts/atlas2x-sans-28.png?url'),
   'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.png?url')
 };
 
@@ -177,12 +183,19 @@ export const truncateSigmaText = (atlas, text, maxWidth, ctx = null) => {
   return result + '…';
 };
 
-// 按颜色着色（等价于 Slick 的 glColor 染色）：白色字形 + source-in 上色，带缓存
-const tintCache = new Map();
+// 按颜色着色（等价于 Slick 的 glColor 染色）：白色字形 + source-in 上色，带缓存。
+// 缓存键必须绑定图集图片本身：只看 size|density|color 会让 light-14@2 与 sans-14@2
+// 这类同字号同密度的跨字族图集串用着色位图（字形坐标对不上 → 字母错位乱码）。
+const tintCache = new WeakMap();
 const getTintedAtlas = (atlas, color) => {
   if (!color || color === '#ffffff') return atlas.image;
-  const key = atlas.size + '|' + atlas.density + '|' + color;
-  if (tintCache.has(key)) return tintCache.get(key);
+  let byColor = tintCache.get(atlas.image);
+  if (!byColor) {
+    byColor = new Map();
+    tintCache.set(atlas.image, byColor);
+  }
+  const cached = byColor.get(color);
+  if (cached) return cached;
   const canvas = document.createElement('canvas');
   canvas.width = atlas.image.width;
   canvas.height = atlas.image.height;
@@ -191,7 +204,7 @@ const getTintedAtlas = (atlas, color) => {
   ctx.globalCompositeOperation = 'source-in';
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  tintCache.set(key, canvas);
+  byColor.set(color, canvas);
   return canvas;
 };
 
