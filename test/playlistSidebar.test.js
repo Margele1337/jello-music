@@ -25,9 +25,19 @@ test('prefers the literal 我喜欢 playlist when no default flag is present', (
   assert.equal(items[1].id, 'liked');
 });
 
-test('binds the 我喜欢 entry to the 我的喜欢 playlist when present', () => {
+test('prefers the real 我喜欢 playlist over an empty default collection', () => {
   const items = buildPlaylistSidebarItems([
-    { id: 'empty-default', name: '我喜欢', isDefault: true },
+    { id: 'default', name: '默认收藏', isDefault: true },
+    { id: 'liked', name: '我喜欢', isDefault: true },
+    { id: 'other', name: '今日有酒今朝醉' }
+  ], { authenticated: true });
+
+  assert.deepEqual(names(items), ['每日推荐', '我喜欢', '今日有酒今朝醉', '歌词', '设置']);
+  assert.equal(items[1].id, 'liked');
+});
+
+test('falls back to 我的喜欢 when it is the only liked-named playlist', () => {
+  const items = buildPlaylistSidebarItems([
     { id: 'mine', name: '我的喜欢' }
   ], { authenticated: true });
 

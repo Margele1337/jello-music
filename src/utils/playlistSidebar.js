@@ -20,11 +20,11 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
   items.push({ key: 'daily', type: 'daily', name: '每日推荐' });
 
   const source = Array.isArray(playlists) ? playlists : [];
-  const liked = source.find((playlist) => displayName(playlist) === '我的喜欢')
-    || source.find((playlist) => playlist?.isDefault)
-    || source.find((playlist) => displayName(playlist) === '我喜欢')
-    || source.find((playlist) => displayName(playlist) === '我喜欢的音乐');
-  // 入口名称沿用“我喜欢”，但优先绑定到用户有歌曲的“我的喜欢”歌单
+  // is_def=1 的空“默认收藏”不能当成喜欢；优先按真实名称选择
+  const liked = source.find((playlist) => displayName(playlist) === '我喜欢')
+    || source.find((playlist) => displayName(playlist) === '我喜欢的音乐')
+    || source.find((playlist) => displayName(playlist) === '我的喜欢')
+    || source.find((playlist) => playlist?.isDefault);
   const likedLabel = '我喜欢';
 
   const seenIds = new Set();
@@ -39,8 +39,10 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
   for (const playlist of source) {
     if (!playlist?.id || seenIds.has(playlist.id)) continue;
     if (liked?.id && playlist.id === liked.id) continue;
+    if (playlist.isDefault) continue;
 
     const name = String(playlist.name || '').trim() || '歌单';
+    if (name === '默认收藏') continue;
     if (liked?.id && LIKED_NAMES.has(name)) continue;
     if (seenNames.has(name)) continue;
 
