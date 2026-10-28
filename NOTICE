@@ -5,8 +5,11 @@ Jello Music clean-room implementation
 Copyright (c) 2026 Margele1337
 License: MIT (see LICENSE)
 
-This repository is an independent implementation. It contains no code from
-MoeKoeMusic, MoeKoe-NextGen, or the legacy jello-music-temp GPL repository.
+This repository is an independent implementation. It contains no code derived
+from MoeKoeMusic or MoeKoe-NextGen. Portions whose only prior home was the
+legacy jello-music-temp repository are the repository owner's own original
+work, ported with the owner's explicit authorization; see the provenance
+sections below and docs/CLEAN_ROOM.md.
 
 Third-party components
 ----------------------
@@ -19,6 +22,8 @@ Third-party components
 - Roboto (Sigma UI CSS font): SIL Open Font License 1.1
 - Selawik (Sigma text atlas, Segoe UI metric-compatible): SIL Open Font License 1.1
   Copyright 2011 Google Inc. See src/assets/sigma/fonts/OFL.txt.
+- Feather icon geometry (settings page inline SVGs): MIT License
+  https://github.com/feathericons/feather
 - Other npm dependencies: used under their respective licenses; see
   package-lock.json and the dependency packages for full texts.
 
@@ -28,6 +33,11 @@ The Sigma UI components and Sigma image assets are the repository owner's
 original work (ported from the owner's sigmarebase UI work). They contain no
 code from MoeKoeMusic, MoeKoe-NextGen, or the legacy GPL repository. See
 docs/CLEAN_ROOM.md for provenance.
+
+The settings page layout (category chips, per-row cards, top bar with back and
+account buttons, section reset and footer) is the owner's own redesign that
+replaced the upstream sidebar settings in their legacy app; it was ported under
+the same owner authorization (2026-10-28).
 
 The Jello/Sigma name and logo are the repository owner's branding, relicensed
 for this repository under MIT (owner authorization, 2026-10-28).

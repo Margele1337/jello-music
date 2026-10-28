@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('jello', {
   app: {
+    // 设置页页脚展示「V{version} - {platform}」用，非 IPC（直接读进程常量）
+    platform: process.platform,
     getVersion: () => ipcRenderer.invoke('app:version'),
     openLogs: () => ipcRenderer.invoke('app:open-logs'),
     // 启动意图（跳转列表 --settings / 冷启动 jello:// 深链）：挂载后拉取一次即清空
