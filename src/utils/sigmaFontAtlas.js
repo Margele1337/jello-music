@@ -9,7 +9,6 @@ const META_IMPORTS = {
   'light-40': () => import('../assets/sigma/fonts/atlas-light-40.json'),
   // sans：Java 逻辑字体，对应 ResourceRegistry.getChineseFont（缩略图卡片/输入框用）
   'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.json'),
-  'sans-14': () => import('../assets/sigma/fonts/atlas-sans-14.json'),
   'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.json')
 };
 
@@ -21,20 +20,22 @@ const PNG_IMPORTS = {
   'light-25': () => import('../assets/sigma/fonts/atlas-light-25.png?url'),
   'light-40': () => import('../assets/sigma/fonts/atlas-light-40.png?url'),
   'sans-12': () => import('../assets/sigma/fonts/atlas-sans-12.png?url'),
-  'sans-14': () => import('../assets/sigma/fonts/atlas-sans-14.png?url'),
   'sans-25': () => import('../assets/sigma/fonts/atlas-sans-25.png?url')
 };
 
-// 高 DPI：1x 位图在 dpr=1.5/2 的屏幕上会被浏览器整体放大，文字发虚/带锯齿。
-// 这里按需改用同一套 Java2D 参数光栅化的 2x 图集（tools/font-atlas/FontAtlas.java，
-// 字号翻倍），度量统一折算回 CSS px，布局代码不需要区分密度。
+// 高 DPI：1x 位图在小数缩放（150%）的屏幕上会被浏览器放大，文字发虚/带锯齿；
+// 2x 位图在 150% 屏被缩到 0.75 倍会把细笔画平滑掉（字发虚、看着像缺笔画）。
+// 因此按屏幕密度挑最贴近 1:1 物理像素的一套：dpr≈1.5 优先用 1.5x 图集（若该字号有），
+// 否则回退 2x；度量统一折算回 CSS px，布局代码不需要区分密度。
 // 重新生成（只覆盖实际用到的字号；当前图集由 Selawik 光栅化，见 docs/CLEAN_ROOM.md）：
 //   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 12,13,14,20,25,40 atlas-light
 //   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 26,28,40,80 atlas2x-light
-//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 12,14,25 atlas-sans
-//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 24,28,50 atlas2x-sans
+//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 12,25 atlas-sans
+//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 24,50 atlas2x-sans
+//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 18 atlas15x-sans
 const HIGH_DPI_THRESHOLD = 1.25;
 const DENSITY_2X = 2;
+const DENSITY_1_5X = 1.5;
 
 const META_IMPORTS_2X = {
   'light-13': () => import('../assets/sigma/fonts/atlas2x-light-26.json'),
@@ -42,7 +43,6 @@ const META_IMPORTS_2X = {
   'light-20': () => import('../assets/sigma/fonts/atlas2x-light-40.json'),
   'light-40': () => import('../assets/sigma/fonts/atlas2x-light-80.json'),
   'sans-12': () => import('../assets/sigma/fonts/atlas2x-sans-24.json'),
-  'sans-14': () => import('../assets/sigma/fonts/atlas2x-sans-28.json'),
   'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.json')
 };
 
@@ -52,35 +52,51 @@ const PNG_IMPORTS_2X = {
   'light-20': () => import('../assets/sigma/fonts/atlas2x-light-40.png?url'),
   'light-40': () => import('../assets/sigma/fonts/atlas2x-light-80.png?url'),
   'sans-12': () => import('../assets/sigma/fonts/atlas2x-sans-24.png?url'),
-  'sans-14': () => import('../assets/sigma/fonts/atlas2x-sans-28.png?url'),
   'sans-25': () => import('../assets/sigma/fonts/atlas2x-sans-50.png?url')
+};
+
+// 1.5x 图集：150% 缩放屏上与物理像素 1:1（字号 ×1.5 光栅化），比 2x 缩小 0.75 更锐利
+const META_IMPORTS_15X = {
+  'sans-12': () => import('../assets/sigma/fonts/atlas15x-sans-18.json')
+};
+
+const PNG_IMPORTS_15X = {
+  'sans-12': () => import('../assets/sigma/fonts/atlas15x-sans-18.png?url')
 };
 
 const cache = new Map();
 
 const pickDensity = (key) => {
-  if (!META_IMPORTS_2X[key]) return 1;
   const dpr = typeof window === 'undefined' ? 1 : (window.devicePixelRatio || 1);
-  return dpr >= HIGH_DPI_THRESHOLD ? DENSITY_2X : 1;
+  if (dpr >= 1.75 && META_IMPORTS_2X[key]) return DENSITY_2X;
+  if (dpr >= 1.4 && META_IMPORTS_15X[key]) return DENSITY_1_5X;
+  if (dpr >= HIGH_DPI_THRESHOLD && META_IMPORTS_2X[key]) return DENSITY_2X;
+  return 1;
 };
 
-// 2x 图集的度量折算回 CSS px（字号越小，取整误差带来的偏移越明显，
+const importsFor = (density) => {
+  if (density === DENSITY_2X) return [META_IMPORTS_2X, PNG_IMPORTS_2X];
+  if (density === DENSITY_1_5X) return [META_IMPORTS_15X, PNG_IMPORTS_15X];
+  return [META_IMPORTS, PNG_IMPORTS];
+};
+
+// 高密度图集的度量折算回 CSS px（字号越小，取整误差带来的偏移越明显，
 // 因此保留小数而不是 Math.round，交给调用方现有的取整逻辑处理）
-const toCssMetrics = (meta) => {
-  const half = (value) => value / 2;
+const toCssMetrics = (meta, density) => {
+  const divide = (value) => value / density;
   const glyphs = {};
   for (const [code, glyph] of Object.entries(meta.glyphs)) {
     glyphs[code] = {
-      x: half(glyph.x),
-      y: half(glyph.y),
-      w: half(glyph.w),
-      h: half(glyph.h),
-      adv: half(glyph.adv)
+      x: divide(glyph.x),
+      y: divide(glyph.y),
+      w: divide(glyph.w),
+      h: divide(glyph.h),
+      adv: divide(glyph.adv)
     };
   }
   return {
-    lineHeight: half(meta.lineHeight),
-    ascent: half(meta.ascent),
+    lineHeight: divide(meta.lineHeight),
+    ascent: divide(meta.ascent),
     glyphs
   };
 };
@@ -92,8 +108,9 @@ export const loadSigmaAtlas = (size, family = 'light') => {
   const cacheKey = key + '@' + density;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
   const promise = (async () => {
-    const metaLoader = (density === DENSITY_2X ? META_IMPORTS_2X : META_IMPORTS)[key];
-    const pngLoader = (density === DENSITY_2X ? PNG_IMPORTS_2X : PNG_IMPORTS)[key];
+    const [metaImports, pngImports] = importsFor(density);
+    const metaLoader = metaImports[key];
+    const pngLoader = pngImports[key];
     if (!metaLoader || !pngLoader) throw new Error('no atlas for ' + key);
     const raw = (await metaLoader()).default;
     const url = (await pngLoader()).default;
@@ -103,7 +120,7 @@ export const loadSigmaAtlas = (size, family = 'light') => {
       img.onerror = () => reject(new Error('failed to load atlas image'));
       img.src = url;
     });
-    const metrics = density === DENSITY_2X ? toCssMetrics(raw) : raw;
+    const metrics = density === 1 ? raw : toCssMetrics(raw, density);
     const atlas = {
       size: Number(size),
       family,
