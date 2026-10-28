@@ -7,6 +7,7 @@ import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
 import { hasTray, initTray, syncTray } from './tray.js';
 import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from './windows/desktopLyrics.js';
+import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
@@ -111,7 +112,7 @@ app.whenReady().then(async () => {
   initSettings();
   await initAuthSession();
   initUpdater();
-  registerIpc(() => [mainWindow, getDesktopLyricsWindow()].filter(Boolean));
+  registerIpc(() => [mainWindow, getDesktopLyricsWindow(), getSpectrumWindow()].filter(Boolean));
   initTray({
     showWindow: showMainWindow,
     quit: () => {
@@ -129,6 +130,7 @@ app.whenReady().then(async () => {
   });
   createWindow();
   syncDesktopLyrics(getSettings().desktopLyrics);
+  syncSpectrumHud(getSettings().spectrum);
 
   app.on('activate', showMainWindow);
 });
@@ -141,6 +143,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   stopUpdater();
   destroyDesktopLyrics();
+  destroySpectrumHud();
   void stopSidecar();
   void Promise.race([
     flushAuthSession(),

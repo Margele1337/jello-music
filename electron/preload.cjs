@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('jello', {
       return () => ipcRenderer.removeListener('player:command', handler);
     }
   },
+  spectrum: {
+    update: (bands) => ipcRenderer.send('spectrum:update', bands)
+  },
   updates: {
     get: () => ipcRenderer.invoke('update:get'),
     check: () => ipcRenderer.invoke('update:check'),

@@ -2,9 +2,10 @@
 
 ## Decisions
 
-- **One main window** contains the Sigma UI and audio playback. The optional
-  desktop-lyrics window is a second, transparent click-through window with a
-  dedicated narrow preload; it only receives sanitized lyric text.
+- **One main window** contains the Sigma UI and audio playback. Optional
+  desktop-lyrics and spectrum-HUD windows are transparent, always-on-top,
+  click-through windows with dedicated narrow preloads; they only receive
+  sanitized lyric text or 48 spectrum band values.
 - **The main process owns settings, auth state, and API access.** The renderer
   never receives tokens, cookies, or the sidecar port.
 - **Renderer is sandboxed:** `contextIsolation: true`, `nodeIntegration: false`,
@@ -29,9 +30,10 @@ shared/
 electron/
   main.js            app/window lifecycle, sidecar lifecycle, secure webPreferences
   tray.js            tray icon/menu and minimize-to-tray controller
-  windows/           desktop-lyrics window controller
+  windows/           desktop-lyrics and spectrum-HUD window controllers
   preload.cjs        minimal contextBridge API
   preloadLyrics.cjs  desktop-lyrics-only bridge (state push)
+  preloadSpectrum.cjs spectrum-HUD-only bridge (band stream)
   security/          trusted-sender validation (main + lyrics windows)
   services/          settings store, sidecar manager, API proxy, auth session
   ipc/               IPC handlers
@@ -66,6 +68,10 @@ api/                 KuGouMusicApi git submodule (MIT)
    song's LRC, then pushes a change-only `{title, artist, current, next, playing}`
    state to main. Main sanitizes it and forwards it to a transparent, always-on-top,
    click-through window whose preload exposes only the state subscription.
+8. With the spectrum HUD enabled, the main renderer taps the shared audio element
+   with a Web Audio `AnalyserNode` (CORS-enabled media), computes 48 log-spaced
+   bands at ~30 fps, and sends them to main. Main clamps/pads the array and
+   forwards it to the click-through HUD, which renders mirrored bars.
 
 ## API flow
 
@@ -157,9 +163,10 @@ still open.
 6. In-app lyrics — done.
 7. Windows packaging with sidecar — done (unpacked build verified).
 8. Tray and minimize-to-tray — done; desktop lyrics — done.
-9. Auto-update plumbing — done (release upload/signing still open).
-10. QR + phone/SMS login — done; username/password and multi-account selection
+9. Real-time spectrum HUD — done.
+10. Auto-update plumbing — done (release upload/signing still open).
+11. QR + phone/SMS login — done; username/password and multi-account selection
     remain.
-11. Manual concept-VIP daily claim — done (never automatic).
-12. Per-launch sidecar token — done.
-13. Code signing and broader tests.
+12. Manual concept-VIP daily claim — done (never automatic).
+13. Per-launch sidecar token — done.
+14. Code signing and broader tests.

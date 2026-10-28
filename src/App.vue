@@ -5,6 +5,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { getLyrics } from './services/api/library.js';
+import { startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
 import { useAuthStore } from './stores/auth.js';
 import { usePlayerStore } from './stores/player.js';
 import { useSettingsStore } from './stores/settings.js';
@@ -102,6 +103,22 @@ watch(() => player.playing, () => {
   if (settings.desktopLyrics) pushDesktopState(true);
 });
 
+const sendSpectrum = (bands) => window.jello?.spectrum?.update?.(bands);
+
+const syncSpectrum = () => {
+  if (settings.spectrum) {
+    if (player.audio.crossOrigin !== 'anonymous') {
+      player.audio.crossOrigin = 'anonymous';
+      player.reloadCurrent();
+    }
+    startSpectrum(player.audio, sendSpectrum);
+  } else {
+    stopSpectrum(sendSpectrum);
+  }
+};
+
+watch(() => settings.spectrum, syncSpectrum);
+
 const isInteractive = (target) => (
   ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target?.tagName)
   || target?.isContentEditable
@@ -152,6 +169,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
   stopDesktopLyrics();
+  stopSpectrum(sendSpectrum);
   unsubscribeSettings?.();
   unsubscribeAuth?.();
   unsubscribePlayer?.();

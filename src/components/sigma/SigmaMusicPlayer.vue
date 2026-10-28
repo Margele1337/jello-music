@@ -41,7 +41,7 @@
     <SigmaProgressBar class="smp-progress" :percent="progressPercent" @seek="onSeek" />
 
     <!-- 频谱按钮 40x40 @ (15,460) -->
-    <SigmaSpectrumButton class="smp-spectrum" :active="spectrumOn" @click="toggleSpectrum" />
+    <SigmaSpectrumButton class="smp-spectrum" :active="spectrumEnabled" @click="$emit('toggle-spectrum')" />
 
     <!-- 搜索框 + 结果网格 -->
     <SigmaSearchBox
@@ -75,10 +75,11 @@ import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
 import SigmaText from './SigmaText.vue';
 
 const props = defineProps({
-  player: { type: Object, default: null }
+  player: { type: Object, default: null },
+  spectrumEnabled: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['request-login', 'request-settings', 'request-lyrics']);
+const emit = defineEmits(['request-login', 'request-settings', 'request-lyrics', 'toggle-spectrum']);
 
 const FONT_STYLE_ID = 'sigma-ui-fonts';
 if (typeof document !== 'undefined') {
@@ -225,12 +226,6 @@ const repeatType = computed(() => {
   if (index === 2) return 2;
   return 1;
 });
-
-const spectrumOn = ref(false);
-
-const toggleSpectrum = () => {
-  spectrumOn.value = !spectrumOn.value;
-};
 
 const searchBoxRef = ref(null);
 const temporaryPlaylist = ref(null);

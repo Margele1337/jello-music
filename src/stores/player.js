@@ -21,6 +21,8 @@ const ensureAudio = (store) => {
 
   audio = new Audio();
   audio.preload = 'auto';
+  // Spectrum sampling needs CORS-enabled media; Kugou CDNs return ACAO: *
+  audio.crossOrigin = 'anonymous';
   audio.volume = clampPercent(store?.volume ?? 100) / 100;
 
   audio.addEventListener('play', () => {

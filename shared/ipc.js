@@ -10,6 +10,8 @@ export const IPC = Object.freeze({
   PLAYER_COMMAND: 'player:command',
   DESKTOP_LYRICS_UPDATE: 'desktop-lyrics:update',
   DESKTOP_LYRICS_STATE: 'desktop-lyrics:state',
+  SPECTRUM_UPDATE: 'spectrum:update',
+  SPECTRUM_DATA: 'spectrum:data',
   UPDATE_GET: 'update:get',
   UPDATE_CHECK: 'update:check',
   UPDATE_DOWNLOAD: 'update:download',

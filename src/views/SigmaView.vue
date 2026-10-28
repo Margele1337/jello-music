@@ -13,6 +13,12 @@ player.initialize();
 
 watch(() => settings.volume, (value) => player.applyPersistedVolume(value));
 
+const toggleSpectrum = () => {
+  void settings.update({ spectrum: !settings.spectrum }).catch((error) => {
+    console.error('[SigmaView] 频谱设置保存失败:', error?.message || error);
+  });
+};
+
 const toast = ref('');
 let toastTimer = null;
 
@@ -33,9 +39,11 @@ onBeforeUnmount(() => clearTimeout(toastTimer));
     <div class="sigma-stage">
       <SigmaMusicPlayer
         :player="player"
+        :spectrum-enabled="settings.spectrum"
         @request-login="router.push('/login')"
         @request-settings="router.push('/settings')"
         @request-lyrics="router.push('/lyrics')"
+        @toggle-spectrum="toggleSpectrum"
       />
       <div v-if="toast" class="sigma-toast">{{ toast }}</div>
     </div>

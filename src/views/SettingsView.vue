@@ -77,6 +77,14 @@ const desktopLyrics = computed({
   }
 });
 
+const spectrum = computed({
+  get: () => settings.spectrum,
+  set: (value) => {
+    void settings.update({ spectrum: Boolean(value) })
+      .catch((error) => setNotice(error?.message || '保存失败'));
+  }
+});
+
 const updateText = computed(() => {
   const state = updateState.value;
   switch (state.status) {
@@ -295,6 +303,10 @@ onBeforeUnmount(() => {
       <label class="row check-row">
         <span>显示桌面歌词</span>
         <input v-model="desktopLyrics" type="checkbox" />
+      </label>
+      <label class="row check-row">
+        <span>显示频谱</span>
+        <input v-model="spectrum" type="checkbox" />
       </label>
     </section>
 
