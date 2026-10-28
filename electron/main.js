@@ -14,6 +14,13 @@ app.setName('Jello Music Clean');
 app.setPath('userData', path.join(app.getPath('appData'), 'jello-music-clean'));
 app.setAppUserModelId('cn.jello.music');
 
+// Chromium 的 Windows 网络变化探测在部分机器上会反复输出无害的
+// WSALookupServiceBegin 10108 错误；只压掉 Chromium 错误级日志，
+// 应用自身的 console/错误处理和侧车 stderr 不受影响。
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('log-level', '3');
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
