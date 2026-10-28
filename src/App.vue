@@ -110,6 +110,25 @@ watch(() => player.playing, (playing) => {
 
 const sendSpectrum = (payload) => window.jello?.spectrum?.update?.(payload);
 
+let lastVolumeBeforeMute = 0;
+
+const handlePlayerCommand = (command) => {
+  if (command === 'toggle') player.togglePlayPause();
+  else if (command === 'pause') player.pause();
+  else if (command === 'previous') player.playPrevious();
+  else if (command === 'next') player.playNext();
+  else if (command === 'volume-up') player.changeVolume(5);
+  else if (command === 'volume-down') player.changeVolume(-5);
+  else if (command === 'toggle-mute') {
+    if (player.volume > 0) {
+      lastVolumeBeforeMute = player.volume;
+      player.setVolumePercent(0);
+    } else {
+      player.setVolumePercent(lastVolumeBeforeMute || 50);
+    }
+  }
+};
+
 const syncSpectrum = () => {
   if (settings.spectrum) {
     if (player.audio.crossOrigin !== 'anonymous') {
@@ -187,9 +206,7 @@ onMounted(async () => {
   unsubscribeSettings = window.jello?.settings?.onChange?.((next) => settings.apply(next)) || null;
   unsubscribeAuth = auth.subscribe();
   unsubscribePlayer = window.jello?.player?.onCommand?.((command) => {
-    if (command === 'toggle') player.togglePlayPause();
-    else if (command === 'previous') player.playPrevious();
-    else if (command === 'next') player.playNext();
+    handlePlayerCommand(command);
   }) || null;
   unsubscribeSpectrumRequest = window.jello?.spectrum?.onRequestCurrent?.(() => {
     if (settings.spectrum) refreshSpectrum();

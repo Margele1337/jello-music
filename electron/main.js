@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initSettings, getSettings } from './services/settingsStore.js';
+import { initSettings, getSettings, updateSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
@@ -10,6 +10,7 @@ import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from 
 import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
 import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
+import { initGlobalShortcuts, stopGlobalShortcuts } from './services/globalShortcuts.js';
 import {
   initDockController,
   isMainWindowDocked,
@@ -63,6 +64,15 @@ function sendPlayerCommand(command) {
     mainWindow.webContents.send('player:command', command);
   }
 }
+
+const toggleAuxSetting = (key, sync) => {
+  const next = !getSettings()[key];
+  updateSettings({ [key]: next });
+  sync(next);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('settings:changed', getSettings());
+  }
+};
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -154,6 +164,12 @@ app.whenReady().then(async () => {
   syncDesktopLyrics(getSettings().desktopLyrics);
   syncSpectrumHud(getSettings().spectrum);
   initGlobalKeyListener({ onRightShift: handleRightShift });
+  initGlobalShortcuts({
+    sendCommand: sendPlayerCommand,
+    toggleDesktopLyrics: () => toggleAuxSetting('desktopLyrics', syncDesktopLyrics),
+    toggleSpectrum: () => toggleAuxSetting('spectrum', syncSpectrumHud),
+    toggleMainWindow: showMainWindow
+  });
 
   app.on('activate', showMainWindow);
 });
@@ -164,6 +180,7 @@ app.on('before-quit', (event) => {
 
   shutdownStarted = true;
   event.preventDefault();
+  stopGlobalShortcuts();
   stopGlobalKeyListener();
   stopDockAnimation();
   stopUpdater();
