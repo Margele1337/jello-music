@@ -1,15 +1,21 @@
 <template>
-  <RouterView v-slot="{ Component }">
-    <Transition name="view-fade" :css="!skipRouteTransition">
-      <component :is="Component" :key="route.fullPath" />
-    </Transition>
-  </RouterView>
+  <div class="app-root">
+    <!-- 播放器常驻挂载（旧版结构：设置/登录/歌词是叠在上面的浮层，切页不卸载播放器）。
+         桌面歌词/频谱 HUD 窗口走各自的独立路由，不挂播放器。 -->
+    <SigmaView v-if="showPlayerBase" class="app-base" />
+    <RouterView v-slot="{ Component }">
+      <Transition name="view-fade">
+        <component :is="Component" v-if="route.path !== '/'" :key="route.fullPath"
+          :class="isOverlayRoute ? 'app-overlay' : null" />
+      </Transition>
+    </RouterView>
+  </div>
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
+import { onBeforeUnmount, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { skipNextRouteTransition, skipRouteTransition } from './services/viewTransition.js';
+import SigmaView from './views/SigmaView.vue';
 import { collectSongToLiked } from './services/api/collect.js';
 import { getKaraokeLyrics, getLyrics } from './services/api/library.js';
 import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
@@ -23,6 +29,12 @@ const player = usePlayerStore();
 const route = useRoute();
 const router = useRouter();
 
+// HUD 窗口（桌面歌词/频谱）走独立路由，不挂播放器基座
+const isHudRoute = computed(() => ['/desktop-lyrics', '/spectrum'].includes(route.path));
+const showPlayerBase = computed(() => !isHudRoute.value);
+// 设置/登录/歌词是叠在播放器上的全窗口浮层
+const isOverlayRoute = computed(() => ['/settings', '/login', '/lyrics'].includes(route.path));
+
 // ===== 收起/弹出时的视图回切（1:1 对齐旧版 SigmaUI.onSigmaDockChanged）=====
 // 收起：若停留在设置/登录页，300ms 后带 0.3s 淡出切回播放器（40px 条显示的是播放器右缘）；
 // 弹出：若还有待切的收起计时，瞬时切回播放器（无过渡），看到的直接是面板自己的滑出动画
@@ -31,7 +43,8 @@ let unsubscribeDockForView = null;
 
 const goPlayerView = (instant) => {
   if (route.path === '/') return;
-  if (instant) skipNextRouteTransition();
+  // 播放器常驻，浮层淡出即完成切换，无需跳过过渡
+  void instant;
   router.push('/');
 };
 
@@ -51,11 +64,6 @@ const onDockChangedForView = (docked) => {
   }
 };
 
-watch(() => route.path, () => {
-  nextTick(() => {
-    skipRouteTransition.value = false;
-  });
-});
 let desktopLyricToken = 0;
 let desktopLyricTimer = null;
 
@@ -292,7 +300,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
-/* 视图过渡（对齐旧版 sigma-view-fade）：离开 0.3s 淡出，进入无过渡瞬时出现 */
+/* 视图过渡（对齐旧版 sigma-view-fade）：浮层离开 0.3s 淡出，露出常驻播放器（进入无过渡） */
 .view-fade-leave-active {
   transition: opacity 0.3s ease;
   pointer-events: none;
@@ -300,5 +308,24 @@ onBeforeUnmount(() => {
 
 .view-fade-leave-to {
   opacity: 0;
+}
+</style>
+
+<style scoped>
+.app-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.app-base {
+  position: absolute;
+  inset: 0;
+}
+
+.app-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
 }
 </style>
