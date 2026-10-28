@@ -20,6 +20,7 @@ let lastDesktopState = '';
 let unsubscribeSettings = null;
 let unsubscribeAuth = null;
 let unsubscribePlayer = null;
+let unsubscribeSpectrumRequest = null;
 
 watch(() => settings.quality, (next, previous) => {
   if (previous && next !== previous) player.reloadCurrent();
@@ -174,6 +175,9 @@ onMounted(async () => {
     else if (command === 'previous') player.playPrevious();
     else if (command === 'next') player.playNext();
   }) || null;
+  unsubscribeSpectrumRequest = window.jello?.spectrum?.onRequestCurrent?.(() => {
+    if (settings.spectrum) refreshSpectrum();
+  }) || null;
 });
 
 onBeforeUnmount(() => {
@@ -183,5 +187,6 @@ onBeforeUnmount(() => {
   unsubscribeSettings?.();
   unsubscribeAuth?.();
   unsubscribePlayer?.();
+  unsubscribeSpectrumRequest?.();
 });
 </script>

@@ -33,7 +33,12 @@ contextBridge.exposeInMainWorld('jello', {
     }
   },
   spectrum: {
-    update: (payload) => ipcRenderer.send('spectrum:update', payload)
+    update: (payload) => ipcRenderer.send('spectrum:update', payload),
+    onRequestCurrent: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('spectrum:request-current', handler);
+      return () => ipcRenderer.removeListener('spectrum:request-current', handler);
+    }
   },
   windowControl: {
     toggleDock: () => ipcRenderer.send('window:dock-toggle'),

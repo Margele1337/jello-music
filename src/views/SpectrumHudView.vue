@@ -1,5 +1,5 @@
 <template>
-  <div class="spectrum-hud" :style="{ '--info-scale': infoScale }">
+  <div class="spectrum-hud" :class="{ 'hud-editing': !locked }" :style="{ '--info-scale': infoScale }">
     <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
     <div class="spectrum-info" v-show="infoVisible && (title || cover)">
       <img v-if="cover" class="cover" :src="cover" alt="" />
@@ -29,8 +29,9 @@ const detectDisplayScale = () => {
 };
 
 let displayScale = detectDisplayScale();
-const infoScale = 1.25;
-const infoVisible = true;
+const infoScale = ref(1.25);
+const infoVisible = ref(true);
+const locked = ref(true);
 
 const canvasRef = ref(null);
 const cover = ref('');
@@ -48,8 +49,8 @@ for (let i = 0; i < BAR_COUNT; i += 1) {
 let lastDrawTime = 0;
 let raf = null;
 let pendingSnap = false;
-const spectrumScale = 1;
-const spectrumSmoothing = SPECTRUM_SMOOTHING;
+let spectrumScale = 1;
+let spectrumSmoothing = SPECTRUM_SMOOTHING;
 
 let coverImage = null;
 let blurredCover = null;
@@ -212,6 +213,31 @@ const applyPayload = (data) => {
 };
 
 let unsubscribe = null;
+let unsubscribeSettings = null;
+
+const applySettings = (settings = {}) => {
+  if (Number.isFinite(settings.scale)) displayScale = clamp(settings.scale, 0.5, 4);
+  if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
+  if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
+  if (Number.isFinite(settings.spectrumInfoScale)) infoScale.value = clamp(settings.spectrumInfoScale, 0.8, 2);
+  if (settings.spectrumInfoVisible != null) infoVisible.value = settings.spectrumInfoVisible === true;
+  if (settings.spectrumLocked != null) locked.value = settings.spectrumLocked === true;
+};
+
+const applyLockStyles = () => {
+  if (locked.value) {
+    document.body.style.setProperty('background', 'transparent', 'important');
+  } else {
+    document.body.style.setProperty('background', 'rgba(0, 0, 0, 0.25)', 'important');
+  }
+};
+
+const handleDblClick = (event) => {
+  if (event.target.closest('.spectrum-info')) return;
+  locked.value = !locked.value;
+  applyLockStyles();
+  window.jelloSpectrum?.setLocked?.(locked.value);
+};
 
 onMounted(() => {
   document.body.style.backgroundColor = 'transparent';
@@ -219,17 +245,23 @@ onMounted(() => {
   document.body.style.overflow = 'hidden';
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
+  document.addEventListener('dblclick', handleDblClick);
 
   unsubscribe = window.jelloSpectrum?.onData?.(applyPayload) || null;
+  unsubscribeSettings = window.jelloSpectrum?.onSettings?.(applySettings) || null;
+  window.jelloSpectrum?.ready?.();
   raf = requestAnimationFrame(draw);
 });
 
 onBeforeUnmount(() => {
   unsubscribe?.();
   unsubscribe = null;
+  unsubscribeSettings?.();
+  unsubscribeSettings = null;
   if (raf) cancelAnimationFrame(raf);
   raf = null;
   window.removeEventListener('resize', resizeCanvas);
+  document.removeEventListener('dblclick', handleDblClick);
 });
 </script>
 
@@ -244,11 +276,26 @@ body { background: transparent; overflow: hidden; }
   -webkit-app-region: no-drag;
 }
 
+.spectrum-hud.hud-editing {
+  -webkit-app-region: drag;
+  border: 2px dashed rgba(255, 255, 255, 0.4);
+  border-radius: 6px;
+}
+
 .spectrum-canvas {
   position: absolute;
   inset: 0;
   display: block;
   -webkit-app-region: no-drag;
+}
+
+.spectrum-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  /* -webkit-app-region 不继承：canvas 铺满整个窗口，不显式继承的话默认 none，
+     会把父级 .spectrum-hud.hud-editing 的 drag 区域整块挡住 → 解锁后拖不动窗口 */
+  -webkit-app-region: inherit;
 }
 
 .spectrum-info {
@@ -258,6 +305,7 @@ body { background: transparent; overflow: hidden; }
   display: flex;
   align-items: center;
   gap: calc(10px * var(--info-scale, 1.25));
+  -webkit-app-region: no-drag;
   pointer-events: none;
 }
 

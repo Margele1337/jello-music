@@ -186,6 +186,11 @@ const accountName = computed(() => {
   return String(profile.nickname || profile.userid || '');
 });
 
+const updateSetting = (key, value) => {
+  void settings.update({ [key]: value })
+    .catch((error) => setNotice(error?.message || '保存失败'));
+};
+
 const goBack = () => router.push('/');
 const goLogin = () => router.push('/login');
 
@@ -308,6 +313,41 @@ onBeforeUnmount(() => {
         <span>显示频谱</span>
         <input v-model="spectrum" type="checkbox" />
       </label>
+    </section>
+
+    <section v-if="settings.spectrum" class="card">
+      <h2>频谱设置</h2>
+      <div class="spectrum-sliders">
+        <div class="slider-row">
+          <span>频谱幅度</span>
+          <span class="slider-value">{{ settings.spectrumScale.toFixed(2) }}x</span>
+          <input type="range" min="0.5" max="3" step="0.05" :value="settings.spectrumScale"
+            @input="updateSetting('spectrumScale', Number($event.target.value))" />
+        </div>
+        <div class="slider-row">
+          <span>频谱信息大小</span>
+          <span class="slider-value">{{ settings.spectrumInfoScale.toFixed(2) }}x</span>
+          <input type="range" min="0.8" max="2" step="0.05" :value="settings.spectrumInfoScale"
+            @input="updateSetting('spectrumInfoScale', Number($event.target.value))" />
+        </div>
+        <div class="slider-row">
+          <span>平滑系数</span>
+          <span class="slider-value">{{ settings.spectrumSigmaSmoothing.toFixed(3) }}</span>
+          <input type="range" min="0.05" max="1" step="0.005" :value="settings.spectrumSigmaSmoothing"
+            @input="updateSetting('spectrumSigmaSmoothing', Number($event.target.value))" />
+        </div>
+        <div class="slider-row">
+          <span>音画差补偿</span>
+          <span class="slider-value">{{ settings.spectrumAvDelayMs }}ms</span>
+          <input type="range" min="0" max="2000" step="10" :value="settings.spectrumAvDelayMs"
+            @input="updateSetting('spectrumAvDelayMs', Number($event.target.value))" />
+        </div>
+        <label class="row check-row">
+          <span>频谱信息显示</span>
+          <input type="checkbox" :checked="settings.spectrumInfoVisible"
+            @change="updateSetting('spectrumInfoVisible', $event.target.checked)" />
+        </label>
+      </div>
     </section>
 
     <section class="card update-card">
@@ -436,6 +476,41 @@ onBeforeUnmount(() => {
 
 .check-row + .check-row {
   margin-top: 8px;
+}
+
+.spectrum-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #b9b1c6;
+  font-size: 13px;
+}
+
+.slider-row > span:first-child {
+  flex: 0 0 auto;
+  width: 110px;
+}
+
+.slider-value {
+  flex: 0 0 auto;
+  min-width: 48px;
+  text-align: right;
+  color: #f2eef6;
+  font-size: 12px;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #ff69b4;
+  height: 4px;
+  cursor: pointer;
 }
 
 .check-row input {

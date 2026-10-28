@@ -1,8 +1,15 @@
 // 频谱采集与 FFT：移植自所有者 sigmarebase 的 MusicManager/JavaFFT 频谱实现。
 // AudioWorklet 每攒满一个 MP3 帧（1152 采样/声道）回调一次 1024 个交错 Int16 采样，
 // 对帧首采样做 1024 点 FFT，得到 sigmarebase 频谱 HUD 使用的 114 个幅度值。
+// 预读播放器与音画差补偿同样按旧实现移植：预读元素领先 leadMs 播放同一 URL，
+// 它的 PCM 喂频谱（输出静音），复刻 sigmarebase 的音画关系。
 const BAR_COUNT = 114;
 const FFT_SIZE = 1024;
+const QUEUE_MAX = 4;
+const BATCH_SECONDS = 0.25;
+const BATCH_MAX = 12;
+const FRAME_SECONDS = 1152 / 44100;
+const AV_DELAY_DEFAULT_MS = 590;
 
 const createSpectrumFft = (size) => {
   const bits = Math.round(Math.log2(size));
@@ -57,21 +64,40 @@ const rawLevels = new Float32Array(BAR_COUNT);
 const samples = new Float32Array(FFT_SIZE);
 const realOut = new Float32Array(FFT_SIZE);
 const imagOut = new Float32Array(FFT_SIZE);
+const sigmaQueue = [];
+const pendingFrames = [];
 
 let context = null;
 let sourceNode = null;
+let volumeGainNode = null;
 let tapNode = null;
+let mainTapGainNode = null;
+let lookaheadAudio = null;
+let lookaheadSourceNode = null;
+let lookaheadTapGainNode = null;
 let starting = null;
 let enabled = false;
 let getSong = null;
 let isPlaying = null;
+let getVolume = null;
+let getMuted = null;
 let sendFn = null;
 let idleTimer = null;
 let lastBlockAt = 0;
 let metaKey = '';
+let batchAccumulator = BATCH_SECONDS;
+let avDelayMs = AV_DELAY_DEFAULT_MS;
+let spectrumScale = 1;
+let spectrumSmoothing = 0.335;
 
 const currentSong = () => getSong?.() || null;
 const currentPlaying = () => !!isPlaying?.();
+
+const resetQueue = () => {
+  sigmaQueue.length = 0;
+  pendingFrames.length = 0;
+  batchAccumulator = BATCH_SECONDS;
+};
 
 const sendSpectrum = (levels, forceMeta = false) => {
   if (!sendFn) return;
@@ -96,7 +122,12 @@ const handleBlock = (block) => {
   if (!enabled) return;
   lastBlockAt = performance.now();
 
+  const song = currentSong();
+  const key = `${song?.hash || ''}|${song?.img || ''}`;
+  if (key !== metaKey) resetQueue();
+
   if (!currentPlaying()) {
+    resetQueue();
     rawLevels.fill(0);
     sendSpectrum(rawLevels);
     return;
@@ -110,8 +141,82 @@ const handleBlock = (block) => {
     rawLevels[i] = Math.sqrt(re * re + im * im);
   }
 
-  // 直接发送当前帧，避免队列带来的音画延迟；HUD 侧仍按 sigmarebase 0.335 平滑
-  sendSpectrum(rawLevels);
+  pendingFrames.push(Float32Array.from(rawLevels));
+  batchAccumulator += FRAME_SECONDS;
+  if (batchAccumulator >= BATCH_SECONDS || pendingFrames.length >= BATCH_MAX) {
+    for (const frame of pendingFrames) {
+      sigmaQueue.push(frame);
+      if (sigmaQueue.length > QUEUE_MAX) sigmaQueue.shift();
+    }
+    pendingFrames.length = 0;
+    batchAccumulator -= BATCH_SECONDS;
+    if (batchAccumulator < 0) batchAccumulator = 0;
+  }
+
+  sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : rawLevels);
+};
+
+const isLookaheadReady = () => !!lookaheadAudio?.src && lookaheadAudio.readyState >= 2;
+
+// 预读数据可用时用预读喂频谱，否则退回主播放器（保证频谱始终有数据）
+const updateTapRouting = () => {
+  const ready = isLookaheadReady();
+  if (mainTapGainNode) mainTapGainNode.gain.value = ready ? 0 : 1;
+  if (lookaheadTapGainNode) lookaheadTapGainNode.gain.value = ready ? 1 : 0;
+};
+
+const setLookaheadSource = (url) => {
+  if (!lookaheadAudio) return;
+  const next = url || '';
+  if (lookaheadAudio.getAttribute('src') === next) return;
+  if (!next) {
+    lookaheadAudio.removeAttribute('src');
+    lookaheadAudio.load();
+  } else {
+    lookaheadAudio.src = next;
+  }
+  updateTapRouting();
+};
+
+// 与主播放器同步：位置领先 avDelayMs，播放/暂停/倍速跟随；force=true 强制重新定位
+export const syncLookahead = (currentTime, playing, rate = 1, force = false) => {
+  if (!lookaheadAudio || !lookaheadAudio.src) return;
+  // 音频图未就绪（没有 MediaElementSource）时不能播放预读，否则会真的出声
+  if (!lookaheadSourceNode) return;
+  const expected = Math.max(0, (Number(currentTime) || 0) + avDelayMs / 1000);
+  if (force || Math.abs(lookaheadAudio.currentTime - expected) > 0.08) {
+    try {
+      lookaheadAudio.currentTime = expected;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (Number.isFinite(rate) && lookaheadAudio.playbackRate !== rate) {
+    lookaheadAudio.playbackRate = rate;
+  }
+  if (playing && lookaheadAudio.paused && !lookaheadAudio.ended) {
+    lookaheadAudio.play().catch(() => {});
+  } else if (!playing && !lookaheadAudio.paused) {
+    lookaheadAudio.pause();
+  }
+  updateTapRouting();
+};
+
+export { setLookaheadSource };
+
+// 音量走音频图（音量节点在频谱采集点之后），保证 FFT 输入与音量无关
+export const applyOutputVolume = (percent, muted) => {
+  const linear = Math.max(0, Math.min(1, Number(percent) || 0));
+  if (context && volumeGainNode) {
+    const target = muted ? 0 : linear;
+    try {
+      volumeGainNode.gain.setValueAtTime(target, context.currentTime);
+    } catch {
+      /* ignore */
+    }
+    return true;
+  }
+  return false;
 };
 
 const ensureGraph = async (audio) => {
@@ -125,21 +230,52 @@ const ensureGraph = async (audio) => {
   if (!AudioContextClass) return false;
 
   try {
-    context = new AudioContextClass();
+    // 固定 44.1kHz：sigmarebase 的 JavaFFT 按 44.1kHz MP3 帧取 1024 采样，
+    // 设备混音率是 48k/96k 时窗口与频段映射都会偏，这里强制对齐原版。
+    try {
+      context = new AudioContextClass({ sampleRate: 44100 });
+    } catch {
+      context = new AudioContextClass();
+    }
     const workletUrl = new URL('spectrum-tap.js', window.location.href).href;
     await context.audioWorklet.addModule(workletUrl);
 
     const frameSize = Math.max(1, Math.round((1152 * context.sampleRate) / 44100));
     sourceNode = context.createMediaElementSource(audio);
-    tapNode = new AudioWorkletNode(context, 'spectrum-tap', {
+    volumeGainNode = context.createGain();
+    volumeGainNode.gain.value = 1;
+
+    const tap = new AudioWorkletNode(context, 'spectrum-tap', {
+      numberOfInputs: 1,
       numberOfOutputs: 1,
+      outputChannelCount: [1],
       processorOptions: { frameSize }
     });
+    tap.port.onmessage = (event) => handleBlock(event.data);
 
-    sourceNode.connect(tapNode);
-    tapNode.connect(context.destination);
-    sourceNode.connect(context.destination);
-    tapNode.port.onmessage = (event) => handleBlock(event.data);
+    // 主播放器 / 预读播放器通过增益切换谁喂频谱（默认主播放器，预读就绪后切到预读）
+    mainTapGainNode = context.createGain();
+    mainTapGainNode.gain.value = 1;
+    lookaheadAudio = new Audio();
+    lookaheadAudio.crossOrigin = 'anonymous';
+    lookaheadAudio.preload = 'auto';
+    lookaheadSourceNode = context.createMediaElementSource(lookaheadAudio);
+    lookaheadTapGainNode = context.createGain();
+    lookaheadTapGainNode.gain.value = 0;
+
+    sourceNode.connect(volumeGainNode);
+    volumeGainNode.connect(context.destination);
+    sourceNode.connect(mainTapGainNode);
+    mainTapGainNode.connect(tap);
+    lookaheadSourceNode.connect(lookaheadTapGainNode);
+    lookaheadTapGainNode.connect(tap);
+    tap.connect(context.destination);
+    tapNode = tap;
+
+    // 音量切到音频图：元素音量固定 1，FFT 输入与音量无关
+    audio.volume = 1;
+    audio.muted = false;
+    applyOutputVolume(getVolume?.() ?? 1, !!getMuted?.());
 
     if (context.state === 'suspended') await context.resume();
     return true;
@@ -152,7 +288,11 @@ const ensureGraph = async (audio) => {
     }
     context = null;
     sourceNode = null;
+    volumeGainNode = null;
     tapNode = null;
+    mainTapGainNode = null;
+    lookaheadSourceNode = null;
+    lookaheadTapGainNode = null;
     return false;
   }
 };
@@ -160,6 +300,8 @@ const ensureGraph = async (audio) => {
 export const startSpectrum = async (audio, handlers = {}) => {
   getSong = handlers.getSong || null;
   isPlaying = handlers.isPlaying || null;
+  getVolume = handlers.getVolume || null;
+  getMuted = handlers.getMuted || null;
   sendFn = handlers.send || null;
   if (!sendFn) return false;
 
@@ -170,12 +312,9 @@ export const startSpectrum = async (audio, handlers = {}) => {
     });
   }
   const ready = await starting;
-  if (!ready) {
-    enabled = false;
-    return false;
-  }
-  if (!enabled) return false;
+  if (!ready || !enabled) return false;
 
+  resetQueue();
   metaKey = '';
   sendSpectrum(rawLevels, true);
 
@@ -183,7 +322,7 @@ export const startSpectrum = async (audio, handlers = {}) => {
     idleTimer = setInterval(() => {
       if (!enabled) return;
       if (performance.now() - lastBlockAt < 2000) return;
-      sendSpectrum(rawLevels, true);
+      sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : rawLevels, true);
     }, 1000);
   }
   return true;
@@ -191,19 +330,40 @@ export const startSpectrum = async (audio, handlers = {}) => {
 
 export const refreshSpectrum = () => {
   if (!enabled) return;
-  if (!currentPlaying()) rawLevels.fill(0);
-  sendSpectrum(rawLevels);
+  if (!currentPlaying()) {
+    resetQueue();
+    rawLevels.fill(0);
+  }
+  sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : rawLevels, true);
 };
 
 export const stopSpectrum = (send) => {
   enabled = false;
   if (idleTimer) clearInterval(idleTimer);
   idleTimer = null;
+  resetQueue();
   rawLevels.fill(0);
+  try {
+    if (lookaheadAudio) {
+      lookaheadAudio.pause();
+      lookaheadAudio.removeAttribute('src');
+      lookaheadAudio.load();
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     (send || sendFn)?.({ levels: Array.from(rawLevels), playing: false, reset: true });
   } catch {
     /* ignore */
+  }
+};
+
+export const updateSpectrumSettings = (settings = {}) => {
+  if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
+  if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
+  if (Number.isFinite(settings.spectrumAvDelayMs)) {
+    avDelayMs = Math.max(0, Math.min(2000, settings.spectrumAvDelayMs));
   }
 };
 

@@ -8,7 +8,13 @@ export const SETTING_DEFAULTS = Object.freeze({
   volume: 1,
   minimizeToTray: true,
   desktopLyrics: false,
-  spectrum: false
+  spectrum: false,
+  spectrumScale: 1,
+  spectrumInfoScale: 1.25,
+  spectrumInfoVisible: true,
+  spectrumSigmaSmoothing: 0.335,
+  spectrumAvDelayMs: 590,
+  spectrumLocked: true
 });
 
 export const SETTING_KEYS = Object.freeze(Object.keys(SETTING_DEFAULTS));
@@ -27,8 +33,33 @@ export const sanitizeSettings = (patch) => {
       continue;
     }
 
-    if (key === 'minimizeToTray' || key === 'desktopLyrics' || key === 'spectrum') {
+    if (key === 'minimizeToTray' || key === 'desktopLyrics' || key === 'spectrum'
+      || key === 'spectrumInfoVisible' || key === 'spectrumLocked') {
       if (typeof value === 'boolean') next[key] = value;
+      continue;
+    }
+
+    if (key === 'spectrumScale') {
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(0.5, Math.min(3, n));
+      continue;
+    }
+
+    if (key === 'spectrumInfoScale') {
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(0.8, Math.min(2, n));
+      continue;
+    }
+
+    if (key === 'spectrumSigmaSmoothing') {
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(0.05, Math.min(1, n));
+      continue;
+    }
+
+    if (key === 'spectrumAvDelayMs') {
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(0, Math.min(2000, Math.round(n)));
       continue;
     }
 

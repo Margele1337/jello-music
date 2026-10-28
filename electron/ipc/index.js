@@ -9,7 +9,7 @@ import { syncTray } from '../tray.js';
 import { syncDesktopLyrics, sendDesktopLyricsState } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricState } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
-import { sendSpectrumData, syncSpectrumHud } from '../windows/spectrumHud.js';
+import { sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
 import { isMainWindowDocked, restoreMainWindow, toggleMainWindowDock } from '../windows/sigmaDock.js';
 import {
   checkForUpdates,
@@ -67,6 +67,8 @@ export const registerIpc = (getWindow) => {
       syncSpectrumHud(next.spectrum);
     }
 
+    syncSpectrumHudSettings(next);
+
     broadcast(IPC.SETTINGS_CHANGED, next);
     return next;
   });
@@ -101,6 +103,19 @@ export const registerIpc = (getWindow) => {
   ipcMain.on(IPC.SPECTRUM_UPDATE, (event, payload) => {
     if (!isTrustedSender(event, getWindow())) return;
     sendSpectrumData(sanitizeSpectrumPayload(payload));
+  });
+
+  ipcMain.on(IPC.SPECTRUM_HUD_READY, (event) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    sendSpectrumSettings({ ...getSettings(), scale: 1 });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('spectrum:request-current');
+    }
+  });
+
+  ipcMain.on(IPC.SPECTRUM_LOCK_TOGGLE, (event, value) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    updateSettings({ spectrumLocked: value === true });
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {
