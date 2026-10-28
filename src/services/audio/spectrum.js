@@ -77,6 +77,8 @@ let lookaheadSourceNode = null;
 let lookaheadTapGainNode = null;
 let starting = null;
 let enabled = false;
+let sourceBound = false;
+let audioListeners = [];
 let getSong = null;
 let isPlaying = null;
 let getVolume = null;
@@ -229,23 +231,26 @@ const ensureGraph = async (audio) => {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return false;
 
+  let localContext = null;
+  let localSource = null;
   try {
     // 固定 44.1kHz：sigmarebase 的 JavaFFT 按 44.1kHz MP3 帧取 1024 采样，
     // 设备混音率是 48k/96k 时窗口与频段映射都会偏，这里强制对齐原版。
     try {
-      context = new AudioContextClass({ sampleRate: 44100 });
+      localContext = new AudioContextClass({ sampleRate: 44100 });
     } catch {
-      context = new AudioContextClass();
+      localContext = new AudioContextClass();
     }
     const workletUrl = new URL('spectrum-tap.js', window.location.href).href;
-    await context.audioWorklet.addModule(workletUrl);
+    await localContext.audioWorklet.addModule(workletUrl);
 
-    const frameSize = Math.max(1, Math.round((1152 * context.sampleRate) / 44100));
-    sourceNode = context.createMediaElementSource(audio);
-    volumeGainNode = context.createGain();
-    volumeGainNode.gain.value = 1;
+    const frameSize = Math.max(1, Math.round((1152 * localContext.sampleRate) / 44100));
+    localSource = localContext.createMediaElementSource(audio);
+    sourceBound = true;
 
-    const tap = new AudioWorkletNode(context, 'spectrum-tap', {
+    const volumeGain = localContext.createGain();
+    volumeGain.gain.value = 1;
+    const tap = new AudioWorkletNode(localContext, 'spectrum-tap', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [1],
@@ -254,23 +259,31 @@ const ensureGraph = async (audio) => {
     tap.port.onmessage = (event) => handleBlock(event.data);
 
     // 主播放器 / 预读播放器通过增益切换谁喂频谱（默认主播放器，预读就绪后切到预读）
-    mainTapGainNode = context.createGain();
-    mainTapGainNode.gain.value = 1;
+    const mainTapGain = localContext.createGain();
+    mainTapGain.gain.value = 1;
     lookaheadAudio = new Audio();
     lookaheadAudio.crossOrigin = 'anonymous';
     lookaheadAudio.preload = 'auto';
-    lookaheadSourceNode = context.createMediaElementSource(lookaheadAudio);
-    lookaheadTapGainNode = context.createGain();
-    lookaheadTapGainNode.gain.value = 0;
+    const lookaheadSource = localContext.createMediaElementSource(lookaheadAudio);
+    const lookaheadTapGain = localContext.createGain();
+    lookaheadTapGain.gain.value = 0;
 
-    sourceNode.connect(volumeGainNode);
-    volumeGainNode.connect(context.destination);
-    sourceNode.connect(mainTapGainNode);
-    mainTapGainNode.connect(tap);
-    lookaheadSourceNode.connect(lookaheadTapGainNode);
-    lookaheadTapGainNode.connect(tap);
-    tap.connect(context.destination);
+    localSource.connect(volumeGain);
+    volumeGain.connect(localContext.destination);
+    localSource.connect(mainTapGain);
+    mainTapGain.connect(tap);
+    lookaheadSource.connect(lookaheadTapGain);
+    lookaheadTapGain.connect(tap);
+    tap.connect(localContext.destination);
+
+    // 提交到模块级状态（MediaElementSource 绑定后不可撤销，只有全部成功才赋值）
+    context = localContext;
+    sourceNode = localSource;
+    volumeGainNode = volumeGain;
     tapNode = tap;
+    mainTapGainNode = mainTapGain;
+    lookaheadSourceNode = lookaheadSource;
+    lookaheadTapGainNode = lookaheadTapGain;
 
     // 音量切到音频图：元素音量固定 1，FFT 输入与音量无关
     audio.volume = 1;
@@ -281,18 +294,15 @@ const ensureGraph = async (audio) => {
     return true;
   } catch (error) {
     console.warn('[spectrum] 音频频谱初始化失败:', error.message);
-    try {
-      await context?.close();
-    } catch {
-      /* ignore */
+    if (!sourceBound && localContext) {
+      // MediaElementSource 尚未绑定，可以安全关闭重试
+      try {
+        await localContext.close();
+      } catch {
+        /* ignore */
+      }
     }
-    context = null;
-    sourceNode = null;
-    volumeGainNode = null;
-    tapNode = null;
-    mainTapGainNode = null;
-    lookaheadSourceNode = null;
-    lookaheadTapGainNode = null;
+    // sourceBound = true 时不能 close：element 已绑定到 context，close 会导致永久静音
     return false;
   }
 };
@@ -325,6 +335,22 @@ export const startSpectrum = async (audio, handlers = {}) => {
       sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : rawLevels, true);
     }, 1000);
   }
+
+  // 预读同步：监听主播放器事件，驱动预读播放器跟随
+  if (audio && audioListeners.length === 0) {
+    const onPlay = () => { setLookaheadSource(audio.src); syncLookahead(audio.currentTime, true, 1, true); };
+    const onPause = () => syncLookahead(audio.currentTime, false, 1);
+    const onSeek = () => syncLookahead(audio.currentTime, currentPlaying(), 1, true);
+    const onRate = () => syncLookahead(audio.currentTime, currentPlaying(), audio.playbackRate, true);
+    audioListeners = [
+      ['play', onPlay], ['pause', onPause],
+      ['seeking', onSeek], ['seeked', onSeek],
+      ['ratechange', onRate]
+    ].map(([event, handler]) => {
+      audio.addEventListener(event, handler);
+      return { event, handler };
+    });
+  }
   return true;
 };
 
@@ -343,6 +369,7 @@ export const stopSpectrum = (send) => {
   idleTimer = null;
   resetQueue();
   rawLevels.fill(0);
+  audioListeners = [];
   try {
     if (lookaheadAudio) {
       lookaheadAudio.pause();

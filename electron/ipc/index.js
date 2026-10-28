@@ -107,15 +107,18 @@ export const registerIpc = (getWindow) => {
 
   ipcMain.on(IPC.SPECTRUM_HUD_READY, (event) => {
     if (!isTrustedSender(event, getWindow())) return;
-    sendSpectrumSettings({ ...getSettings(), scale: 1 });
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('spectrum:request-current');
+    const settings = getSettings();
+    sendSpectrumSettings({ ...settings, scale: 1 });
+    const main = getWindow()?.filter?.(Boolean)?.[0];
+    if (main && !main.isDestroyed()) {
+      main.webContents.send('spectrum:request-current');
     }
   });
 
   ipcMain.on(IPC.SPECTRUM_LOCK_TOGGLE, (event, value) => {
     if (!isTrustedSender(event, getWindow())) return;
     updateSettings({ spectrumLocked: value === true });
+    syncSpectrumHudSettings(getSettings());
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {

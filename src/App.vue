@@ -115,6 +115,8 @@ const syncSpectrum = () => {
     void startSpectrum(player.audio, {
       getSong: () => player.currentSong,
       isPlaying: () => player.playing,
+      getVolume: () => settings.volume,
+      getMuted: () => false,
       send: sendSpectrum
     });
   } else {

@@ -322,25 +322,25 @@ onBeforeUnmount(() => {
           <span>频谱幅度</span>
           <span class="slider-value">{{ settings.spectrumScale.toFixed(2) }}x</span>
           <input type="range" min="0.5" max="3" step="0.05" :value="settings.spectrumScale"
-            @input="updateSetting('spectrumScale', Number($event.target.value))" />
+            @change="updateSetting('spectrumScale', Number($event.target.value))" />
         </div>
         <div class="slider-row">
           <span>频谱信息大小</span>
           <span class="slider-value">{{ settings.spectrumInfoScale.toFixed(2) }}x</span>
           <input type="range" min="0.8" max="2" step="0.05" :value="settings.spectrumInfoScale"
-            @input="updateSetting('spectrumInfoScale', Number($event.target.value))" />
+            @change="updateSetting('spectrumInfoScale', Number($event.target.value))" />
         </div>
         <div class="slider-row">
           <span>平滑系数</span>
           <span class="slider-value">{{ settings.spectrumSigmaSmoothing.toFixed(3) }}</span>
           <input type="range" min="0.05" max="1" step="0.005" :value="settings.spectrumSigmaSmoothing"
-            @input="updateSetting('spectrumSigmaSmoothing', Number($event.target.value))" />
+            @change="updateSetting('spectrumSigmaSmoothing', Number($event.target.value))" />
         </div>
         <div class="slider-row">
           <span>音画差补偿</span>
           <span class="slider-value">{{ settings.spectrumAvDelayMs }}ms</span>
           <input type="range" min="0" max="2000" step="10" :value="settings.spectrumAvDelayMs"
-            @input="updateSetting('spectrumAvDelayMs', Number($event.target.value))" />
+            @change="updateSetting('spectrumAvDelayMs', Number($event.target.value))" />
         </div>
         <label class="row check-row">
           <span>频谱信息显示</span>

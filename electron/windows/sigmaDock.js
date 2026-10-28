@@ -19,6 +19,12 @@ export const isMainWindowDocked = () => docked;
 const cancelAnimation = () => {
   if (animationTimer) clearInterval(animationTimer);
   animationTimer = null;
+  // 动画被打断时恢复窗口可拖动/可调整大小
+  const win = getWindow();
+  if (win && !win.isDestroyed()) {
+    win.setMovable(true);
+    win.setResizable(true);
+  }
 };
 
 const emitDockState = (value) => {

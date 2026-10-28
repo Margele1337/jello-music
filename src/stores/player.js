@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { useSettingsStore } from './settings.js';
 import { getSongUrl } from '../services/api/library.js';
+import { applyOutputVolume } from '../services/audio/spectrum.js';
 
 let audio = null;
 let boundStore = null;
@@ -219,7 +220,10 @@ export const usePlayerStore = defineStore('player', {
     setVolumePercent(value) {
       const next = clampPercent(value);
       this.volume = next;
-      ensureAudio(this).volume = next / 100;
+      // Web Audio gain 优先（频谱启用时音频走音频图）；否则直接设元素音量
+      if (!applyOutputVolume(next / 100, false)) {
+        ensureAudio(this).volume = next / 100;
+      }
 
       if (persistTimer) clearTimeout(persistTimer);
       persistTimer = setTimeout(() => {

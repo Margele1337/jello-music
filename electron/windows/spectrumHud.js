@@ -30,6 +30,7 @@ let spectrumGeometryKey = '';
 let spectrumDisplayListenersBound = false;
 let stopFullscreenWatch = null;
 let boundsStore = null;
+let displayListeners = [];
 
 const getBoundsStore = () => {
   if (!boundsStore) boundsStore = new Store({ name: 'spectrum-window' });
@@ -263,9 +264,12 @@ export const showSpectrumHud = () => {
   const bindDisplayListeners = () => {
     if (spectrumDisplayListenersBound) return;
     spectrumDisplayListenersBound = true;
-    screen.on('display-metrics-changed', reanchorAndSync);
-    screen.on('display-added', reanchorAndSync);
-    screen.on('display-removed', reanchorAndSync);
+    const events = ['display-metrics-changed', 'display-added', 'display-removed'];
+    for (const event of events) {
+      const handler = () => reanchorAndSync();
+      screen.on(event, handler);
+      displayListeners.push({ event, handler });
+    }
   };
   bindDisplayListeners();
 
@@ -291,6 +295,17 @@ export const destroySpectrumHud = () => {
   hudWindow = null;
   lastData = null;
   lastSettings = null;
+  spectrumGeometryKey = '';
+  spectrumDipScale = 0;
+  if (stopFullscreenWatch) {
+    stopFullscreenWatch();
+    stopFullscreenWatch = null;
+  }
+  for (const { event, handler } of displayListeners) {
+    screen.removeListener(event, handler);
+  }
+  displayListeners = [];
+  spectrumDisplayListenersBound = false;
 };
 
 export const syncSpectrumHud = (enabled) => {
