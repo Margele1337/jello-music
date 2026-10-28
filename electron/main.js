@@ -18,6 +18,7 @@ import {
   stopDockAnimation,
   toggleMainWindowDock
 } from './windows/sigmaDock.js';
+import { setThumbarButtons } from './windows/thumbarButtons.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -86,6 +87,7 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  if (process.platform === 'win32') setThumbarButtons(mainWindow, false);
 
   mainWindow.on('close', (event) => {
     if (isQuitting || !getSettings().minimizeToTray || !hasTray()) return;

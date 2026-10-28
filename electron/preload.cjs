@@ -32,7 +32,8 @@ contextBridge.exposeInMainWorld('jello', {
       const handler = (_event, command) => callback(command);
       ipcRenderer.on('player:command', handler);
       return () => ipcRenderer.removeListener('player:command', handler);
-    }
+    },
+    setPlaying: (playing) => ipcRenderer.send('player:state', { playing: playing === true })
   },
   spectrum: {
     update: (payload) => ipcRenderer.send('spectrum:update', payload),

@@ -89,6 +89,16 @@
           "!**/.cache/**",
           "!.bin/**"
         ]
+      },
+      {
+        "from": "src/assets/sigma/music",
+        "to": "sigma-music",
+        "filter": [
+          "play.png",
+          "pause.png",
+          "backwards.png",
+          "forwards.png"
+        ]
       }
     ],
     "win": {

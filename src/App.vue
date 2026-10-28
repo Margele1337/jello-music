@@ -103,7 +103,8 @@ watch(() => player.currentSong?.hash, () => {
   if (settings.desktopLyrics) void loadDesktopLyrics();
 });
 
-watch(() => player.playing, () => {
+watch(() => player.playing, (playing) => {
+  window.jello?.player?.setPlaying?.(playing === true);
   if (settings.desktopLyrics) sendDesktopLyricsProgress(true);
 });
 
