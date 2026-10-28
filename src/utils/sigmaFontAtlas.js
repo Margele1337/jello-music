@@ -81,7 +81,9 @@ const importsFor = (density) => {
 };
 
 // 高密度图集的度量折算回 CSS px（字号越小，取整误差带来的偏移越明显，
-// 因此保留小数而不是 Math.round，交给调用方现有的取整逻辑处理）
+// 因此坐标/贴图尺寸保留小数，交给绘制端做设备像素吸附）。
+// advance 取整：Slick/original 排版本身就是整数像素步进，1.5x 折算出的
+// 6.67px 这类小数步进会让每个字的落点忽左忽右（观感「歪歪扭扭」）。
 const toCssMetrics = (meta, density) => {
   const divide = (value) => value / density;
   const glyphs = {};
@@ -91,7 +93,7 @@ const toCssMetrics = (meta, density) => {
       y: divide(glyph.y),
       w: divide(glyph.w),
       h: divide(glyph.h),
-      adv: divide(glyph.adv)
+      adv: Math.max(1, Math.round(divide(glyph.adv)))
     };
   }
   return {
@@ -227,12 +229,17 @@ const getTintedAtlas = (atlas, color) => {
 
 // 与 Slick TrueTypeFont.drawString 一致：按 advance 逐字形贴图，(x, y) 为文本左上角。
 // 度量是 CSS px，位图是 atlas.density 倍密度，取源矩形时乘回去。
+// 目标坐标吸附到物理像素：1.5x 图集的行高折算后会把整行压在半像素上
+// （关掉平滑时表现为每字一边硬一边虚、间距忽宽忽窄 → 看着歪歪扭扭）。
 export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#ffffff') => {
   if (!atlas || !text) return 0;
   const source = getTintedAtlas(atlas, color);
   const density = atlas.density || 1;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const snap = (value) => Math.round(value * dpr) / dpr;
   const prevAlpha = ctx.globalAlpha;
   if (alpha !== 1) ctx.globalAlpha = prevAlpha * alpha;
+  const destY = snap(y);
   let penX = x;
   for (const ch of String(text)) {
     const code = ch.codePointAt(0);
@@ -240,7 +247,7 @@ export const drawSigmaText = (ctx, atlas, text, x, y, alpha = 1, color = '#fffff
     if (glyph) {
       ctx.drawImage(source,
         glyph.x * density, glyph.y * density, glyph.w * density, glyph.h * density,
-        penX, y, glyph.w, glyph.h);
+        snap(penX), destY, glyph.w, glyph.h);
       penX += glyph.adv;
       continue;
     }
