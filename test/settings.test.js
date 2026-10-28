@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTING_DEFAULTS, sanitizeSettings } from '../shared/settings.js';
+import {
+  QUALITY_VALUES,
+  SETTING_DEFAULTS,
+  nextLowerQuality,
+  qualityLabel,
+  sanitizeSettings
+} from '../shared/settings.js';
 
 test('setting defaults are frozen and complete', () => {
   assert.equal(Object.isFrozen(SETTING_DEFAULTS), true);
@@ -43,6 +49,38 @@ test('sanitize rejects unknown quality and data source values', () => {
     dataSource: 'official'
   });
   assert.deepEqual(sanitizeSettings({ quality: 'high' }), { quality: 'high' });
+});
+
+test('quality ladder covers all seven tiers from low to high', () => {
+  assert.deepEqual([...QUALITY_VALUES], [
+    '128', '320', 'flac', 'high', 'viper_atmos', 'viper_clear', 'viper_tape'
+  ]);
+  assert.equal(SETTING_DEFAULTS.quality, '320');
+});
+
+test('sanitize accepts the three viper tiers and rejects lookalikes', () => {
+  for (const quality of ['viper_atmos', 'viper_clear', 'viper_tape']) {
+    assert.deepEqual(sanitizeSettings({ quality }), { quality });
+  }
+  assert.deepEqual(sanitizeSettings({ quality: 'viper' }), {});
+  assert.deepEqual(sanitizeSettings({ quality: 'VIPER_TAPE' }), {});
+});
+
+test('nextLowerQuality walks one step down the ladder', () => {
+  assert.equal(nextLowerQuality('viper_tape'), 'viper_clear');
+  assert.equal(nextLowerQuality('viper_atmos'), 'high');
+  assert.equal(nextLowerQuality('320'), '128');
+  assert.equal(nextLowerQuality('128'), '');
+  assert.equal(nextLowerQuality(''), '');
+});
+
+test('qualityLabel maps tiers to Chinese labels', () => {
+  assert.equal(qualityLabel('128'), '标准');
+  assert.equal(qualityLabel('high'), 'Hi-Res');
+  assert.equal(qualityLabel('viper_atmos'), '全景声');
+  assert.equal(qualityLabel('viper_clear'), '超清');
+  assert.equal(qualityLabel('viper_tape'), '母带');
+  assert.equal(qualityLabel('bogus'), '');
 });
 
 test('sanitize validates new audio/system settings', () => {

@@ -3,7 +3,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('jello', {
   app: {
     getVersion: () => ipcRenderer.invoke('app:version'),
-    openLogs: () => ipcRenderer.invoke('app:open-logs')
+    openLogs: () => ipcRenderer.invoke('app:open-logs'),
+    // 启动意图（跳转列表 --settings / 冷启动 jello:// 深链）：挂载后拉取一次即清空
+    consumeLaunchIntent: () => ipcRenderer.invoke('app:launch-intent'),
+    // 运行期到达的 jello:// 深链由主进程推送
+    onDeepLink: (callback) => {
+      const handler = (_event, params) => callback(params);
+      ipcRenderer.on('app:deep-link', handler);
+      return () => ipcRenderer.removeListener('app:deep-link', handler);
+    }
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

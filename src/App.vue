@@ -16,8 +16,17 @@
 import { onBeforeUnmount, onMounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import SigmaView from './views/SigmaView.vue';
+import defaultArtwork from './assets/sigma/music/artwork.png';
 import { collectSongToLiked } from './services/api/collect.js';
-import { getKaraokeLyrics, getLyrics } from './services/api/library.js';
+import { getKaraokeLyrics, getLyrics, getPlaylistTracks, getSongInfoByHash } from './services/api/library.js';
+import {
+  applyMediaMetadata,
+  applyPlaybackState,
+  applyPositionState,
+  clearPositionState,
+  initMediaSession,
+  teardownMediaSession
+} from './services/audio/mediaSession.js';
 import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
 import { useAuthStore } from './stores/auth.js';
 import { usePlayerStore } from './stores/player.js';
@@ -41,6 +50,27 @@ const isOverlayRoute = computed(() => ['/settings', '/login', '/lyrics'].include
 let dockSwitchTimer = null;
 let unsubscribeDockForView = null;
 let unsubscribeNavigate = null;
+let unsubscribeDeepLink = null;
+
+// ===== jello:// 深链：hash 播单曲，listid 播整个歌单 =====
+// 连续深链以最后一次为准，丢弃仍在飞的旧请求结果
+let deepLinkToken = 0;
+
+const handleDeepLinkParams = async (params) => {
+  if (!params || (!params.hash && !params.listid)) return;
+  const token = ++deepLinkToken;
+  try {
+    if (params.hash) {
+      const song = await getSongInfoByHash(params.hash);
+      if (token === deepLinkToken) player.playSongList([song], song.hash);
+      return;
+    }
+    const tracks = await getPlaylistTracks({ id: String(params.listid) });
+    if (token === deepLinkToken && tracks.length) player.playSongList(tracks);
+  } catch (error) {
+    if (token === deepLinkToken) showToast(error?.message || '深链内容加载失败');
+  }
+};
 
 const NAVIGABLE_PATHS = ['/', '/settings', '/login', '/lyrics'];
 
@@ -218,6 +248,7 @@ watch(() => player.playing, () => {
 
 watch(() => settings.playbackRate, (rate) => {
   player.setPlaybackRate(Number(rate) || 1);
+  syncMediaPosition();
 });
 watch(() => settings.loudnessNormalization, (enabled) => {
   player.applyLoudnessSetting(enabled);
@@ -225,6 +256,56 @@ watch(() => settings.loudnessNormalization, (enabled) => {
 watch(() => settings.audioOutputDevice, (deviceId) => {
   player.applyOutputDevice(deviceId);
 });
+
+// ===== MediaSession / Windows SMTC（系统媒体浮层的元数据、时间轴与媒体键）=====
+let mediaPositionTimer = null;
+
+const currentDurationSeconds = () => {
+  const audio = player.audio;
+  if (Number.isFinite(audio?.duration) && audio.duration > 0) return audio.duration;
+  // 元数据未就绪时用歌曲自带时长兜底（timeLength 为毫秒）
+  const length = Number(player.currentSong?.timeLength);
+  return Number.isFinite(length) && length > 0 ? length / 1000 : 0;
+};
+
+const syncMediaPosition = () => {
+  applyPositionState({
+    currentTime: Number(player.audio?.currentTime) || 0,
+    duration: currentDurationSeconds(),
+    playbackRate: Number(settings.playbackRate) || 1
+  });
+};
+
+const stopMediaPositionTimer = () => {
+  if (mediaPositionTimer) clearInterval(mediaPositionTimer);
+  mediaPositionTimer = null;
+};
+
+const startMediaPositionTimer = () => {
+  stopMediaPositionTimer();
+  syncMediaPosition();
+  // SMTC 时间轴需要周期上报，否则系统浮层进度停在最后一次位置
+  mediaPositionTimer = setInterval(syncMediaPosition, 1000);
+};
+
+// SMTC 相关 watch 只在主面板窗口注册（HUD 窗口没有真实播放，避免抢占系统媒体会话）
+if (!isHudRoute.value) {
+  watch(() => player.currentSong?.hash, () => {
+    void applyMediaMetadata(player.currentSong, defaultArtwork);
+    if (player.currentSong) syncMediaPosition();
+    else clearPositionState();
+  });
+
+  watch(() => player.playing, (playing) => {
+    applyPlaybackState(playing);
+    if (playing) {
+      startMediaPositionTimer();
+    } else {
+      stopMediaPositionTimer();
+      syncMediaPosition();
+    }
+  });
+}
 
 const isInteractive = (target) => (
   ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target?.tagName)
@@ -263,6 +344,35 @@ const onKeyDown = (event) => {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeyDown);
+  // 深链/启动意图/MediaSession 只属于主面板窗口：HUD 窗口（桌面歌词/频谱）
+  // 跑同一个 App.vue，但那里没有真实播放，注册会抢走系统媒体键与深链
+  if (!isHudRoute.value) {
+    // 深链监听先于任何 await 注册，避免加载期投递的推送落空
+    unsubscribeDeepLink = window.jello?.app?.onDeepLink?.(handleDeepLinkParams) || null;
+    const launchIntent = await window.jello?.app?.consumeLaunchIntent?.();
+    if (launchIntent?.openSettings) void router.push('/settings');
+    if (launchIntent?.deepLink) handleDeepLinkParams(launchIntent.deepLink);
+
+    initMediaSession({
+      play: () => {
+        if (!player.playing) player.togglePlayPause();
+      },
+      pause: () => player.pause(),
+      previous: () => player.playPrevious(),
+      next: () => player.playNext(),
+      seekRelative: (delta) => player.seekBy(delta),
+      seekTo: (time) => {
+        const audio = player.audio;
+        if (!Number.isFinite(audio?.duration)) return;
+        audio.currentTime = Math.max(0, Math.min(audio.duration, Number(time) || 0));
+        syncMediaPosition();
+      }
+    });
+    void applyMediaMetadata(player.currentSong, defaultArtwork);
+    applyPlaybackState(player.playing);
+    if (player.playing) startMediaPositionTimer();
+  }
+
   await Promise.all([settings.load(), auth.load()]);
   unsubscribeSettings = window.jello?.settings?.onChange?.((next) => settings.apply(next)) || null;
   unsubscribeAuth = auth.subscribe();
@@ -294,14 +404,18 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
   stopDesktopLyrics();
   stopSpectrum(sendSpectrum);
+  stopMediaPositionTimer();
+  teardownMediaSession();
   unsubscribeSettings?.();
   unsubscribeAuth?.();
   unsubscribePlayer?.();
   unsubscribeSpectrumRequest?.();
   unsubscribeDockForView?.();
   unsubscribeNavigate?.();
+  unsubscribeDeepLink?.();
   unsubscribeDockForView = null;
   unsubscribeNavigate = null;
+  unsubscribeDeepLink = null;
   if (dockSwitchTimer) {
     clearTimeout(dockSwitchTimer);
     dockSwitchTimer = null;

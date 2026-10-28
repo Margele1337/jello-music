@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { claimDailyVip, formatVipDate } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
+import { useRiskStore } from '../stores/risk.js';
 import { useSettingsStore } from '../stores/settings.js';
 import { useSigmaWindowDrag } from '../composables/useSigmaWindowDrag.js';
 
@@ -75,7 +76,10 @@ const qualityOptions = [
   { displayText: '标准音质 - 128Kbps', value: '128' },
   { displayText: '高品音质 - 320Kbps', value: '320' },
   { displayText: 'FLAC 无损', value: 'flac' },
-  { displayText: 'Hi-Res 无损', value: 'high' }
+  { displayText: 'Hi-Res 无损', value: 'high' },
+  { displayText: '蝰蛇全景声', value: 'viper_atmos' },
+  { displayText: '蝰蛇超清', value: 'viper_clear' },
+  { displayText: '蝰蛇母带', value: 'viper_tape' }
 ];
 
 const qualityText = computed(() => (
@@ -220,6 +224,26 @@ const openLogs = async () => {
 const showTutorial = () => {
   updateSetting('hotkeyIntroSeen', false);
   setNotice('已重置教程，返回播放页即可查看');
+};
+
+// 酷狗风控（20028）会让所有请求失败，这里给一个手动重新验证的入口
+const risk = useRiskStore();
+const verifying = ref(false);
+
+const runSecurityVerify = async () => {
+  if (verifying.value) return;
+  verifying.value = true;
+  try {
+    const result = await risk.openManualVerify();
+    if (!result?.needed) setNotice(result?.reason === 'probe-error' ? (result.message || '探测请求失败') : '当前未触发风控');
+    else if (result.reason === 'no-eventid') setNotice('酷狗未返回验证事件，请稍后重试');
+    else if (result.verified && result.stillBlocked) setNotice('验证已通过，但风控尚未解除');
+    else if (result.verified) setNotice('验证完成');
+  } catch {
+    setNotice('安全验证失败');
+  } finally {
+    verifying.value = false;
+  }
 };
 
 // ===== 数据源 =====
@@ -584,6 +608,13 @@ onBeforeUnmount(() => {
             <span class="row-label">日志</span>
             <button type="button" class="pill" @click="openLogs">
               <span>打开目录</span>
+            </button>
+          </div>
+          <div class="row">
+            <span class="row-label">安全验证</span>
+            <span class="row-tag">风控</span>
+            <button type="button" class="pill" :disabled="verifying" @click="runSecurityVerify">
+              <span>{{ verifying ? '验证中…' : '重新验证' }}</span>
             </button>
           </div>
         </div>

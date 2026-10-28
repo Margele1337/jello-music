@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { nextLowerQuality, qualityLabel as qualityLabelText } from '../../shared/settings.js';
 import { useSettingsStore } from './settings.js';
 import { getSongUrl } from '../services/api/library.js';
 import {
@@ -14,6 +15,12 @@ let audio = null;
 let boundStore = null;
 let loadToken = 0;
 let persistTimer = null;
+let autoAdvanceTimer = null;
+// 降级重取期间屏蔽旧的 audio error 事件，避免降级循环自我触发
+let recovering = false;
+
+const MAX_QUALITY_RETRIES = 2;
+const MAX_CONSECUTIVE_FAILURES = 5;
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
 
@@ -24,7 +31,26 @@ const playbackErrorText = (error) => {
   return error?.message || '播放失败，请稍后重试';
 };
 
+// 复用 SigmaView 已有的 jello:toast 全局事件通道向用户提示
+const notifyUser = (message) => {
+  if (!message || typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  try {
+    window.dispatchEvent(new CustomEvent('jello:toast', { detail: message }));
+  } catch {
+    /* toast 不可用时静默 */
+  }
+};
+
+const clearAutoAdvance = () => {
+  if (autoAdvanceTimer) {
+    clearTimeout(autoAdvanceTimer);
+    autoAdvanceTimer = null;
+  }
+};
+
 const ensureAudio = (store) => {
+  // 始终重绑到最新 store：audio 元素是单例，但 store 可能重建（测试/热更新）
+  boundStore = store;
   if (audio) return audio;
 
   audio = new Audio();
@@ -45,10 +71,9 @@ const ensureAudio = (store) => {
   audio.addEventListener('error', () => {
     if (!boundStore || !audio?.src) return;
     boundStore.playing = false;
-    boundStore.error = '播放失败，可能是网络或音源不可用';
+    boundStore.handleSourceError();
   });
 
-  boundStore = store;
   return audio;
 };
 
@@ -62,7 +87,17 @@ export const usePlayerStore = defineStore('player', {
     mode: 1,
     error: '',
     loudness: null,
-    initialized: false
+    initialized: false,
+    // 当前曲目实际解析出的音质信息（isTrial=true 表示只有试听片段）
+    trial: false,
+    resolvedQuality: '',
+    qualityLabel: '',
+    qualityOptions: [],
+    // 失败恢复计数：连续失败自动跳歌 / 同曲音质降级
+    failStreak: 0,
+    qualityRetries: 0,
+    qualityRetryHash: '',
+    autoAdvanceDelayMs: 3000
   }),
 
   getters: {
@@ -92,7 +127,7 @@ export const usePlayerStore = defineStore('player', {
       ensureAudio(this).volume = next / 100;
     },
 
-    async loadCurrent({ keepTime = false, resume = true } = {}) {
+    async loadCurrent({ keepTime = false, resume = true, qualityOverride = '' } = {}) {
       const song = this.currentSong;
       if (!song?.hash) return;
 
@@ -100,15 +135,25 @@ export const usePlayerStore = defineStore('player', {
       const token = ++loadToken;
       const resumeAt = keepTime ? element.currentTime : 0;
 
+      // 新的加载取代排队中的自动跳歌
+      clearAutoAdvance();
       element.pause();
       this.playing = false;
       this.loading = true;
       this.error = '';
+      this.trial = false;
+      this.resolvedQuality = '';
+      this.qualityLabel = '';
 
       try {
         const settings = useSettingsStore();
-        const result = await getSongUrl(song, settings.quality || '320');
+        const result = await getSongUrl(song, qualityOverride || settings.quality || '320');
         if (token !== loadToken) return;
+
+        this.trial = !!result.isTrial;
+        this.resolvedQuality = result.quality || '';
+        this.qualityLabel = result.qualityLabel || '';
+        this.qualityOptions = Array.isArray(result.qualityOptions) ? result.qualityOptions : [];
 
         // 响度规格化/自定义输出设备需要 Web Audio 音频图（MediaElementSource 只能绑定一次）
         if (settings.loudnessNormalization || settings.audioOutputDevice !== 'default') {
@@ -132,14 +177,91 @@ export const usePlayerStore = defineStore('player', {
           }, { once: true });
         }
         if (resume) await element.play();
+
+        // 播放成功即视为恢复：复位连续失败计数；
+        // 降级计数按「同一首歌累计」，仅在换歌成功后归零（同曲最多降级 2 次）
+        if (token === loadToken) {
+          this.failStreak = 0;
+          if (this.qualityRetryHash !== song.hash) {
+            this.qualityRetryHash = song.hash;
+            this.qualityRetries = 0;
+          }
+        }
       } catch (error) {
         if (token === loadToken) {
           this.playing = false;
           this.error = playbackErrorText(error);
+          this.handleLoadFailure(error);
         }
       } finally {
+        recovering = false;
         if (token === loadToken) this.loading = false;
       }
+    },
+
+    // 取址/play 失败：格式不支持先降级重试，其余直接排定自动跳歌
+    handleLoadFailure(error) {
+      if (error?.name === 'NotSupportedError' && this.requestQualityRetry('音源格式不受支持')) return;
+      this.scheduleAutoAdvance();
+    },
+
+    // 音源 error 事件：MEDIA_ERR_SRC_NOT_SUPPORTED(4) 走降级，其余仅提示
+    handleSourceError() {
+      if (recovering) return;
+      const code = audio?.error?.code;
+      if (code && code !== 4) {
+        this.error = '音频加载失败';
+        notifyUser(this.error);
+        return;
+      }
+      if (this.requestQualityRetry('音源不可用')) return;
+      this.error = this.qualityRetries > 0
+        ? `无法播放「${this.currentSong?.name || '当前歌曲'}」，已尝试降低音质仍失败`
+        : `无法播放「${this.currentSong?.name || '当前歌曲'}」`;
+      this.scheduleAutoAdvance();
+    },
+
+    // 同一首歌最多降级 MAX_QUALITY_RETRIES 次；换歌后计数自动复位
+    requestQualityRetry(reason) {
+      const song = this.currentSong;
+      if (!song?.hash || recovering) return false;
+      if (this.qualityRetryHash !== song.hash) {
+        this.qualityRetryHash = song.hash;
+        this.qualityRetries = 0;
+      }
+      if (this.qualityRetries >= MAX_QUALITY_RETRIES) return false;
+      // 从实际解析出的档位往下退；尚未解析出档位时直接退到 128
+      const next = this.resolvedQuality ? nextLowerQuality(this.resolvedQuality) : '128';
+      if (!next) return false;
+
+      this.qualityRetries += 1;
+      recovering = true;
+      notifyUser(`${reason}，改用${qualityLabelText(next) || next}音质重试（${this.qualityRetries}/${MAX_QUALITY_RETRIES}）`);
+      void this.loadCurrent({ qualityOverride: next });
+      return true;
+    },
+
+    // 连续失败自动跳歌：3 秒后切下一首，连续 5 次仍失败则停止并提示
+    scheduleAutoAdvance() {
+      if (this.queue.length < 2) {
+        // 单曲/空队列无处可跳，只提示，避免定时循环
+        if (this.error) notifyUser(this.error);
+        return;
+      }
+      if (this.failStreak >= MAX_CONSECUTIVE_FAILURES) {
+        this.failStreak = 0;
+        this.error = '连续多首歌曲无法播放，已停止自动切歌，请手动选择歌曲';
+        notifyUser(this.error);
+        return;
+      }
+      this.failStreak += 1;
+      this.error = `${this.error || '当前歌曲无法播放'}，3 秒后自动切换下一首`;
+      notifyUser(this.error);
+      clearAutoAdvance();
+      autoAdvanceTimer = setTimeout(() => {
+        autoAdvanceTimer = null;
+        this.playNext();
+      }, this.autoAdvanceDelayMs);
     },
 
     reloadCurrent() {
@@ -153,6 +275,9 @@ export const usePlayerStore = defineStore('player', {
       const list = Array.isArray(songs) ? songs.filter((song) => song?.hash) : [];
       if (!list.length) return;
 
+      // 用户手动换列表：复位连续失败计数并取消排队中的自动跳歌
+      clearAutoAdvance();
+      this.failStreak = 0;
       this.queue = list;
       const index = hash ? list.findIndex((song) => song.hash === hash) : -1;
       this.index = index >= 0 ? index : 0;
@@ -161,6 +286,7 @@ export const usePlayerStore = defineStore('player', {
 
     playIndex(index) {
       if (index < 0 || index >= this.queue.length) return;
+      this.failStreak = 0;
       this.index = index;
       void this.loadCurrent();
     },
@@ -175,6 +301,7 @@ export const usePlayerStore = defineStore('player', {
     },
 
     clearQueue() {
+      clearAutoAdvance();
       this.queue = [];
       this.index = -1;
     },

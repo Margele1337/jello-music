@@ -62,10 +62,20 @@ const broadcast = (channel, payload) => {
   }
 };
 
-export const registerIpc = (getWindow) => {
+export const registerIpc = (getWindow, intents = {}) => {
   ipcMain.handle(IPC.APP_VERSION, (event) => {
     assertTrusted(event, getWindow);
     return app.getVersion();
+  });
+
+  // 渲染层挂载后拉取一次启动意图（--settings / jello:// 深链），返回即清空。
+  // 仅主窗口可消费：HUD 窗口（桌面歌词/频谱）跑同一个 App.vue，不拦会被抢走
+  ipcMain.handle(IPC.APP_LAUNCH_INTENT, (event) => {
+    assertTrusted(event, getWindow);
+    const empty = { openSettings: false, deepLink: null };
+    const main = getWindow()?.[0];
+    if (!main || main.isDestroyed() || event.sender !== main.webContents) return empty;
+    return intents.consumeLaunchIntent?.() ?? empty;
   });
 
   ipcMain.handle(IPC.APP_OPEN_LOGS, (event) => {

@@ -3,15 +3,25 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import SigmaMusicPlayer from '../components/sigma/SigmaMusicPlayer.vue';
 import SigmaHotkeyIntro from '../components/sigma/SigmaHotkeyIntro.vue';
+import SigmaRiskVerifyModal from '../components/sigma/SigmaRiskVerifyModal.vue';
 import { usePlayerStore } from '../stores/player.js';
 import { useSettingsStore } from '../stores/settings.js';
+import { useAuthStore } from '../stores/auth.js';
 const router = useRouter();
 const player = usePlayerStore();
 const settings = useSettingsStore();
+const auth = useAuthStore();
 
 player.initialize();
 
 watch(() => settings.volume, (value) => player.applyPersistedVolume(value));
+
+// 登录失效（20017 / 歌曲接口 status==2）：client.js 标记 auth.expired 后跳转登录页
+watch(() => auth.expired, (expired) => {
+  if (expired && router.currentRoute.value.path !== '/login') {
+    router.push('/login');
+  }
+});
 
 const toggleSpectrum = () => {
   void settings.update({ spectrum: !settings.spectrum }).catch((error) => {
@@ -77,6 +87,7 @@ onMounted(() => {
           </div>
         </div>
       </Teleport>
+      <SigmaRiskVerifyModal />
     </div>
   </main>
 </template>

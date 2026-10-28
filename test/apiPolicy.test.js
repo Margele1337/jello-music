@@ -43,3 +43,22 @@ test('removes auth fields from login and user responses', () => {
   });
   assert.equal(sanitizeApiResponse('/playlist/track/all', loginBody), loginBody);
 });
+
+test('accepts risk-control verification endpoints only', () => {
+  assert.deepEqual(
+    sanitizeApiRequest({ path: '/get/verify/info', params: { eventid: 'gz_tx_event_x' } }),
+    { method: 'GET', path: '/get/verify/info', params: { eventid: 'gz_tx_event_x' }, data: undefined }
+  );
+  assert.equal(sanitizeApiRequest({ path: '/sidedt' }).path, '/sidedt');
+  // 只开放精确路径，前缀不放行其它 /get、/sidedt 变体
+  assert.throws(() => sanitizeApiRequest({ path: '/get/other' }));
+  assert.throws(() => sanitizeApiRequest({ path: '/sidedtx' }));
+  assert.throws(() => sanitizeApiRequest({ path: '/verify/user/info' }));
+});
+
+test('passes verification responses through without stripping', () => {
+  const verifyBody = { status: 1, data: { v_type: 23, txappid: '2090934891', token: 'keep-me' } };
+  assert.equal(sanitizeApiResponse('/get/verify/info', verifyBody), verifyBody);
+  const sidedtBody = { status: 1, data: { t: 'keep-me' } };
+  assert.equal(sanitizeApiResponse('/sidedt', sidedtBody), sidedtBody);
+});

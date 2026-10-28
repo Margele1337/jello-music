@@ -1,4 +1,26 @@
-export const QUALITY_VALUES = Object.freeze(['128', '320', 'flac', 'high']);
+// 音质阶梯（低 → 高）：顺序即降级顺序，播放失败时从当前档位向下回退
+export const QUALITY_VALUES = Object.freeze([
+  '128', '320', 'flac', 'high', 'viper_atmos', 'viper_clear', 'viper_tape'
+]);
+
+export const QUALITY_LABELS = Object.freeze({
+  128: '标准',
+  320: '高品',
+  flac: 'FLAC',
+  high: 'Hi-Res',
+  viper_atmos: '全景声',
+  viper_clear: '超清',
+  viper_tape: '母带'
+});
+
+export const qualityLabel = (quality) => QUALITY_LABELS[quality] || '';
+
+// 相邻下一档更低音质；已是 128 时返回空串表示无可降级空间
+export const nextLowerQuality = (quality) => {
+  const index = QUALITY_VALUES.indexOf(quality);
+  return index > 0 ? QUALITY_VALUES[index - 1] : '';
+};
+
 export const DATA_SOURCE_VALUES = Object.freeze(['concept', 'official']);
 export const PLAYBACK_RATES = Object.freeze([0.75, 1, 1.25, 1.5, 2]);
 

@@ -14,7 +14,10 @@ const ALLOWED_PREFIXES = [
   '/singer',
   '/album',
   '/fm',
-  '/youth'
+  '/youth',
+  // 酷狗风控（20028）二次验证：获取验证信息 + 提交滑块/短信结果（侧车自动补 sid/edt）
+  '/get/verify/info',
+  '/sidedt'
 ];
 
 const ALLOWED_METHODS = new Set(['GET', 'POST']);

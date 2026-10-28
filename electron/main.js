@@ -1,11 +1,12 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, screen, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { IPC, SETTINGS_ARG, findDeepLinkArg, hasSettingsArg, parseDeepLink, formatTrayTooltip } from '../shared/ipc.js';
 import { initSettings, getSettings, updateSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar } from './services/sidecar.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
-import { getTrayInstance, hasTray, initTray, syncTray } from './tray.js';
+import { getTrayInstance, hasTray, initTray, setTrayTooltip, syncTray } from './tray.js';
 import customTrayMenu from './services/customTrayMenu.js';
 import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from './windows/desktopLyrics.js';
 import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
@@ -41,6 +42,107 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 let mainWindow = null;
 let isQuitting = false;
 let shutdownStarted = false;
+
+// ===== 启动意图：跳转列表 --settings 与 jello:// 深链 =====
+// 渲染层挂载时通过 app:launch-intent 拉取一次；运行期到达的深链走 app:deep-link 推送
+let pendingOpenSettings = false;
+let pendingDeepLink = null;
+
+const deliverDeepLink = () => {
+  if (!pendingDeepLink || !mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.webContents.isLoading()) {
+    // 页面加载期到达的深链：等就绪后再投（渲染层挂载时的拉取是另一路兜底）
+    mainWindow.webContents.once('did-finish-load', () => setTimeout(deliverDeepLink, 150));
+    return;
+  }
+  const params = pendingDeepLink;
+  pendingDeepLink = null;
+  mainWindow.webContents.send(IPC.APP_DEEP_LINK, params);
+};
+
+const handleProtocolUrl = (url) => {
+  const params = parseDeepLink(url);
+  if (!params) return;
+  pendingDeepLink = params;
+  deliverDeepLink();
+};
+
+const consumeLaunchIntent = () => {
+  const intent = { openSettings: pendingOpenSettings, deepLink: pendingDeepLink };
+  pendingOpenSettings = false;
+  pendingDeepLink = null;
+  return intent;
+};
+
+const openSettingsView = () => {
+  showMainWindow();
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send(IPC.UI_NAVIGATE, { path: '/settings' });
+  } else {
+    // 窗口尚未就绪：记下意图，渲染层挂载后拉取
+    pendingOpenSettings = true;
+  }
+};
+
+// 二次启动的 argv 里可能带 --settings（跳转列表）或 jello:// URL（协议唤起）
+const handleLaunchArgv = (argv) => {
+  const windowReady = mainWindow && !mainWindow.isDestroyed();
+  if (hasSettingsArg(argv)) {
+    if (windowReady) openSettingsView();
+    else pendingOpenSettings = true; // 首实例还在启动：记下意图，挂载后拉取
+  } else if (windowReady) {
+    showMainWindow();
+  }
+  const url = findDeepLinkArg(argv);
+  if (url) handleProtocolUrl(url);
+};
+
+// 单实例锁：第二个实例把 argv 转交首个实例后退出，避免重复托盘/侧车抢端口
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  // 此刻尚未初始化任何服务，直接退出，跳过 before-quit 清理链
+  process.exit(0);
+}
+app.on('second-instance', (_event, argv) => handleLaunchArgv(argv));
+// macOS：协议唤起走 open-url 事件而不是 argv
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleProtocolUrl(url);
+});
+// 冷启动 argv：--settings（跳转列表）与 Windows 协议唤起（jello://… 直接进 argv）
+if (hasSettingsArg(process.argv)) pendingOpenSettings = true;
+const startupLink = findDeepLinkArg(process.argv);
+if (startupLink) {
+  const params = parseDeepLink(startupLink);
+  if (params) pendingDeepLink = params;
+}
+
+// 注册 jello:// 协议。dev 模式必须带应用根目录参数，否则系统会用裸 electron
+// 打开链接（空白窗口）；打包后无额外参数
+const registerDeepLinkProtocol = () => {
+  const devArgs = app.isPackaged ? [] : [path.resolve(__dirname, '..')];
+  app.setAsDefaultProtocolClient('jello', process.execPath, devArgs);
+};
+
+// Windows 跳转列表：任务栏图标右键 → 任务 → 设置
+const setupJumpList = () => {
+  if (process.platform !== 'win32') return;
+  app.setJumpList([
+    {
+      type: 'tasks',
+      items: [
+        {
+          program: process.execPath,
+          arguments: SETTINGS_ARG,
+          title: '设置',
+          description: '打开 Jello Music 设置',
+          iconPath: process.execPath,
+          iconIndex: 0
+        }
+      ]
+    }
+  ]);
+};
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -79,10 +181,32 @@ const toggleAuxSetting = (key, sync) => {
   }
 };
 
+// 多屏时在光标所在显示器打开：用户通常在当前工作的屏幕上唤起面板，
+// 固定主屏会让副屏用户每次都要手动拖过去。返回工作区内居中的坐标。
+const initialWindowPosition = () => {
+  const WINDOW_WIDTH = 800;
+  const WINDOW_HEIGHT = 600;
+  let display;
+  try {
+    display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  } catch {
+    display = null;
+  }
+  const area = (display || screen.getPrimaryDisplay()).workArea;
+  const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
+  return {
+    x: clamp(Math.round(area.x + (area.width - WINDOW_WIDTH) / 2), area.x, area.x + Math.max(0, area.width - WINDOW_WIDTH)),
+    y: clamp(Math.round(area.y + (area.height - WINDOW_HEIGHT) / 2), area.y, area.y + Math.max(0, area.height - WINDOW_HEIGHT))
+  };
+};
+
 function createWindow() {
+  const position = initialWindowPosition();
   mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
+    x: position.x,
+    y: position.y,
     minWidth: 800,
     minHeight: 600,
     maxWidth: 800,
@@ -150,7 +274,45 @@ function createWindow() {
   } else {
     void mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  // 窗口（重）建后补投未消费的深链；加载期到达的由 deliverDeepLink 内部等待
+  deliverDeepLink();
 }
+
+// ===== 托盘悬停提示（正在播放）=====
+// 复用自绘托盘菜单的 store 抓取机制（executeJavaScript），不为提示新增 IPC 通道。
+// 2s 轮询即节流；setTrayTooltip 内部对相同文案去重，避免无谓的原生调用。
+let trayTooltipTimer = null;
+let trayTooltipScraping = false;
+
+const startTrayTooltipSync = () => {
+  if (trayTooltipTimer) return;
+  trayTooltipTimer = setInterval(() => {
+    if (trayTooltipScraping || !hasTray()) return;
+    const win = mainWindow;
+    if (!win || win.isDestroyed() || win.webContents.isLoading()) return;
+    trayTooltipScraping = true;
+    customTrayMenu.getMenuState(win)
+      .then((state) => {
+        setTrayTooltip(formatTrayTooltip({
+          playing: state?.isPlaying,
+          title: state?.song?.title,
+          artist: state?.song?.artist
+        }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        trayTooltipScraping = false;
+      });
+  }, 2000);
+};
+
+const stopTrayTooltipSync = () => {
+  if (trayTooltipTimer) {
+    clearInterval(trayTooltipTimer);
+    trayTooltipTimer = null;
+  }
+};
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
@@ -160,8 +322,13 @@ app.whenReady().then(async () => {
   initSettings();
   await initAuthSession();
   initUpdater();
+  registerDeepLinkProtocol();
+  setupJumpList();
   initDockController(() => mainWindow);
-  registerIpc(() => [mainWindow, getDesktopLyricsWindow(), getSpectrumWindow()].filter(Boolean));
+  registerIpc(
+    () => [mainWindow, getDesktopLyricsWindow(), getSpectrumWindow()].filter(Boolean),
+    { consumeLaunchIntent }
+  );
   initTray({
     showWindow: showMainWindow,
     quit: () => {
@@ -178,12 +345,7 @@ app.whenReady().then(async () => {
       }
       showMainWindow();
     },
-    openSettings: () => {
-      showMainWindow();
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('ui:navigate', { path: '/settings' });
-      }
-    }
+    openSettings: openSettingsView
   });
   customTrayMenu.init(
     () => mainWindow,
@@ -196,12 +358,7 @@ app.whenReady().then(async () => {
         }
         showMainWindow();
       },
-      openSettings: () => {
-        showMainWindow();
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('ui:navigate', { path: '/settings' });
-        }
-      },
+      openSettings: openSettingsView,
       playPause: () => sendPlayerCommand('toggle'),
       previous: () => sendPlayerCommand('previous'),
       next: () => sendPlayerCommand('next'),
@@ -212,6 +369,7 @@ app.whenReady().then(async () => {
     }
   );
   syncTray(getSettings().minimizeToTray);
+  startTrayTooltipSync();
   const platform = getSettings().dataSource === 'concept' ? 'lite' : 'official';
   startSidecar({ platform }).catch((error) => {
     console.error('[sidecar] 启动失败:', error.message);
@@ -236,6 +394,7 @@ app.on('before-quit', (event) => {
 
   shutdownStarted = true;
   event.preventDefault();
+  stopTrayTooltipSync();
   stopGlobalShortcuts();
   stopGlobalKeyListener();
   stopDockAnimation();

@@ -23,6 +23,18 @@ export const initTray = (nextCallbacks) => {
 
 export const hasTray = () => !!tray;
 
+// 悬停提示（正在播放/已暂停）：文案由主进程抓取渲染层状态后格式化传入。
+// 相同文案去重，避免高频轮询下反复触发原生 setToolTip。
+let currentTooltip = '';
+
+export const setTrayTooltip = (text) => {
+  if (!tray || tray.isDestroyed()) return;
+  const next = String(text || '').trim() || 'Jello Music';
+  if (next === currentTooltip) return;
+  currentTooltip = next;
+  tray.setToolTip(next);
+};
+
 // 右键托盘：自绘 HTML 菜单（歌曲卡片 + 播放控制 + 动作列表，含设置入口）。
 // 主窗口不可用时回退原生菜单。
 const buildNativeFallback = () => Menu.buildFromTemplate([
@@ -41,6 +53,7 @@ export const syncTray = (enabled) => {
     customTrayMenu.cleanup();
     tray?.destroy();
     tray = null;
+    currentTooltip = '';
     return;
   }
   if (tray) return;
@@ -53,6 +66,7 @@ export const syncTray = (enabled) => {
 
   tray = new Tray(image.resize({ width: 32, height: 32 }));
   tray.setToolTip('Jello Music');
+  currentTooltip = 'Jello Music';
 
   // 右键：自绘菜单窗（原生菜单仅作主窗口缺失时的兜底）
   tray.on('right-click', () => {
