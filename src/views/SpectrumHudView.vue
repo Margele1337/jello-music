@@ -267,7 +267,9 @@ onBeforeUnmount(() => {
 
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: transparent; overflow: hidden; }
+/* 必须用 shorthand 覆盖：styles.css 的 body 是 radial-gradient（背景图），
+   :root 在 html 上还有 #0e0c12 底色，只清 background-color 会留下深色底 */
+html, body, #app { background: transparent !important; overflow: hidden; }
 
 .spectrum-hud {
   position: fixed;

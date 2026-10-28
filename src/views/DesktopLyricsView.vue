@@ -760,10 +760,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+/* 必须用 shorthand 覆盖：styles.css 的 body 是 radial-gradient（背景图），
+   :root 在 html 上还有 #0e0c12 底色，只清 background-color 会留下深色底 */
 html,
 body,
 #app {
-  background-color: rgba(0, 0, 0, 0) !important;
+  background: rgba(0, 0, 0, 0) !important;
   overflow: hidden;
 }
 </style>
