@@ -19,15 +19,16 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
 
   const source = Array.isArray(playlists) ? playlists : [];
   const liked = source.find((playlist) => playlist?.isDefault)
-    || source.find((playlist) => LIKED_NAMES.has(String(playlist?.name || '').trim()));
+    || source.find((playlist) => String(playlist?.name || '').trim() === '我喜欢')
+    || source.find((playlist) => String(playlist?.name || '').trim() === '我喜欢的音乐');
 
   const seenIds = new Set();
   const seenNames = new Set(RESERVED_NAMES);
 
   if (liked?.id) {
     seenIds.add(liked.id);
-    seenNames.add('我喜欢的音乐');
-    items.push(toPlaylistItem(liked, '我喜欢的音乐'));
+    seenNames.add('我喜欢');
+    items.push(toPlaylistItem(liked, '我喜欢'));
   }
 
   for (const playlist of source) {

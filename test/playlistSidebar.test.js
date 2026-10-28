@@ -11,7 +11,17 @@ test('collapses the liked aliases into one entry', () => {
     { id: 'daily', name: '每日推荐' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['每日推荐', '我喜欢的音乐', '歌词', '设置']);
+  assert.deepEqual(names(items), ['每日推荐', '我喜欢', '歌词', '设置']);
+  assert.equal(items[1].id, 'liked');
+});
+
+test('prefers the literal 我喜欢 playlist when no default flag is present', () => {
+  const items = buildPlaylistSidebarItems([
+    { id: 'old-label', name: '我喜欢的音乐' },
+    { id: 'liked', name: '我喜欢' }
+  ], { authenticated: true });
+
+  assert.deepEqual(names(items), ['每日推荐', '我喜欢', '歌词', '设置']);
   assert.equal(items[1].id, 'liked');
 });
 
