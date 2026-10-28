@@ -67,10 +67,15 @@ api/                 KuGouMusicApi git submodule (MIT)
    the account/login entry, minimize-to-tray, desktop lyrics, and update status.
 6. With minimize-to-tray enabled, close/minimize hides the window and the tray
    menu restores it or quits; audio keeps playing because the renderer stays alive.
-7. With desktop lyrics enabled, the main renderer loads and parses the current
-   song's LRC, then pushes a change-only `{title, artist, current, next, playing}`
-   state to main. Main sanitizes it and forwards it to a transparent, always-on-top,
-   click-through window whose preload exposes only the state subscription.
+7. With desktop lyrics enabled, the main renderer fetches the current song's
+   KRC karaoke lyrics (falling back to plain LRC), pushes the full per-character
+   payload on song change, and streams `{time, playing}` progress ticks every
+   250ms. Main sanitizes both payloads and forwards them to a transparent,
+   always-on-top window whose preload exposes only the state/progress
+   subscriptions plus drag/resize/pointer/allowlist actions. The lyrics window
+   renders the karaoke highlight (5ms interpolation between ticks), supports
+   lock/click-through, drag, 8-direction resize, color/font controls, and
+   play controls that forward as player commands, and persists its bounds.
 8. With the spectrum HUD enabled, the owner-authored spectrum pipeline taps the
    shared audio element with an `AudioWorklet` (CORS-enabled media), performs the
    sigmarebase-style 1024-point FFT on each MP3 frame, and sends 114 raw levels

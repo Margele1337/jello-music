@@ -60,6 +60,7 @@ Conservative classification for this clean-room project:
 | Jello/Sigma app & tray icon | Owner-authored Jello branding (stored in the legacy repo) | MIT (owner-authorized) | 2026-10-28 | Owner |
 | Spectrum HUD / FFT / AudioWorklet | Owner-authored sigmarebase spectrum (ported from the legacy repo with owner authorization) | MIT (owner-authorized) | 2026-10-28 | Owner |
 | Right-Shift dock / slide behavior | Owner-authored Jello/Sigma UI behavior (reimplemented for the clean-room window) | MIT | 2026-10-28 | Owner |
+| Desktop lyrics karaoke window | Owner-authored desktop-lyrics feature (behavior port: lock/drag/resize, per-char KRC karaoke, colors; reimplemented on the clean-room preload bridge) | MIT | 2026-10-28 | Owner |
 
 ## Limits
 

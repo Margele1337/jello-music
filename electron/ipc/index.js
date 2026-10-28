@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { IPC } from '../../shared/ipc.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
@@ -6,8 +6,14 @@ import { proxyApiRequest, resetDeviceRegistration } from '../services/apiProxy.j
 import { clearAuthSession, getProfile, resetDeviceCookies } from '../services/authSession.js';
 import { restartSidecar } from '../services/sidecar.js';
 import { syncTray } from '../tray.js';
-import { syncDesktopLyrics, sendDesktopLyricsState } from '../windows/desktopLyrics.js';
-import { sanitizeDesktopLyricState } from '../../shared/desktopLyrics.js';
+import {
+  getDesktopLyricsWindow,
+  resendDesktopLyricsState,
+  sendDesktopLyricsLyrics,
+  sendDesktopLyricsProgress,
+  syncDesktopLyrics
+} from '../windows/desktopLyrics.js';
+import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
 import { sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
 import { isMainWindowDocked, restoreMainWindow, toggleMainWindowDock } from '../windows/sigmaDock.js';
@@ -97,7 +103,88 @@ export const registerIpc = (getWindow) => {
 
   ipcMain.on(IPC.DESKTOP_LYRICS_UPDATE, (event, state) => {
     if (!isTrustedSender(event, getWindow())) return;
-    sendDesktopLyricsState(sanitizeDesktopLyricState(state));
+    sendDesktopLyricsLyrics(sanitizeDesktopLyricLyrics(state));
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_PROGRESS, (event, payload) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    sendDesktopLyricsProgress(sanitizeDesktopLyricProgress(payload));
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_READY, (event) => {
+    if (!isTrustedSender(event, getDesktopLyricsWindow())) return;
+    resendDesktopLyricsState();
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_ACTION, (event, action) => {
+    if (!isTrustedSender(event, getDesktopLyricsWindow())) return;
+    const commandMap = {
+      'toggle-play': 'toggle',
+      'previous-song': 'previous',
+      'next-song': 'next'
+    };
+    if (action === 'close-lyrics') {
+      updateSettings({ desktopLyrics: false });
+      syncDesktopLyrics(false);
+      broadcast(IPC.SETTINGS_CHANGED, getSettings());
+      return;
+    }
+    const command = commandMap[action];
+    if (!command) return;
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && window !== getDesktopLyricsWindow()) {
+        window.webContents.send(IPC.PLAYER_COMMAND, command);
+      }
+    }
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_IGNORE_MOUSE, (event, ignore) => {
+    if (!isTrustedSender(event, getDesktopLyricsWindow())) return;
+    const window = getDesktopLyricsWindow();
+    if (window && !window.isDestroyed()) {
+      window.setIgnoreMouseEvents(ignore === true, { forward: true });
+    }
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_BOUNDS, (event, bounds) => {
+    if (!isTrustedSender(event, getDesktopLyricsWindow())) return;
+    const window = getDesktopLyricsWindow();
+    if (!window || window.isDestroyed() || !bounds || typeof bounds !== 'object') return;
+    const clamp = (value, fallback) => {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    };
+    const current = window.getBounds();
+    window.setBounds({
+      x: clamp(bounds.x, current.x),
+      y: clamp(bounds.y, current.y),
+      width: clamp(bounds.width, current.width),
+      height: clamp(bounds.height, current.height)
+    });
+  });
+
+  ipcMain.on(IPC.DESKTOP_LYRICS_FIXED_SIZE, (event, payload) => {
+    if (!isTrustedSender(event, getDesktopLyricsWindow())) return;
+    const window = getDesktopLyricsWindow();
+    if (!window || window.isDestroyed()) return;
+    const area = screen.getPrimaryDisplay().workArea;
+    if (payload?.fixed) {
+      const width = Math.max(800, Math.round(Number(payload.width) || area.width));
+      const height = Math.max(160, Math.round(Number(payload.height) || 160));
+      window.setMaximumSize(Math.min(width, area.width), Math.min(height, area.height));
+    } else {
+      window.setMaximumSize(area.width, area.height);
+    }
+  });
+
+  ipcMain.handle(IPC.DESKTOP_LYRICS_POINTER_STATE, (event) => {
+    if (!isTrustedSender(event, getDesktopLyricsWindow())) return null;
+    const window = getDesktopLyricsWindow();
+    if (!window || window.isDestroyed()) return null;
+    return {
+      cursor: screen.getCursorScreenPoint(),
+      bounds: window.getBounds()
+    };
   });
 
   ipcMain.on(IPC.SPECTRUM_UPDATE, (event, payload) => {

@@ -23,7 +23,8 @@ contextBridge.exposeInMainWorld('jello', {
     }
   },
   desktopLyrics: {
-    update: (state) => ipcRenderer.send('desktop-lyrics:update', state)
+    update: (state) => ipcRenderer.send('desktop-lyrics:update', state),
+    progress: (payload) => ipcRenderer.send('desktop-lyrics:progress', payload)
   },
   player: {
     onCommand: (callback) => {

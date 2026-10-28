@@ -1,3 +1,4 @@
+import { parseKrc } from '../lyrics/krc.js';
 import { parseLrc } from '../lyrics/lrc.js';
 import { apiRequest } from './client.js';
 import {
@@ -107,6 +108,29 @@ export const getLyrics = async (song) => {
   const lines = parseLrc(lyric?.decodeContent || '');
   if (!lines.length) throw new Error('歌词内容为空');
   return { lines, candidate };
+};
+
+// 逐字 KRC 歌词（桌面歌词卡拉OK效果用），失败返回空数组
+export const getKaraokeLyrics = async (song) => {
+  if (!song?.hash) return [];
+
+  const searchParams = {
+    hash: song.hash,
+    duration: Math.max(0, Math.round(Number(song.timeLength) || 0))
+  };
+  if (song.albumAudioId) searchParams.album_audio_id = song.albumAudioId;
+
+  const search = await apiRequest({ method: 'GET', path: '/search/lyric', params: searchParams });
+  const candidate = (Array.isArray(search?.candidates) ? search.candidates : [])
+    .find((item) => item?.id && item?.accesskey);
+  if (!candidate) return [];
+
+  const lyric = await apiRequest({
+    method: 'GET',
+    path: '/lyric',
+    params: { id: candidate.id, accesskey: candidate.accesskey, fmt: 'krc', decode: true }
+  });
+  return parseKrc(lyric?.decodeContent || '');
 };
 
 const pickUrl = (payload) => {

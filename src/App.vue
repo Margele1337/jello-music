@@ -3,8 +3,8 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { getLyrics } from './services/api/library.js';
+import { onBeforeUnmount, onMounted, watch } from 'vue';
+import { getKaraokeLyrics, getLyrics } from './services/api/library.js';
 import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
 import { useAuthStore } from './stores/auth.js';
 import { usePlayerStore } from './stores/player.js';
@@ -13,10 +13,83 @@ import { useSettingsStore } from './stores/settings.js';
 const settings = useSettingsStore();
 const auth = useAuthStore();
 const player = usePlayerStore();
-const desktopLyricLines = ref([]);
 let desktopLyricToken = 0;
 let desktopLyricTimer = null;
-let lastDesktopState = '';
+
+const sendDesktopLyricsLyrics = (payload) => {
+  window.jello?.desktopLyrics?.update?.(payload);
+};
+
+const sendDesktopLyricsProgress = (force = false) => {
+  if (!settings.desktopLyrics) return;
+  const audio = player.audio;
+  const time = Number.isFinite(audio?.currentTime) ? audio.currentTime + 0.15 : 0;
+  window.jello?.desktopLyrics?.progress?.({ time, playing: !!player.playing, force });
+};
+
+const loadDesktopLyrics = async () => {
+  const token = ++desktopLyricToken;
+
+  if (!player.currentSong || !settings.desktopLyrics) {
+    sendDesktopLyricsLyrics({ hash: '', title: '', artist: '', lines: [] });
+    return;
+  }
+
+  const song = player.currentSong;
+  try {
+    const krcLines = await getKaraokeLyrics(song);
+    if (token !== desktopLyricToken || !settings.desktopLyrics) return;
+    sendDesktopLyricsLyrics({
+      hash: song.hash || '',
+      title: song.name || '',
+      artist: song.author || '',
+      lines: krcLines.map((line) => ({
+        characters: line.characters.map((char) => [char.c, char.s, char.e]),
+        translated: line.translated || ''
+      }))
+    });
+  } catch {
+    if (token !== desktopLyricToken || !settings.desktopLyrics) return;
+    // 没有逐字歌词时退回逐行 LRC，桌面歌词仍可显示
+    try {
+      const { lines } = await getLyrics(song);
+      if (token !== desktopLyricToken || !settings.desktopLyrics) return;
+      sendDesktopLyricsLyrics({
+        hash: song.hash || '',
+        title: song.name || '',
+        artist: song.author || '',
+        lines: lines.map((line) => ({
+          characters: [[line.text, line.time * 1000, (line.time + 4) * 1000]],
+          translated: ''
+        }))
+      });
+    } catch {
+      if (token !== desktopLyricToken) return;
+      sendDesktopLyricsLyrics({ hash: song.hash || '', title: song.name || '', artist: song.author || '', lines: [] });
+    }
+  }
+  sendDesktopLyricsProgress(true);
+};
+
+const startDesktopLyrics = () => {
+  if (desktopLyricTimer) return;
+  desktopLyricTimer = setInterval(() => sendDesktopLyricsProgress(), 250);
+};
+
+const stopDesktopLyrics = () => {
+  if (desktopLyricTimer) clearInterval(desktopLyricTimer);
+  desktopLyricTimer = null;
+};
+
+watch(() => settings.desktopLyrics, (enabled) => {
+  if (enabled) {
+    void loadDesktopLyrics();
+    startDesktopLyrics();
+  } else {
+    desktopLyricToken += 1;
+    stopDesktopLyrics();
+  }
+});
 let unsubscribeSettings = null;
 let unsubscribeAuth = null;
 let unsubscribePlayer = null;
@@ -26,82 +99,12 @@ watch(() => settings.quality, (next, previous) => {
   if (previous && next !== previous) player.reloadCurrent();
 });
 
-const buildDesktopState = () => {
-  const song = player.currentSong;
-  const audio = player.audio;
-  const time = Number.isFinite(audio?.currentTime) ? audio.currentTime + 0.15 : 0;
-  let index = -1;
-  for (let i = 0; i < desktopLyricLines.value.length; i += 1) {
-    if (desktopLyricLines.value[i].time > time) break;
-    index = i;
-  }
-  return {
-    title: song?.name || '',
-    artist: song?.author || '',
-    current: desktopLyricLines.value[index]?.text || '',
-    next: desktopLyricLines.value[index + 1]?.text || '',
-    playing: !!player.playing
-  };
-};
-
-const pushDesktopState = (force = false) => {
-  if (!settings.desktopLyrics) return;
-  const state = buildDesktopState();
-  const key = JSON.stringify(state);
-  if (!force && key === lastDesktopState) return;
-  lastDesktopState = key;
-  window.jello?.desktopLyrics?.update?.(state);
-};
-
-const loadDesktopLyrics = async () => {
-  const token = ++desktopLyricToken;
-  desktopLyricLines.value = [];
-  lastDesktopState = '';
-
-  if (!player.currentSong || !settings.desktopLyrics) {
-    pushDesktopState(true);
-    return;
-  }
-
-  try {
-    const result = await getLyrics(player.currentSong);
-    if (token !== desktopLyricToken || !settings.desktopLyrics) return;
-    desktopLyricLines.value = result.lines;
-  } catch {
-    if (token !== desktopLyricToken) return;
-    desktopLyricLines.value = [];
-  }
-  pushDesktopState(true);
-};
-
-const startDesktopLyrics = () => {
-  if (desktopLyricTimer) return;
-  desktopLyricTimer = setInterval(() => pushDesktopState(), 250);
-};
-
-const stopDesktopLyrics = () => {
-  if (desktopLyricTimer) clearInterval(desktopLyricTimer);
-  desktopLyricTimer = null;
-  lastDesktopState = '';
-};
-
-watch(() => settings.desktopLyrics, (enabled) => {
-  if (enabled) {
-    void loadDesktopLyrics();
-    startDesktopLyrics();
-  } else {
-    desktopLyricToken += 1;
-    desktopLyricLines.value = [];
-    stopDesktopLyrics();
-  }
-});
-
 watch(() => player.currentSong?.hash, () => {
   if (settings.desktopLyrics) void loadDesktopLyrics();
 });
 
 watch(() => player.playing, () => {
-  if (settings.desktopLyrics) pushDesktopState(true);
+  if (settings.desktopLyrics) sendDesktopLyricsProgress(true);
 });
 
 const sendSpectrum = (payload) => window.jello?.spectrum?.update?.(payload);
@@ -180,6 +183,10 @@ onMounted(async () => {
   unsubscribeSpectrumRequest = window.jello?.spectrum?.onRequestCurrent?.(() => {
     if (settings.spectrum) refreshSpectrum();
   }) || null;
+  if (settings.desktopLyrics) {
+    void loadDesktopLyrics();
+    startDesktopLyrics();
+  }
 });
 
 onBeforeUnmount(() => {
