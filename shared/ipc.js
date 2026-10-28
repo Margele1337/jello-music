@@ -9,7 +9,6 @@ export const IPC = Object.freeze({
   AUTH_CHANGED: 'auth:changed',
   API_REQUEST: 'api:request',
   PLAYER_COMMAND: 'player:command',
-  PLAYER_STATE: 'player:state',
   DESKTOP_LYRICS_UPDATE: 'desktop-lyrics:update',
   DESKTOP_LYRICS_PROGRESS: 'desktop-lyrics:progress',
   DESKTOP_LYRICS_STATE: 'desktop-lyrics:state',

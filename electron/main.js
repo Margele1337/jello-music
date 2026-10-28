@@ -20,7 +20,6 @@ import {
   stopDockAnimation,
   toggleMainWindowDock
 } from './windows/sigmaDock.js';
-import { setThumbarButtons } from './windows/thumbarButtons.js';
 import { installSigmaSizeGuard } from './services/sigmaSizeGuard.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
@@ -94,6 +93,7 @@ function createWindow() {
     transparent: true,
     hasShadow: false,
     show: false,
+    skipTaskbar: true,
     icon: path.join(__dirname, 'assets', 'app-icon.png'),
     backgroundColor: '#00000000',
     webPreferences: {
@@ -109,7 +109,6 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
-  if (process.platform === 'win32') setThumbarButtons(mainWindow, false);
 
   // 尺寸守卫：跨缩放显示器拖动/系统缩放变化时 WM_DPICHANGED 可能改坏
   // 无边框透明窗口尺寸（Chromium issue 40813134），双层校验并自动修复

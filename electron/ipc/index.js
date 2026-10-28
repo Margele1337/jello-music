@@ -17,7 +17,6 @@ import {
 import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
 import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
-import { setThumbarButtons } from '../windows/thumbarButtons.js';
 import {
   isMainWindowDocked,
   moveMainWindow,
@@ -223,13 +222,6 @@ export const registerIpc = (getWindow) => {
       cursor: screen.getCursorScreenPoint(),
       bounds: window.getBounds()
     };
-  });
-
-  ipcMain.on(IPC.PLAYER_STATE, (event, payload) => {
-    if (!isTrustedSender(event, getWindow())) return;
-    const main = getWindow()?.filter?.(Boolean)?.find((window) => window.webContents === event.sender);
-    if (!main || main.isDestroyed()) return;
-    setThumbarButtons(main, payload?.playing === true);
   });
 
   ipcMain.on(IPC.SPECTRUM_UPDATE, (event, payload) => {
