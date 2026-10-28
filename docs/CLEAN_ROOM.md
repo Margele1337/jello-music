@@ -56,7 +56,7 @@ Conservative classification for this clean-room project:
 | Electron/Vue/Vite skeleton | Original work | MIT | 2026-10-27 | — |
 | Sigma UI components/assets | Owner-authored sigmarebase work (ported from the legacy repo's Sigma UI) | MIT (owner) | 2026-10-27 | Owner review |
 | Roboto atlas font | Google Fonts / google/fonts | SIL OFL 1.1 | 2026-10-27 | Import check |
-| JetBrains Mono atlas font | JetBrains/JetBrainsMono (TTF, regenerated via tools/font-atlas) | SIL OFL 1.1 | 2026-10-28 | Import check |
+| Selawik atlas font | microsoft/Selawik (Segoe UI metric-compatible, regenerated via tools/font-atlas) | SIL OFL 1.1 | 2026-10-28 | Import check |
 | KuGouMusicApi sidecar | MakcRe/KuGouMusicApi | MIT | 2026-10-27 | Import check |
 | Jello/Sigma app & tray icon | Owner-authored Jello branding (stored in the legacy repo) | MIT (owner-authorized) | 2026-10-28 | Owner |
 | Spectrum HUD / FFT / AudioWorklet | Owner-authored sigmarebase spectrum (ported from the legacy repo with owner authorization) | MIT (owner-authorized) | 2026-10-28 | Owner |

@@ -9,6 +9,9 @@
 // 校验带 120ms 尾随防抖，避免和 Chromium 在 DPI 过渡期间打架。
 
 const SIZE_TOLERANCE_PX = 2;
+// DIP 层也放 1px 容差：150% 缩放下 getBounds 会在 800/801 之间反复取整漂移，
+// 严格相等会在两个值之间无限"修复"循环（旧版在这台机器上同样会空转）
+const DIP_TOLERANCE = 1;
 const CHECK_DEBOUNCE_MS = 120;
 const WATCHDOG_INTERVAL_MS = 1000;
 
@@ -45,7 +48,8 @@ export const installSigmaSizeGuard = (getWindow, expectedWidth, expectedHeight) 
     const win = getWindow();
     if (!win || win.isDestroyed() || state.repairing) return;
     const bounds = win.getBounds();
-    const dipBad = bounds.width !== expectedWidth || bounds.height !== expectedHeight;
+    const dipBad = Math.abs(bounds.width - expectedWidth) > DIP_TOLERANCE
+      || Math.abs(bounds.height - expectedHeight) > DIP_TOLERANCE;
 
     let physicalDetail = '';
     if (win32Api) {

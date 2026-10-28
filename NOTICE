@@ -17,7 +17,7 @@ Third-party components
 - Vite: MIT
 - electron-builder: MIT
 - Roboto (Sigma UI CSS font): SIL Open Font License 1.1
-- JetBrains Mono (Sigma text atlas): SIL Open Font License 1.1
+- Selawik (Sigma text atlas, Segoe UI metric-compatible): SIL Open Font License 1.1
   Copyright 2011 Google Inc. See src/assets/sigma/fonts/OFL.txt.
 - Other npm dependencies: used under their respective licenses; see
   package-lock.json and the dependency packages for full texts.
