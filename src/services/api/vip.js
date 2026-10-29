@@ -30,8 +30,39 @@ export const writeClaimedDay = (day, storage) => {
   claimStorage(storage)?.setItem(VIP_CLAIM_DAY_KEY, day);
 };
 
-// 服务端对重复领取的报错文案没有稳定错误码，只能按关键词识别
+// 服务端对重复领取的报错文案没有稳定错误码；实测重复领取是静默失败
+// （status:0、error_msg 空），文案识别只是兜底
 const ALREADY_CLAIMED_RE = /已领取|领取过|重复领取|已领过/;
+
+// 当月领取记录：data.list[] 每项 { day: 'YYYY-MM-DD', receive_vip, vip_type }。
+// 这是「今天领过没有」的可靠判定来源（覆盖手机端等其他渠道的领取）。
+export const getClaimedDays = async () => {
+  const payload = await apiRequest({
+    method: 'GET',
+    path: '/youth/month/vip/record',
+    params: { latest_limit: 100 }
+  });
+  if (!isOk(payload)) throw new Error(authErrorMessage(payload, '获取领取记录失败'));
+  const list = Array.isArray(payload?.data?.list) ? payload.data.list : [];
+  return list
+    .filter((item) => Number(item?.receive_vip) > 0 && typeof item?.day === 'string' && item.day)
+    .map((item) => item.day);
+};
+
+// 当前领取状态：优先服务端记录，查询失败回落本地标记
+export const getVipClaimStatus = async (date = new Date(), storage) => {
+  const day = formatVipDate(date);
+  try {
+    const days = await getClaimedDays();
+    if (days.includes(day)) {
+      writeClaimedDay(day, storage);
+      return { day, claimed: true, source: 'server' };
+    }
+    return { day, claimed: false, source: 'server' };
+  } catch {
+    return { day, claimed: readClaimedDay(storage) === day, source: 'local' };
+  }
+};
 
 export const claimDailyVip = async (date = new Date(), storage) => {
   const day = formatVipDate(date);
@@ -54,6 +85,17 @@ export const claimDailyVip = async (date = new Date(), storage) => {
     if (ALREADY_CLAIMED_RE.test(message)) {
       writeClaimedDay(day, storage);
       return { day, alreadyClaimed: true, upgradeOk: false, upgradeMessage: '' };
+    }
+    if (!detail) {
+      // 静默失败（status:0、无 error_msg）是重复领取的实测表现：
+      // 用当月领取记录复核，命中即按「已领取」处理
+      try {
+        const days = await getClaimedDays();
+        if (days.includes(day)) {
+          writeClaimedDay(day, storage);
+          return { day, alreadyClaimed: true, upgradeOk: false, upgradeMessage: '' };
+        }
+      } catch { /* 记录查询失败则维持原报错 */ }
     }
     throw new Error(message);
   }

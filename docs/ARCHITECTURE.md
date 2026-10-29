@@ -129,10 +129,14 @@ api/                 KuGouMusicApi git submodule (MIT)
 8. The settings account card can manually claim the concept-edition daily VIP
    (`/youth/day/vip` → `/youth/day/vip/upgrade`). It is never automatic; it needs
    a logged-in session with the concept data source, and the same token-field
-   stripping applies. Claimed days are remembered in localStorage
-   (`jello.vip.claimDay`, same pattern as the guest choice) so the button shows
-   "今日已领取" after a restart; a duplicate-claim response from the server is
-   recognized by its message and treated as state, not an error.
+   stripping applies. Whether today is already claimed is decided by the
+   `/youth/month/vip/record` receipts (`data.list[].day` — the only reliable
+   source, covering claims made on other devices): the server fails duplicate
+   claims silently (`status: 0`, empty `error_msg`), so error-message matching
+   is only a fallback. Claimed days are also remembered in localStorage
+   (`jello.vip.claimDay`, same pattern as the guest choice) as the offline
+   fallback; `tools/inspect-vip-claim.mjs` reproduces a claim call read-only
+   against the real local session for diagnosis.
 
 ## Playback
 

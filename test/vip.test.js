@@ -10,7 +10,7 @@ globalThis.window = {
   }
 };
 
-const { claimDailyVip, formatVipDate, readClaimedDay, writeClaimedDay } = await import('../src/services/api/vip.js');
+const { claimDailyVip, formatVipDate, readClaimedDay, writeClaimedDay, getClaimedDays, getVipClaimStatus } = await import('../src/services/api/vip.js');
 
 const makeStorage = () => {
   const map = new Map();
@@ -74,4 +74,66 @@ test('claim day marker round-trips and tolerates missing storage', () => {
   assert.equal(readClaimedDay(makeStorage()), '');
   // Node 22 的 globalThis.localStorage 没有 Storage 方法，缺方法时必须静默跳过
   assert.equal(readClaimedDay({}), '');
+});
+
+test('getClaimedDays parses the month record and keeps real receipts only', async () => {
+  handler = async () => ({
+    status: 1,
+    data: {
+      list: [
+        { day: '2026-10-28', receive_vip: 1, vip_type: 'svip' },
+        { day: '2026-10-29', receive_vip: 0, vip_type: 'svip' }, // 未发放，不算
+        { day: '', receive_vip: 1 },                             // 无日期，丢弃
+        { vip_type: 'svip', receive_vip: 1 },                    // 无日期，丢弃
+        null
+      ]
+    }
+  });
+  assert.deepEqual(await getClaimedDays(), ['2026-10-28']);
+});
+
+test('getVipClaimStatus trusts the server record and syncs the local marker', async () => {
+  const storage = makeStorage();
+  handler = async (request) => {
+    if (request.path === '/youth/month/vip/record') {
+      return { status: 1, data: { list: [{ day: '2026-10-29', receive_vip: 1 }] } };
+    }
+    throw new Error('unexpected path');
+  };
+
+  const claimed = await getVipClaimStatus(new Date('2026-10-29T10:00:00+08:00'), storage);
+  assert.equal(claimed.claimed, true);
+  assert.equal(claimed.source, 'server');
+  assert.equal(readClaimedDay(storage), '2026-10-29');
+
+  handler = async () => ({ status: 1, data: { list: [] } });
+  const fresh = await getVipClaimStatus(new Date('2026-10-29T10:00:00+08:00'), storage);
+  assert.equal(fresh.claimed, false);
+  assert.equal(fresh.source, 'server');
+});
+
+test('getVipClaimStatus falls back to the local marker when the record query fails', async () => {
+  const storage = makeStorage();
+  writeClaimedDay('2026-10-29', storage);
+  handler = async () => { throw new Error('network down'); };
+
+  const status = await getVipClaimStatus(new Date('2026-10-29T10:00:00+08:00'), storage);
+  assert.equal(status.claimed, true);
+  assert.equal(status.source, 'local');
+});
+
+test('silent duplicate-claim failure is re-checked against the month record', async () => {
+  const calls = [];
+  handler = async (request) => {
+    calls.push(request.path);
+    if (request.path === '/youth/day/vip') return { status: 0, error_msg: '', error_code: 0 };
+    // 重复领取是静默失败：无 error_msg，靠记录复核
+    return { status: 1, data: { list: [{ day: '2026-10-29', receive_vip: 1 }] } };
+  };
+  const storage = makeStorage();
+
+  const result = await claimDailyVip(new Date('2026-10-29T10:00:00+08:00'), storage);
+  assert.equal(result.alreadyClaimed, true);
+  assert.equal(readClaimedDay(storage), '2026-10-29');
+  assert.deepEqual(calls, ['/youth/day/vip', '/youth/month/vip/record']);
 });

@@ -13,7 +13,7 @@ import {
   checkProxyInput,
   proxyRejectedMessage
 } from '../components/settings/addressChecks.js';
-import { claimDailyVip, formatVipDate, readClaimedDay } from '../services/api/vip.js';
+import { claimDailyVip, formatVipDate, getVipClaimStatus, readClaimedDay } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRiskStore } from '../stores/risk.js';
 import { useSettingsStore } from '../stores/settings.js';
@@ -407,6 +407,22 @@ const canClaimVip = computed(() => (
   && !claimingVip.value
   && claimedDay.value !== formatVipDate()
 ));
+
+// 打开设置页/登录态变化时向服务端核对当天是否已领（覆盖手机端领取的场景）
+const refreshVipClaimStatus = async () => {
+  if (!auth.isAuthenticated || settings.dataSource !== 'concept') return;
+  try {
+    const status = await getVipClaimStatus();
+    if (status.claimed) {
+      claimedDay.value = status.day;
+    } else if (claimedDay.value === status.day) {
+      // 服务端记录里没有当天：清掉本地标记（如换设备/记录延迟以服务端为准）
+      claimedDay.value = '';
+    }
+  } catch { /* 查询失败保持本地标记 */ }
+};
+
+watch(() => [auth.isAuthenticated, settings.dataSource], () => { void refreshVipClaimStatus(); }, { immediate: true });
 
 const vipButtonLabel = computed(() => {
   if (claimingVip.value) return '领取中…';
