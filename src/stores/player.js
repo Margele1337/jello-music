@@ -5,6 +5,7 @@ import { getSongUrl } from '../services/api/library.js';
 import {
   applyLoudnessData,
   applyOutputVolume,
+  consumePreparedMedia,
   ensureAudioGraph,
   prepareSelfDecode,
   setAudioOutputDevice,
@@ -283,31 +284,43 @@ export const usePlayerStore = defineStore('player', {
           void ensureAudioGraph(element);
         }
 
-        // ===== mp3 自解码频谱链路：整首字节 fetch 一次，可听路径改用 blob URL，
-        // 分析路径由 WebCodecs Worker 解码（services/audio/spectrum.js）。
-        // 准入失败/取字节失败/帧头或解码配置无效 → media.decode 为 null，
-        // 静默回退：远程 URL 直接播放 + 原 tap+预读频谱链路，用户无感知。=====
+        // ===== 自解码频谱链路（边下边播）：可听路径立即用远程 URL 出声
+        //（jello-media 带 CORS 头，tap/预读可用），整首字节在后台取回后只接管
+        // 频谱分析、不动可听元素；mp4 闸门预探测好的 blob 仍立即使用。
+        // 取字节失败/解码配置无效 → decode 为 null，就地走 tap+预读链路。=====
         stopDecodeAnalysis();   // 先停上一首的解码 Worker（旧 blob 在 src 切换后回收）
-        const media = await prepareSelfDecode({ url: result.url, extName: result.extName });
-        if (token !== loadToken) {
-          // 已被更新的加载取代：直接回收刚创建的 blob，避免泄漏
-          if (media.decode?.blobUrl) {
-            try { URL.revokeObjectURL(media.decode.blobUrl); } catch { /* ignore */ }
-          }
-          return;
+        const prepared = consumePreparedMedia(result.url);
+        if (prepared?.decode) {
+          element.src = prepared.src;
+        } else {
+          element.src = result.url;
         }
-
-        element.src = media.src;
         element.volume = this.volume / 100;
         element.playbackRate = Number(settings.playbackRate) || 1;
         this.loudness = result.loudness || null;
         setLoudnessEnabled(!!settings.loudnessNormalization);
         applyLoudnessData(this.loudness);
         void setAudioOutputDevice(element, settings.audioOutputDevice || 'default');
-        // 分析链路在 play 之前挂好：play/seeked 事件会触发重锚，门控时间轴始终
-        // 由 element.currentTime 派生；回退曲目则清理上一会话并回收旧 blob
-        if (media.decode) startDecodeAnalysis(element, media.decode);
-        else stopDecodeAnalysis();
+        if (prepared?.decode) {
+          // mp4 闸门路径：字节已备好，播放前挂分析（与旧行为一致）
+          startDecodeAnalysis(element, prepared.decode);
+        } else {
+          // 后台准备：完成且仍是当前这首歌时接管频谱；失败保持 tap 链路
+          void prepareSelfDecode({ url: result.url, extName: result.extName })
+            .then((media) => {
+              if (token !== loadToken) {
+                if (media.decode?.blobUrl) {
+                  try { URL.revokeObjectURL(media.decode.blobUrl); } catch { /* ignore */ }
+                }
+                return;
+              }
+              if (media.decode) startDecodeAnalysis(element, media.decode);
+              else stopDecodeAnalysis();
+            })
+            .catch(() => {
+              if (token === loadToken) stopDecodeAnalysis();
+            });
+        }
         if (resumeAt > 0) {
           element.addEventListener('loadedmetadata', () => {
             try {

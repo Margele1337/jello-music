@@ -161,7 +161,12 @@ for the protocol lives in `tools/smoke-media-proxy.mjs`. The queue,
 repeat/shuffle modes, and volume live in the Pinia player store. The in-app
 lyrics view (`/lyrics`) searches Kugou lyrics by hash, asks the sidecar to
 decode the LRC, highlights the current line from the audio clock, and seeks on
-line click.
+line click. Spectrum playback latency: the audible path starts immediately
+from the remote `jello-media` URL; the whole-file fetch for self-decode runs in
+the background and, on success, only the spectrum analysis switches over
+(anchored to the current playback position) — clicking a song no longer waits
+for the full download. mp4 candidates keep their pre-probe gate: a
+successfully probed blob is used as the audible path immediately.
 
 ## Packaging
 

@@ -2,9 +2,11 @@
 //
 // 两条链路（按歌曲无缝二选一，回退静默无提示）：
 // 1) 自解码链路（主链路，mp3/flac/aac(mp4)，对齐 MusicManager 解码循环 ~:383-407）：
-//    player.js 把整首歌字节 fetch 一次，可听路径用 blob URL 喂现有 audio 元素，
-//    分析路径由 mp3DecodeWorker.js 用 Chromium 内建 WebCodecs AudioDecoder 解成
-//    原生采样率 PCM，逐帧做 2048 点 FFT，幅度按 Int16 量级传回主线程。
+//    可听路径立即用远程 URL 出声（边下边播），整首字节由 player.js 后台 fetch，
+//    备好后由 mp3DecodeWorker.js 用 Chromium 内建 WebCodecs AudioDecoder 解成
+//    原生采样率 PCM，逐帧做 2048 点 FFT，幅度按 Int16 量级传回主线程——分析
+//    接管只换频谱来源，不动可听元素（startDecodeAnalysis 会锚定当前进度）。
+//    mp4 候选例外：闸门预探测成功的 blob 直接作为可听路径（立即使用）。
 //    窗几何与原版的对应关系：aac 帧 = 1024 采样/声道 → 2048 交错采样**正好**
 //    是原版 jaad 整帧 FFT 的窗口（不截断）；mp3 帧 2304、FLAC 常规块 8192
 //    交错采样则截断到 2048 保持 2 的幂窗（2 的幂 FFT 是既有决定）。
@@ -430,6 +432,9 @@ const takePrepared = (url) => {
   return media;
 };
 
+// player.js 装配播放时同步取走 mp4 闸门探测好的字节（无则 null，走边下边播）
+export const consumePreparedMedia = (url) => takePrepared(url);
+
 const stashPrepared = (url, media) => {
   if (preparedCache && preparedCache.url !== url) revokeBlobUrl(preparedCache.media?.src);
   preparedCache = { url, media };
@@ -641,6 +646,9 @@ export const startDecodeAnalysis = (element, decode) => {
     });
 
   decodeRaf = requestAnimationFrame(decodeTick);
+  // 边下边播接管：元素可能已经在播远程流（后台准备完成才启动分析），
+  // 时间轴要锚到当前进度；播放前接管时 currentTime 为 0，跳过
+  if ((element.currentTime || 0) > 0) resyncDecode(element.currentTime);
   return true;
 };
 

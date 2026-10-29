@@ -706,3 +706,30 @@ export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled }) 
   if (!hasAudioDecoder) return { ok: false, reason: 'webcodecs-unavailable' };
   return { ok: true, reason: '', format };
 };
+
+// ===== AudioData 帧 → 2048 点交错窗（Int16 量级，供 Worker FFT） =====
+// readPlane(planeIndex) 按 f32-planar 语义返回单声道平面（frameSamples 个样本）。
+// 注意 WebCodecs copyTo 请求 f32（交错）时平面含 frameSamples*channels 个样本，
+// 按 frameSamples 分配的目的缓冲在立体声上必然溢出——必须请求 f32-planar。
+// take 截断到前 pairsNeeded 对（mp3 1152/flac 4096 截断、aac 1024 恰好填满），
+// 尾部补零；mono 复制 L 到 R。
+export const mixFrameIntoWindow = ({ readPlane, frameSamples, channels, windowSamples, pairsNeeded, int16Scale }) => {
+  const clampScale = (value) => (value < -1 ? -1 : value > 1 ? 1 : value) * int16Scale;
+  const take = Math.min(frameSamples, pairsNeeded);
+  const plane0 = readPlane(0);
+  for (let i = 0; i < take; i += 1) {
+    windowSamples[i * 2] = clampScale(plane0[i]);
+  }
+  if (channels > 1) {
+    const plane1 = readPlane(1);
+    for (let i = 0; i < take; i += 1) {
+      windowSamples[i * 2 + 1] = clampScale(plane1[i]);
+    }
+  } else {
+    for (let i = 0; i < take; i += 1) {
+      windowSamples[i * 2 + 1] = windowSamples[i * 2];
+    }
+  }
+  for (let i = take * 2; i < windowSamples.length; i += 1) windowSamples[i] = 0;
+  return take;
+};

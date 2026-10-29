@@ -27,6 +27,7 @@ import {
   findNextFlacFrameOffset,
   findNextFrameOffset,
   flacFrameForSample,
+  mixFrameIntoWindow,
   parseFlacFrameHeader,
   parseMp3FrameHeader
 } from './mp3Frame.js';
@@ -166,32 +167,25 @@ const onAudioFrame = (audioData) => {
       audioData.close();
       return;
     }
-    // copyTo 按平面取（解码器原生格式可能是 planar），这里自己交错成
-    // L0,R0,L1,R1… —— 原版 convertToPCMFloatArray 产出的就是交错布局
-    const pairsNeeded = FFT_SIZE / 2;
-    // AAC 帧正好 1024 采样/声道 → take = 1024 → 2048 窗填满、零填充段为空，
-    // 与原版的整帧 FFT 几何逐点一致；mp3(1152)/flac(常规 4096) 才会走截断路径
-    const take = Math.min(frameSamples, pairsNeeded);
-    if (!planeScratch || planeScratch.length < frameSamples) {
-      planeScratch = new Float32Array(frameSamples);
-    }
-    audioData.copyTo(planeScratch, { planeIndex: 0, format: 'f32' });
-    for (let i = 0; i < take; i += 1) {
-      const value = planeScratch[i];
-      // Int16 量级（带削波保护），保证与 tap 链路及原版幅度标度一致
-      windowSamples[i * 2] = (value < -1 ? -1 : value > 1 ? 1 : value) * INT16_SCALE;
-    }
-    if (channels > 1) {
-      audioData.copyTo(planeScratch, { planeIndex: 1, format: 'f32' });
-      for (let i = 0; i < take; i += 1) {
-        const value = planeScratch[i];
-        windowSamples[i * 2 + 1] = (value < -1 ? -1 : value > 1 ? 1 : value) * INT16_SCALE;
-      }
-    } else {
-      for (let i = 0; i < take; i += 1) windowSamples[i * 2 + 1] = windowSamples[i * 2];
-    }
+    // copyTo 按平面取（f32-planar：每平面正好 frameSamples 个样本），这里自己
+    // 交错成 L0,R0,L1,R1… —— 原版 convertToPCMFloatArray 产出的就是交错布局。
+    // 之前请求 f32（交错）时平面含 frameSamples*channels 个样本，scratch 按
+    // frameSamples 分配，立体声必然 copyTo 抛 "destination is not large enough"
+    mixFrameIntoWindow({
+      readPlane: (planeIndex) => {
+        if (!planeScratch || planeScratch.length < frameSamples) {
+          planeScratch = new Float32Array(frameSamples);
+        }
+        audioData.copyTo(planeScratch, { planeIndex, format: 'f32-planar' });
+        return planeScratch;
+      },
+      frameSamples,
+      channels,
+      windowSamples,
+      pairsNeeded: FFT_SIZE / 2,
+      int16Scale: INT16_SCALE
+    });
     audioData.close();
-    for (let i = take * 2; i < FFT_SIZE; i += 1) windowSamples[i] = 0;
 
     spectrumFft(windowSamples, realOut, imagOut);
     const magnitudes = new Float32Array(BAR_COUNT);
