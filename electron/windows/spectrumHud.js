@@ -5,9 +5,17 @@ import Store from 'electron-store';
 import {
   getForegroundFullscreenState,
   stopForegroundFullscreenWatcher,
-  watchForegroundFullscreen,
-  ensureForegroundFullscreenWatcher
+  watchForegroundFullscreen
 } from '../services/fullscreenWatcher.js';
+import {
+  clampHudPosition,
+  hudAnchorPosition,
+  hudOffsetFromAnchor,
+  hudPositionFromOffset,
+  hudSurfaceSize,
+  resolveHudArea,
+  scaleHudOffset
+} from '../../shared/spectrumHud.js';
 import { getSettings } from '../services/settingsStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,7 +23,6 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
 // 频谱几何基准：1080p 物理像素。1080p 仍是原版绝对像素值，1440p/4K 等比放大。
 const REFERENCE_HEIGHT = 1080;
-const BASE_WINDOW_HEIGHT = 280;
 const BASE_MIN_WIDTH = 300;
 const BASE_MIN_HEIGHT = 60;
 const MIN_SCALE = 0.5;
@@ -26,11 +33,14 @@ let lastData = null;
 let lastSettings = null;
 let spectrumDipScale = 0;
 let spectrumUserMoved = false;
+// 用户拖出来的偏移（相对左下锚点，DIP）：整屏表面靠它保留「条基线被抬高」的语义
+let spectrumUserOffset = { x: 0, y: 0 };
 let spectrumGeometryKey = '';
 let spectrumDisplayListenersBound = false;
 let stopFullscreenWatch = null;
 let boundsStore = null;
 let displayListeners = [];
+let surfaceApplying = false;
 
 const getBoundsStore = () => {
   if (!boundsStore) boundsStore = new Store({ name: 'spectrum-window' });
@@ -59,24 +69,61 @@ const getDisplay = () => {
   }
 };
 
-const anchorSpectrumWindow = () => {
-  if (!hudWindow || hudWindow.isDestroyed()) return;
-  const bounds = hudWindow.getBounds();
-  const area = getDisplay().workArea;
-  if (spectrumUserMoved) {
-    const x = Math.min(Math.max(bounds.x, area.x), area.x + area.width - bounds.width);
-    const y = Math.min(Math.max(bounds.y, area.y), area.y + area.height - bounds.height);
-    if (x !== bounds.x || y !== bounds.y) {
-      // setPosition 不带宽高：150% 缩放下 setBounds 的 DIP↔物理往返取整会让尺寸 ±1 漂移
-      hudWindow.setPosition(Math.round(x), Math.round(y));
+// HUD 目标区域：前台全屏 → 整块显示器；否则 → 工作区（不压住任务栏）。
+// 原版画在整个游戏窗口上，条可以顶到屏幕最上沿，这里必须给满整个区域。
+const getHudArea = () => {
+  const fallback = (() => {
+    try {
+      const display = hudWindow && !hudWindow.isDestroyed()
+        ? screen.getDisplayMatching(hudWindow.getBounds())
+        : screen.getPrimaryDisplay();
+      return display.workArea;
+    } catch {
+      return null;
     }
-    return;
-  }
-  const y = area.y + area.height - bounds.height;
-  if (bounds.y === y) return;
-  hudWindow.setPosition(bounds.x, Math.round(y));
+  })();
+  const area = resolveHudArea(screen.getAllDisplays(), getForegroundFullscreenState(), fallback);
+  return area || fallback;
 };
 
+// 目标几何：尺寸恒等于区域，位置按「是否被用户拖过」决定
+const getHudTarget = (area = getHudArea()) => {
+  if (!area) return null;
+  const size = hudSurfaceSize(area);
+  const position = spectrumUserMoved
+    ? clampHudPosition(area, size, hudPositionFromOffset(area, size, spectrumUserOffset))
+    : hudAnchorPosition(area, size);
+  return { ...size, ...position };
+};
+
+const isHudAtTarget = (target) => {
+  if (!target || !hudWindow || hudWindow.isDestroyed()) return true;
+  const bounds = hudWindow.getBounds();
+  const tolerance = 2;
+  return Math.abs(bounds.x - target.x) <= tolerance
+    && Math.abs(bounds.y - target.y) <= tolerance
+    && Math.abs(bounds.width - target.width) <= tolerance
+    && Math.abs(bounds.height - target.height) <= tolerance;
+};
+
+const applyHudTarget = (target = getHudTarget()) => {
+  if (!target || !hudWindow || hudWindow.isDestroyed()) return;
+  if (isHudAtTarget(target)) return;
+  const bounds = hudWindow.getBounds();
+  surfaceApplying = true;
+  try {
+    if (Math.abs(bounds.width - target.width) > 2 || Math.abs(bounds.height - target.height) > 2) {
+      hudWindow.setBounds(target);
+    } else {
+      // setPosition 不带宽高：150% 缩放下 setBounds 的 DIP↔物理往返取整会让尺寸 ±1 漂移
+      hudWindow.setPosition(target.x, target.y);
+    }
+  } finally {
+    surfaceApplying = false;
+  }
+};
+
+// DPI / 分辨率变化：表面尺寸由区域直接给出，需要等比换算的只有「用户拖出来的偏移」
 const applySpectrumGeometry = () => {
   if (!hudWindow || hudWindow.isDestroyed()) return;
   const display = getDisplay();
@@ -84,16 +131,14 @@ const applySpectrumGeometry = () => {
   const dipScale = toDipScale(display, scale);
   const key = `${scale}|${display.size.width}x${display.size.height}`;
 
-  if (spectrumDipScale > 0) {
+  if (spectrumDipScale > 0 && spectrumUserMoved) {
     const ratio = dipScale / spectrumDipScale;
     if (Number.isFinite(ratio) && Math.abs(ratio - 1) >= 0.005) {
-      const bounds = hudWindow.getBounds();
-      const nextWidth = Math.min(Math.round(bounds.width * ratio), display.workArea.width);
-      const nextHeight = Math.min(Math.round(bounds.height * ratio), display.workArea.height);
-      hudWindow.setBounds({ x: bounds.x, y: bounds.y, width: nextWidth, height: nextHeight });
+      spectrumUserOffset = scaleHudOffset(spectrumUserOffset, ratio);
     }
   }
   spectrumDipScale = dipScale;
+  applyHudTarget();
   if (spectrumGeometryKey === key) return;
   spectrumGeometryKey = key;
   sendSpectrumSettings({ ...lastSettings, scale });
@@ -103,18 +148,36 @@ const isAllowedUrl = (url) => (
   devServerUrl ? url.startsWith(devServerUrl) : url.startsWith('file://')
 );
 
-const geometry = () => {
-  const display = screen.getPrimaryDisplay();
-  const factor = display.scaleFactor > 0 ? display.scaleFactor : 1;
-  const pixelScale = clampScale((display.size.height * factor) / REFERENCE_HEIGHT);
-  const dipScale = pixelScale / factor;
-  const height = Math.min(display.workArea.height, Math.round(BASE_WINDOW_HEIGHT * dipScale));
-  return {
-    width: display.workArea.width,
-    height,
-    x: display.workArea.x,
-    y: display.workArea.y + display.workArea.height - height
-  };
+// 创建时的初始几何：整块工作区（前台全屏时由 watcher 再切到显示器区域）
+const geometry = () => screen.getPrimaryDisplay().workArea;
+
+const initialHudBounds = (store, area, dipScale) => {
+  const size = hudSurfaceSize(area);
+  const savedSize = store.get('spectrumWindowSize');
+  const savedPosition = store.get('spectrumWindowPosition');
+  const storedDipScale = store.get('spectrumGeometryDipScale');
+  const moved = store.get('spectrumUserMoved') === true;
+
+  let offset = { x: 0, y: 0 };
+  if (moved && savedPosition && Number.isFinite(savedPosition.x)) {
+    // 旧版本存的是贴底 ~280px 条：把保存的左下角位置换算成相对锚点的偏移，
+    // 再按 DPI 变化等比换算（storedDipScale 缺失时按当前 DPI 处理）
+    const savedHeight = Number.isFinite(savedSize?.height) ? savedSize.height : size.height;
+    const savedY = Number.isFinite(savedPosition.y)
+      ? savedPosition.y
+      : area.y + area.height - savedHeight;
+    const previous = hudOffsetFromAnchor(area, { width: size.width, height: savedHeight }, {
+      x: savedPosition.x,
+      y: savedY
+    });
+    const ratio = Number.isFinite(storedDipScale) && storedDipScale > 0
+      ? dipScale / storedDipScale
+      : 1;
+    offset = scaleHudOffset(previous, ratio);
+  }
+
+  const position = clampHudPosition(area, size, hudPositionFromOffset(area, size, offset));
+  return { ...size, ...position, offset };
 };
 
 export const showSpectrumHud = () => {
@@ -125,30 +188,12 @@ export const showSpectrumHud = () => {
 
   const store = getBoundsStore();
   const display = screen.getPrimaryDisplay();
-  const pixelScale = clampScale((display.size.height * display.scaleFactor) / REFERENCE_HEIGHT);
-  const dipScale = pixelScale / (display.scaleFactor || 1);
-  const savedSize = store.get('spectrumWindowSize');
-  const savedPosition = store.get('spectrumWindowPosition');
-
-  let width = savedSize?.width || display.workArea.width;
-  let height = savedSize?.height || Math.round(BASE_WINDOW_HEIGHT * dipScale);
-  const storedDipScale = store.get('spectrumGeometryDipScale');
-  if (Number.isFinite(storedDipScale) && storedDipScale > 0) {
-    const ratio = dipScale / storedDipScale;
-    width = Math.round(width * ratio);
-    height = Math.round(height * ratio);
-  }
-  width = Math.min(width, display.workArea.width);
-  height = Math.min(height, display.workArea.height);
-
-  const x = Math.min(
-    Math.max(savedPosition?.x ?? display.workArea.x, display.workArea.x),
-    display.workArea.x + display.workArea.width - width
-  );
-  const y = Math.min(
-    Math.max(savedPosition?.y ?? display.workArea.y + display.workArea.height - height, display.workArea.y),
-    display.workArea.y + display.workArea.height - 1
-  );
+  const factor = display.scaleFactor > 0 ? display.scaleFactor : 1;
+  const pixelScale = clampScale((display.size.height * factor) / REFERENCE_HEIGHT);
+  const dipScale = pixelScale / factor;
+  const area = geometry();
+  const initial = initialHudBounds(store, area, dipScale);
+  const { width, height, x, y, offset } = initial;
 
   hudWindow = new BrowserWindow({
     width,
@@ -178,6 +223,7 @@ export const showSpectrumHud = () => {
 
   spectrumDipScale = dipScale;
   spectrumUserMoved = store.get('spectrumUserMoved') === true;
+  spectrumUserOffset = offset;
 
   hudWindow.setAlwaysOnTop(true, 'screen-saver');
   hudWindow.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
@@ -188,6 +234,9 @@ export const showSpectrumHud = () => {
     const bounds = hudWindow.getBounds();
     store.set('spectrumWindowPosition', { x: bounds.x, y: bounds.y });
     store.set('spectrumWindowSize', { width: bounds.width, height: bounds.height });
+    if (Number.isFinite(spectrumDipScale) && spectrumDipScale > 0) {
+      store.set('spectrumGeometryDipScale', spectrumDipScale);
+    }
   };
 
   // 原生拖动/缩放期间 move 事件每秒几十次，同步落盘会卡住拖动循环；防抖到停手后再写
@@ -200,30 +249,17 @@ export const showSpectrumHud = () => {
     }, 200);
   };
 
+  // 「贴底锚定」只看左下角（尺寸由区域决定，可能还没来得及同步）
   const isAtAnchor = () => {
     if (!hudWindow || hudWindow.isDestroyed()) return true;
     const bounds = hudWindow.getBounds();
-    const area = getDisplay().workArea;
-    return Math.abs(bounds.y - (area.y + area.height - bounds.height)) <= 2;
+    const area = getHudArea();
+    if (!area) return true;
+    return Math.abs(bounds.x - area.x) <= 2
+      && Math.abs((bounds.y + bounds.height) - (area.y + area.height)) <= 2;
   };
 
-  const anchor = () => {
-    if (!hudWindow || hudWindow.isDestroyed()) return;
-    const bounds = hudWindow.getBounds();
-    const area = getDisplay().workArea;
-    if (spectrumUserMoved) {
-      const x = Math.min(Math.max(bounds.x, area.x), area.x + area.width - bounds.width);
-      const y = Math.min(Math.max(bounds.y, area.y), area.y + area.height - bounds.height);
-      if (x !== bounds.x || y !== bounds.y) {
-        // setPosition 不带宽高：150% 缩放下 setBounds 的 DIP↔物理往返取整会让尺寸 ±1 漂移
-        hudWindow.setPosition(Math.round(x), Math.round(y));
-      }
-      return;
-    }
-    const targetY = area.y + area.height - bounds.height;
-    if (bounds.y === targetY) return;
-    hudWindow.setPosition(bounds.x, Math.round(targetY));
-  };
+  const anchor = () => applyHudTarget();
 
   const reanchorAndSync = () => {
     anchor();
@@ -235,12 +271,23 @@ export const showSpectrumHud = () => {
     flushBoundsSoon();
   });
   hudWindow.on('move', () => {
-    flushBoundsSoon();
-    // 区分「系统贴底锚定」与「用户手动拖动」：位置不是贴底目标 → 用户拖的，记住它
+    if (surfaceApplying) {
+      flushBoundsSoon();
+      return;
+    }
+    const bounds = hudWindow.getBounds();
+    const area = getHudArea();
+    // 区分「系统贴底锚定」与「用户手动拖动」：左下角不在贴底目标 → 用户拖的，记住它
     if (!spectrumUserMoved && !isAtAnchor()) {
       spectrumUserMoved = true;
       store.set('spectrumUserMoved', true);
     }
+    if (spectrumUserMoved && area) {
+      spectrumUserOffset = hudOffsetFromAnchor(area, hudSurfaceSize(area), bounds);
+    }
+    // 整屏表面允许向上/向右溢出（拖动要能改变条基线），但左下角锚点必须留在屏内
+    anchor();
+    flushBoundsSoon();
   });
 
   hudWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -273,6 +320,8 @@ export const showSpectrumHud = () => {
     hudWindow = null;
     spectrumGeometryKey = '';
     spectrumDipScale = 0;
+    spectrumUserOffset = { x: 0, y: 0 };
+    surfaceApplying = false;
     if (boundsFlushTimer) {
       clearTimeout(boundsFlushTimer);
       boundsFlushTimer = null;
@@ -315,6 +364,8 @@ export const destroySpectrumHud = () => {
   lastSettings = null;
   spectrumGeometryKey = '';
   spectrumDipScale = 0;
+  spectrumUserOffset = { x: 0, y: 0 };
+  surfaceApplying = false;
   if (stopFullscreenWatch) {
     stopFullscreenWatch();
     stopFullscreenWatch = null;
@@ -333,6 +384,8 @@ export const syncSpectrumHud = (enabled) => {
 
 // 锁定 = 鼠标完全穿透（forward 让 mousemove 仍转发，方便渲染层感知）；解锁 = 可拖动/缩放。
 // 解除穿透时不能带 forward 选项：Windows 上 (false, {forward:true}) 解除不干净，窗口仍然穿透
+// HUD 表面现在是整块工作区：解锁态整屏都会吃鼠标，渲染层为此提供「锁定」按钮 + 双击任意处复位，
+// 且解锁态指示框/徽标全程 pointer-events:none（只有按钮可点），不挡穿透路径。
 export const applySpectrumHudMouseEvents = (locked) => {
   if (!hudWindow || hudWindow.isDestroyed()) return;
   if (locked === true) {

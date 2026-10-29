@@ -37,7 +37,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   desktopLyricsFont: '',
   spectrum: false,
   spectrumScale: 1,
-  spectrumInfoScale: 1.25,
+  // 1.0 = 原版固定像素信息卡（封面 100×100、字号 18/20），纯倍率不叠加分辨率缩放
+  spectrumInfoScale: 1,
   spectrumInfoVisible: true,
   spectrumSigmaSmoothing: 0.335,
   spectrumAvDelayMs: 590,
@@ -83,12 +84,14 @@ export const sanitizeSettings = (patch) => {
     }
 
     if (key === 'spectrumInfoScale') {
+      // 与 shared/spectrumHud.js 的 clampInfoScale 同区间：信息卡倍率，1.0 = 原版
       const n = Number(value);
-      if (Number.isFinite(n)) next[key] = Math.max(0.8, Math.min(2, n));
+      if (Number.isFinite(n)) next[key] = Math.max(0.5, Math.min(2, n));
       continue;
     }
 
     if (key === 'spectrumSigmaSmoothing') {
+      // 直接替换原版 MusicManager.java:149 的常量 0.335 作为每帧逼近乘数
       const n = Number(value);
       if (Number.isFinite(n)) next[key] = Math.max(0.05, Math.min(1, n));
       continue;

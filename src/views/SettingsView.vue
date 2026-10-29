@@ -528,7 +528,8 @@ const settingSections = [
         control: 'slider',
         icon: 'image',
         label: '频谱信息大小',
-        slider: { min: 0.8, max: 2, step: 0.05 },
+        description: '信息卡倍率，1.00x 即原版固定像素大小（封面 100px）。',
+        slider: { min: 0.5, max: 2, step: 0.05 },
         format: (value) => `${value.toFixed(2)}x`
       },
       {
@@ -536,6 +537,7 @@ const settingSections = [
         control: 'slider',
         icon: 'sliders',
         label: '平滑系数',
+        description: '原版公式 alpha = 系数 × 60/渲染帧率，0.335 即原版值。',
         slider: { min: 0.05, max: 1, step: 0.005 },
         format: (value) => value.toFixed(3)
       },
@@ -558,6 +560,7 @@ const settingSections = [
         control: 'seg',
         icon: 'lock',
         label: '频谱锁定模式',
+        description: '解锁后频谱铺满整屏用于拖动定位，双击任意处即可重新锁定。',
         options: [
           { value: true, displayText: '锁定（穿透鼠标）' },
           { value: false, displayText: '解锁（可拖动位置）' }
