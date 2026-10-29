@@ -243,7 +243,8 @@ const initDecoder = () => {
 const normalizeFormat = (value) => (value === 'flac' || value === 'aac' ? value : 'mp3');
 
 const startDecode = ({
-  buffer, offset, sampleRate, channels, format: fmt, description, streaminfo: si, sampleTable: table, preset
+  buffer, offset, firstOffset, sampleIndex, sampleTarget, sampleRate, channels,
+  format: fmt, description, streaminfo: si, sampleTable: table, preset
 }) => {
   try {
     if (typeof AudioDecoder !== 'function') throw new Error('WebCodecs AudioDecoder unavailable');
@@ -291,8 +292,21 @@ const startDecode = ({
       sampleTable = null;
     }
     nextOffset = Math.max(0, Number(offset) || 0);
-    // FLAC 精确 seek 的帧索引必须从「首帧=样本 0」起建，之后增量续扫
-    flacIndex = format === 'flac' ? createFlacFrameIndex(nextOffset) : null;
+    // FLAC 增量 seek 索引必须从歌曲第一个帧起建（与 restartDecode 复用语义一致），
+    // 之后按锚点目标样本扫帧；锚点由主进程随 decode 消息原子给定（边下边播
+    // 接管时不允许「先从头解码再补 restart」的竞态）
+    flacIndex = format === 'flac' ? createFlacFrameIndex(Math.max(0, Number(firstOffset) || 0)) : null;
+    if (format === 'aac' && sampleTable && Number(sampleIndex) >= 0) {
+      nextSample = Math.max(0, Math.min(sampleTable.count - 1, Math.trunc(sampleIndex)));
+      nextOffset = sampleTable.offsets[nextSample];
+    }
+    if (format === 'flac' && flacIndex && Number(sampleTarget) >= 0) {
+      const frame = flacFrameForSample(bytes, flacIndex, streaminfo, sampleTarget);
+      if (frame) {
+        nextOffset = frame.byteOffset;
+        self.postMessage({ type: 'seek', sample: frame.sample, sampleRate: flacSampleRate });
+      }
+    }
     timestampUs = 0;
     flushScheduled = false;
     stopped = false;

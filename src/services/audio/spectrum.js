@@ -602,7 +602,14 @@ export const startDecodeAnalysis = (element, decode) => {
     seektable: decode.seektable || null,
     sampleTable: decode.sampleTable || null
   };
-  decodeAccumTime = 0;
+  // 边下边播接管：元素可能已在播放，锚点必须与 decode 消息原子给定——
+  // 若先从歌曲开头起泵再补 restart，竞态窗口内起始段帧会以锚点时间轴进
+  // 队列（内容错位、条形弹跳）。resolveSeekAnchor 与 seek 同一精度。
+  const anchorTime = Number(element.currentTime) || 0;
+  const resolved = anchorTime > 0
+    ? resolveSeekAnchor(anchorTime)
+    : { offset: decode.offset, anchorTime: 0, sampleIndex: -1, sampleTarget: -1 };
+  decodeAccumTime = resolved.anchorTime || 0;
   workerHeld = false;
   lineBuffer = [];
   displayQueue.clear();
@@ -615,7 +622,10 @@ export const startDecodeAnalysis = (element, decode) => {
     worker.postMessage({
       type: 'decode',
       buffer: decode.buffer,
-      offset: decode.offset,
+      offset: resolved.offset,
+      firstOffset: decode.offset,
+      sampleIndex: resolved.sampleIndex,
+      sampleTarget: resolved.sampleTarget,
       sampleRate: header.sampleRate,
       channels: header.channels,
       // 格式感知：flac 需要 description（'fLaC'+元数据块）与 streaminfo
@@ -651,9 +661,6 @@ export const startDecodeAnalysis = (element, decode) => {
     });
 
   decodeRaf = requestAnimationFrame(decodeTick);
-  // 边下边播接管：元素可能已经在播远程流（后台准备完成才启动分析），
-  // 时间轴要锚到当前进度；播放前接管时 currentTime 为 0，跳过
-  if ((element.currentTime || 0) > 0) resyncDecode(element.currentTime);
   return true;
 };
 

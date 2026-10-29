@@ -305,8 +305,10 @@ export const usePlayerStore = defineStore('player', {
           // mp4 闸门路径：字节已备好，播放前挂分析（与旧行为一致）
           startDecodeAnalysis(element, prepared.decode);
         } else {
-          // 后台准备：完成且仍是当前这首歌时接管频谱；失败保持 tap 链路
-          void prepareSelfDecode({ url: result.url, extName: result.extName })
+          // 后台准备：完成且仍是当前这首歌时接管频谱；失败保持 tap 链路。
+          // 预算放宽到 8s：出声已不被它阻塞，旧 2500ms 是阻塞式设计的遗留值，
+          // 会让主元素/预读/后台三路并行下载抢带宽时频繁超时回落 tap
+          void prepareSelfDecode({ url: result.url, extName: result.extName, budgetMs: 8000 })
             .then((media) => {
               if (token !== loadToken) {
                 if (media.decode?.blobUrl) {
