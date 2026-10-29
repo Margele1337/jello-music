@@ -26,6 +26,8 @@ import {
   toggleMainWindowDock
 } from './windows/sigmaDock.js';
 import { installSigmaSizeGuard } from './services/sigmaSizeGuard.js';
+// 顶层 import 即触发 jello-media 协议的 privileged 注册（必须先于 app ready）
+import { initMediaProxy, stopMediaProxy } from './services/mediaProxy.js';
 
 // Keep the clean-room app's settings/session isolated from the legacy GPL app.
 app.setName('Jello Music Clean');
@@ -360,6 +362,7 @@ app.on('web-contents-created', (_event, contents) => {
 
 app.whenReady().then(async () => {
   await initAuthSession();
+  initMediaProxy();
   initUpdater();
   // 代理在 sidecar 启动与首个窗口创建之前应用：Chromium 网络栈与 sidecar
   // 的出站请求从第一个包起就走同一条代理链路
@@ -446,6 +449,7 @@ app.on('before-quit', (event) => {
   stopGlobalKeyListener();
   stopDockAnimation();
   stopUpdater();
+  stopMediaProxy();
   customTrayMenu.cleanup();
   destroyDesktopLyrics();
   destroySpectrumHud();

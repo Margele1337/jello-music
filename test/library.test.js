@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { buildMediaUrl } from '../shared/mediaScheme.js';
 
 let handler = async () => ({});
 globalThis.window = {
@@ -115,8 +116,8 @@ test('getSongUrl resolves per-quality hashes from /privilege/lite and degrades o
   assert.equal(result.playHash, 'H_HIGH');
   assert.equal(result.qualityLabel, 'Hi-Res');
   assert.equal(result.isTrial, false);
-  // 概念版部分 CDN 证书不匹配，保留接口返回的协议
-  assert.equal(result.url, 'http://fsandroid.kugou.com/high.flac');
+  // 媒体统一走 jello-media 协议；上游协议保留原样（HTTPS 升级由主进程代理决策）
+  assert.equal(result.url, buildMediaUrl('http://fsandroid.kugou.com/high.flac'));
 });
 
 test('getSongUrl skips MP4-only candidates and keeps degrading', async () => {
@@ -133,7 +134,7 @@ test('getSongUrl skips MP4-only candidates and keeps degrading', async () => {
   const result = await getSongUrl({ hash: 'ABC' }, 'flac');
   assert.deepEqual(qualities, ['flac', '320']);
   assert.equal(result.quality, '320');
-  assert.equal(result.url, 'https://cdn/song.mp3');
+  assert.equal(result.url, buildMediaUrl('https://cdn/song.mp3'));
 });
 
 test('getSongUrl falls back to a free_part trial when no tier has privilege', async () => {
@@ -152,7 +153,7 @@ test('getSongUrl falls back to a free_part trial when no tier has privilege', as
   const result = await getSongUrl({ hash: 'ABC' }, '320');
   assert.equal(result.isTrial, true);
   assert.equal(result.quality, '128');
-  assert.equal(result.url, 'https://cdn/trial.mp3');
+  assert.equal(result.url, buildMediaUrl('https://cdn/trial.mp3'));
   // 最后一次请求是试听兜底
   assert.equal(requests.at(-1).free_part, 1);
   assert.equal(requests.at(-1).hash, 'ABC');

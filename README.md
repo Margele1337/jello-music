@@ -52,18 +52,24 @@ ships without dev tooling (the release workflow does this automatically).
 - The renderer never gets Node.js access.
 - `webSecurity` stays enabled; do not add `allowRunningInsecureContent`.
 - API calls go through the main-process allowlist proxy; covers are upgraded to
-  HTTPS, while audio keeps the CDN protocol because some concept hosts only
-  serve valid HTTP. Media is loaded directly from Kugou CDNs.
+  HTTPS. Audio is fetched by the main process through the `jello-media://`
+  protocol with per-host HTTPS upgrade; only concept-CDN hosts with mismatched
+  certificates stay on HTTP, and only on the main-process→CDN leg.
 - The sidecar is loopback-only on a random port and requires a fresh per-launch
   token; direct local requests without it receive 401.
 - Keep a strict CSP, reviewed per change: it is written into `index.html` by
   `vite.config.js` from `shared/csp.js` — dev builds carry the Vite HMR origins,
-  packaged builds do not. `connect-src` is an explicit KuGou-CDN suffix
-  allowlist (`kugou.com`, `kgimg.com`) instead of a wide `https:`; the renderer
-  logs `[csp-audit]` lines to main.log when a fetch/media target falls outside
-  the list, which is how new CDN hosts get collected before the list grows.
-  `media-src` stays broad (`https: http: blob:`) until enough media hosts are
-  collected; `blob:` is required by the spectrum self-decode pipeline.
+  packaged builds do not. All media and cross-origin traffic goes through the
+  `jello-media://` custom protocol (`shared/mediaScheme.js`): the renderer never
+  holds CDN URLs, `connect-src` lists no CDN hosts at all, and `media-src` only
+  allows the scheme plus the self-decode `blob:`.
+- The media proxy validates upstream hosts against a KuGou-CDN suffix
+  allowlist (`kugou.com`, `kgimg.com`), upgrades `http:` sources to HTTPS per
+  host (probe once per launch, HTTP remains the fallback only for concept-CDN
+  hosts with mismatched certificates), and forwards Range headers so seeking
+  works. Plain-HTTP exposure is therefore reduced to the main-process→CDN leg
+  for those few hosts only. A smoke check for the protocol lives in
+  `tools/smoke-media-proxy.mjs` (`npx electron tools/smoke-media-proxy.mjs`).
 - Release hardening: the release job runs in the `release` GitHub environment
   (approval required) with only `contents: write`; checkout does not persist
   credentials; `v*` tags are protected from deletion and force-push; release

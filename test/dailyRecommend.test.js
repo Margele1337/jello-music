@@ -16,11 +16,7 @@ globalThis.window = {
   }
 };
 
-const {
-  getDailyRecommend,
-  getSongClimax,
-  normalizeClimaxSegments
-} = await import('../src/services/api/library.js');
+const { getDailyRecommend } = await import('../src/services/api/library.js');
 
 const makeSongs = (prefix, count, offset = 0) => Array.from({ length: count }, (_, i) => ({
   hash: `${prefix}${offset + i}`,
@@ -92,41 +88,4 @@ test('getDailyRecommend falls back to the single plain request when all pages fa
   assert.equal(requests.length, 2); // 分页 1 次失败 + 兜底 1 次
   assert.equal(requests[1].data, undefined);
   assert.equal(requests[1].path, '/everyday/recommend');
-});
-
-test('normalizeClimaxSegments converts ms fields to seconds and drops invalid items', () => {
-  const segments = normalizeClimaxSegments({
-    status: 1,
-    data: [
-      { hash: 'H1', start_time: '60000', timelength: '30000' },
-      { hash: 'H2', start_time: 120000, end_time: 150000 },
-      { hash: 'H3' }, // 缺 start_time
-      { hash: 'H4', start_time: '5000' }, // 缺时长/终点
-      { hash: 'H5', start_time: '90000', timelength: '0' }, // 零时长
-      null
-    ]
-  });
-  assert.deepEqual(segments, [
-    { start: 60, end: 90 },
-    { start: 120, end: 150 }
-  ]);
-
-  // 非成功状态 / 非数组 data 一律空列表
-  assert.deepEqual(normalizeClimaxSegments({ status: 0, data: [{ start_time: 1000, timelength: 1000 }] }), []);
-  assert.deepEqual(normalizeClimaxSegments({ status: 1 }), []);
-  assert.deepEqual(normalizeClimaxSegments(null), []);
-});
-
-test('getSongClimax is silent on failure and skips empty hashes', async () => {
-  requests.length = 0;
-  handler = async () => ({ status: 1, data: [{ start_time: '10000', timelength: '20000' }] });
-  assert.deepEqual(await getSongClimax('HASH'), [{ start: 10, end: 30 }]);
-  assert.deepEqual(requests[0], { method: 'GET', path: '/song/climax', params: { hash: 'HASH' } });
-
-  handler = async () => { throw new Error('network down'); };
-  assert.deepEqual(await getSongClimax('HASH'), []);
-
-  requests.length = 0;
-  assert.deepEqual(await getSongClimax(''), []);
-  assert.equal(requests.length, 0);
 });

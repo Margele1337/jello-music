@@ -38,7 +38,8 @@ electron/
   preloadLyrics.cjs  desktop-lyrics-only bridge (state push)
   preloadSpectrum.cjs spectrum-HUD-only bridge (band stream)
   security/          trusted-sender validation (main + lyrics windows)
-  services/          settings store, sidecar manager, API proxy, auth session
+  services/          settings store, sidecar manager, API proxy, media proxy,
+                     auth session
   ipc/               IPC handlers
 src/
   main.js            Vue + Pinia + Router bootstrap
@@ -113,9 +114,11 @@ api/                 KuGouMusicApi git submodule (MIT)
    briefly for the write to finish. If OS encryption is not available, it stays
    memory-only rather than being written in plaintext.
 7. Search, public/user playlists, daily recommendations, and song URLs go through
-   this proxy. Covers are upgraded to HTTPS; audio URLs keep the CDN's original
-   protocol because some concept-edition CDN hosts (`youthandroid2`) have a
-   mismatched HTTPS certificate. `media-src` therefore allows `http:`. `/login`
+   this proxy. Covers are upgraded to HTTPS. Song URLs are handed to the
+   renderer wrapped in the `jello-media://` protocol; the media proxy upgrades
+   `http:` upstreams to HTTPS per host, and only concept-edition CDN hosts
+   (`youthandroid2`) with a mismatched HTTPS certificate stay on HTTP as a
+   fallback after the probe fails. `/login`
    offers QR, phone/SMS-code (`/captcha/sent` → `/login/cellphone`), and
    username/password (`POST /login`, exact path also stripped of token fields)
    login. When phone login returns several accounts (`info_list`), the renderer
@@ -133,13 +136,19 @@ api/                 KuGouMusicApi git submodule (MIT)
 The renderer owns an `HTMLAudioElement` only; the song URL is requested from the
 main proxy with the user's quality setting and falls back to lower quality when
 the requested one is unavailable (for example 320 kbps → 128 kbps for guest
-accounts). Media URLs are loaded directly from the Kugou CDN, not proxied; some
-concept CDN hosts only serve valid HTTP, so the CSP media policy allows both
-protocols while scripts and API calls stay locked down. The queue, repeat/shuffle modes, and volume live in the Pinia player
-store. The in-app lyrics view (`/lyrics`) searches Kugou lyrics by hash, asks the
-sidecar to decode the LRC, highlights the current line from the audio clock, and
-seeks on line click. Desktop lyrics are a follow-up. Remote media proxying is a
-follow-up.
+accounts). The renderer never holds CDN URLs: `library.js` wraps every media
+URL into `jello-media://media/?u=…` (`shared/mediaScheme.js`), a custom
+privileged protocol handled by `electron/services/mediaProxy.js`. The handler
+validates the upstream host against the KuGou-CDN suffix allowlist, upgrades
+`http:` sources to HTTPS per host (HEAD → Range-GET probe, cached per launch;
+HTTP remains the fallback for concept-CDN hosts with mismatched certificates),
+forwards `Range` headers for seeking, and adds `Access-Control-Allow-Origin: *`
+so the AudioWorklet tap and self-decode fetch stay CORS-clean. A runtime smoke
+for the protocol lives in `tools/smoke-media-proxy.mjs`. The queue,
+repeat/shuffle modes, and volume live in the Pinia player store. The in-app
+lyrics view (`/lyrics`) searches Kugou lyrics by hash, asks the sidecar to
+decode the LRC, highlights the current line from the audio clock, and seeks on
+line click.
 
 ## Packaging
 
@@ -203,13 +212,13 @@ signatures) is the planned fix once the user base justifies it.
   Header-based injection was rejected on purpose: the packaged main window is a
   `file:` document, so a response header would either miss it entirely or
   intersect with the tray-menu page's own `file:`-based meta CSP and break it.
-- `connect-src` allowlists KuGou CDN suffixes (`kugou.com`, `kgimg.com`) instead
-  of a wide `https:`. The renderer calls `auditCspTarget` before the spectrum
-  self-decode fetch and before handing a media URL to `<audio>`; hosts outside
-  the list log a `[csp-audit]` line to main.log. A missing host degrades only
-  the spectrum path (remote-URL playback continues) and shows up in the audit
-  log — that is the procedure for extending the list. `media-src` remains broad
-  until the collected host list justifies narrowing it.
+- `connect-src` and `media-src` name no CDN hosts at all: every media and
+  cross-origin request goes through the `jello-media://` protocol, whose handler
+  validates upstreams against the KuGou-CDN suffix allowlist
+  (`shared/mediaScheme.js`) — the closest thing to a "fetch arbitrary URL" IPC
+  and just as deliberately absent. New CDN hosts are added to
+  `MEDIA_CDN_SUFFIXES` after confirming the real host name in main.log
+  (`[media-proxy]` lines record every HTTPS upgrade/fallback decision).
 - No `webSecurity: false`, no `allowRunningInsecureContent`, no webviews.
 - No generic "fetch arbitrary URL" IPC; the API proxy has an allowlist.
 - The sidecar requires a random per-launch token supplied by main; direct local
@@ -231,4 +240,5 @@ signatures) is the planned fix once the user base justifies it.
     (`info_list`), and guest memory — done.
 12. Manual concept-VIP daily claim — done (never automatic).
 13. Per-launch sidecar token — done.
-14. Code signing and broader tests.
+14. jello-media protocol proxy + per-host HTTPS upgrade for media — done.
+15. Code signing and broader tests.

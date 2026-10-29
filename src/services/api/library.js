@@ -1,7 +1,7 @@
 import { parseKrc } from '../lyrics/krc.js';
 import { parseLrc } from '../lyrics/lrc.js';
 import { QUALITY_VALUES, qualityLabel } from '../../../shared/settings.js';
-import { auditCspTarget } from '../../../shared/csp.js';
+import { buildMediaUrl } from '../../../shared/mediaScheme.js';
 import { apiRequest } from './client.js';
 import {
   coverUrl,
@@ -104,42 +104,6 @@ export const getDailyRecommend = async () => {
   const payload = await apiRequest({ method: 'POST', path: '/everyday/recommend' });
   ensureOk(payload, '获取每日推荐失败');
   return normalizeSongList(payload?.data?.song_list);
-};
-
-// /song/climax 原始字段以毫秒计：start_time 起点，timelength 时长，
-// 个别曲目可能直接给 end_time；统一归一化成秒的 {start, end} 列表，
-// 缺失/非法字段直接丢弃（宁缺毋滥，进度条装饰性信息不值得报错）
-export const normalizeClimaxSegments = (payload) => {
-  if (!payload || Number(payload.status) !== 1) return [];
-  const list = Array.isArray(payload.data) ? payload.data : [];
-  const segments = [];
-  for (const item of list) {
-    const startMs = Number(item?.start_time ?? item?.startTime);
-    if (!Number.isFinite(startMs) || startMs < 0) continue;
-    const endMs = Number(item?.end_time ?? item?.endTime);
-    const lengthMs = Number(item?.timelength ?? item?.time_length ?? item?.timeLength);
-    const stopMs = Number.isFinite(endMs) && endMs > startMs
-      ? endMs
-      : (Number.isFinite(lengthMs) && lengthMs > 0 ? startMs + lengthMs : NaN);
-    if (!Number.isFinite(stopMs) || stopMs <= startMs) continue;
-    segments.push({ start: startMs / 1000, end: stopMs / 1000 });
-  }
-  return segments;
-};
-
-// 歌曲高潮点：失败一律静默返回空数组（无高潮数据 = 进度条不画标记）
-export const getSongClimax = async (hash) => {
-  if (!hash) return [];
-  try {
-    const payload = await apiRequest({
-      method: 'GET',
-      path: '/song/climax',
-      params: { hash }
-    });
-    return normalizeClimaxSegments(payload);
-  } catch {
-    return [];
-  }
 };
 
 // 猜你喜欢（主页「私人专属好歌推荐」/top/card?card_id=1）。
@@ -324,8 +288,6 @@ const requestSongUrl = async (song, hash, quality, extra) => {
 };
 
 const buildStreamResult = (url, candidate, payload, isTrial, qualityOptions) => {
-  // media-src 目前仍是宽放行：这里只做主机名收集，为后续收紧提供数据
-  auditCspTarget(url, '媒体播放');
   const result = {
     url,
     quality: candidate.quality,
@@ -404,9 +366,12 @@ export const getSongUrl = async (song, quality = '320') => {
       const payload = await requestSongUrl(song, candidate.hash, candidate.quality);
       const url = pickUrl(payload);
       const extName = pickExtName(payload);
+      // 媒体一律走 jello-media 协议由主进程代理（含 HTTPS 升级），渲染器不持有
+      // CDN URL；mp4 探测也用换好的 URL，保证 fetch 走同一条 connect-src 白名单
+      const streamUrl = buildMediaUrl(url);
       // mp4 只在自解码准备成功时放行（其余扩展名沿用既有行为），失败继续降档
-      if (await acceptStreamCandidate({ url, extName, probe: await loadSelfDecodeProbe() })) {
-        return buildStreamResult(url, candidate, payload, false, qualityOptions);
+      if (await acceptStreamCandidate({ url: streamUrl, extName, probe: await loadSelfDecodeProbe() })) {
+        return buildStreamResult(streamUrl, candidate, payload, false, qualityOptions);
       }
       if (Number(payload?.status) === 3) noCopyright = true;
       message = errorMessage(payload, '') || message;
@@ -420,8 +385,9 @@ export const getSongUrl = async (song, quality = '320') => {
     const payload = await requestSongUrl(song, song.hash, '128', { free_part: 1 });
     const url = pickUrl(payload);
     const extName = pickExtName(payload);
-    if (await acceptStreamCandidate({ url, extName, probe: await loadSelfDecodeProbe() })) {
-      return buildStreamResult(url, { hash: song.hash, quality: '128' }, payload, true, qualityOptions);
+    const streamUrl = buildMediaUrl(url);
+    if (await acceptStreamCandidate({ url: streamUrl, extName, probe: await loadSelfDecodeProbe() })) {
+      return buildStreamResult(streamUrl, { hash: song.hash, quality: '128' }, payload, true, qualityOptions);
     }
     message = errorMessage(payload, '') || message;
   } catch (error) {
