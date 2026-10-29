@@ -363,12 +363,33 @@ const runSecurityVerify = async () => {
 };
 
 // ===== 数据源 =====
+// 切换数据源会更换设备身份（dfid/签名平台），服务端 token 不跨数据源有效：
+// 切换即退出登录，需重新登录。概念版 VIP 权益（领取/特供音源）仅在概念版下可用。
+const pendingSource = ref('');
+let pendingSourceTimer = null;
+const clearPendingSource = () => {
+  pendingSource.value = '';
+  if (pendingSourceTimer) clearTimeout(pendingSourceTimer);
+  pendingSourceTimer = null;
+};
+
 const setDataSource = async (value) => {
   if (value === settings.dataSource || switching.value) return;
+  // 两步确认：第一次点告知后果并武装，6 秒内再点才真正切换
+  if (pendingSource.value !== value) {
+    pendingSource.value = value;
+    setNotice('切换将退出当前登录，需重新登录；概念版 VIP 权益仅在概念版下可用。再点一次确认', 6000);
+    if (pendingSourceTimer) clearTimeout(pendingSourceTimer);
+    pendingSourceTimer = setTimeout(clearPendingSource, 6000);
+    return;
+  }
+  clearPendingSource();
   switching.value = true;
   try {
+    // 先清会话再切：新数据源上旧 token 必然失效，避免首次请求吃 20017
+    if (auth.isAuthenticated) await auth.clear();
     await settings.update({ dataSource: value });
-    setNotice('数据源已切换', 5000);
+    setNotice('数据源已切换，请重新登录', 5000);
   } catch (error) {
     setNotice(error?.message || '数据源切换失败');
   } finally {
@@ -402,6 +423,7 @@ const onAccountAction = () => {
 };
 
 const vipSwitching = ref(false);
+const vipConfirmPending = ref(false);
 
 const vipAction = computed(() => {
   if (!auth.isAuthenticated) return 'login';
@@ -434,13 +456,17 @@ const refreshVipClaimStatus = async () => {
 
 watch(() => [auth.isAuthenticated, settings.dataSource], () => { void refreshVipClaimStatus(); }, { immediate: true });
 
-const vipButtonLabel = computed(() => ({
-  claiming: '领取中…',
-  switching: '切换数据源中…',
-  claimed: '今日已领取',
-  claim: '领取今日 VIP',
-  'switch-claim': '切换到概念版并领取'
-}[vipAction.value] || ''));
+const vipButtonLabel = computed(() => {
+  if (vipConfirmPending.value) return '再点一次确认';
+  return ({
+    login: '登录后可领取',
+    claiming: '领取中…',
+    switching: '切换数据源中…',
+    claimed: '今日已领取',
+    claim: '领取今日 VIP',
+    'switch-claim': '切换到概念版并领取'
+  }[vipAction.value] || '');
+});
 
 const vipDescText = computed(() => (
   settings.dataSource === 'concept'
@@ -455,20 +481,32 @@ const claimVip = async () => {
     return;
   }
 
-  // 官方版数据源下一键切到概念版再领取；settings:set 会等新接口实例就绪才返回
+  // 官方版数据源下一键切到概念版领取。切换会更换设备身份导致重新登录，
+  // 两步确认后：清会话 → 切数据源 → 送去登录页，重新登录后再回来领取
   if (settings.dataSource !== 'concept') {
+    if (!vipConfirmPending.value) {
+      vipConfirmPending.value = true;
+      vipMessage.value = '切换数据源将退出当前登录，重新登录后即可领取今日 VIP';
+      vipError.value = false;
+      setTimeout(() => { vipConfirmPending.value = false; }, 6000);
+      return;
+    }
+    vipConfirmPending.value = false;
     vipSwitching.value = true;
     vipMessage.value = '';
     vipError.value = false;
     try {
+      await auth.clear();
       await settings.update({ dataSource: 'concept' });
+      setNotice('已切换到概念版，请重新登录后领取', 5000);
+      router.push('/login');
     } catch (error) {
       vipMessage.value = error?.message || '切换数据源失败，未领取';
       vipError.value = true;
+    } finally {
       vipSwitching.value = false;
-      return;
     }
-    vipSwitching.value = false;
+    return;
   }
 
   if (claimedDay.value === formatVipDate()) {

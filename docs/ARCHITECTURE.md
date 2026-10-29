@@ -63,7 +63,13 @@ api/                 KuGouMusicApi git submodule (MIT)
    quality/data-source values, persists it, and broadcasts `settings:changed`.
 4. All windows mirror the same broadcast; no direct `localStorage` writes.
 5. A data-source change restarts the sidecar with the matching platform and
-   resets device cookies. A quality change reloads the current track at the new
+   resets device cookies. Tokens are bound to the platform device identity, so
+   switching data sources signs the user out by design: the settings UI asks
+   for a second-click confirmation that spells out the re-login and the
+   concept-only VIP benefit, clears the session before the switch, and the
+   one-click "切换到概念版并领取" button on the VIP card routes through the
+   same flow and then sends the user to the login page. A quality change
+   reloads the current track at the new
    quality while preserving playback position. `/settings` is a chip-tab panel
    (界面/声音/歌词/频谱/系统/数据源/账号/更新) exposing playback quality, playback
    rate, loudness normalization, audio output device, desktop lyrics + font,
