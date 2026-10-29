@@ -13,6 +13,9 @@ export const IPC = Object.freeze({
   AUTH_CHANGED: 'auth:changed',
   API_REQUEST: 'api:request',
   PLAYER_COMMAND: 'player:command',
+  // 播放状态持久化（队列/索引/模式/进度），主进程 electron-store 落盘
+  PLAYBACK_STATE_GET: 'playback-state:get',
+  PLAYBACK_STATE_SET: 'playback-state:set',
   UI_NAVIGATE: 'ui:navigate',
   DESKTOP_LYRICS_UPDATE: 'desktop-lyrics:update',
   DESKTOP_LYRICS_PROGRESS: 'desktop-lyrics:progress',
@@ -90,4 +93,71 @@ export const formatTrayTooltip = (state) => {
   const artist = String(state?.artist || '').trim();
   const track = artist ? `${title} - ${artist}` : title;
   return state?.playing ? `正在播放：${track}` : `已暂停：${track}`;
+};
+
+// ===== 播放状态持久化纯函数（主进程 sanitize/截断，测试共用，无 Electron 依赖） =====
+
+export const PLAYBACK_QUEUE_LIMIT = 500;
+export const PLAYBACK_MODES = Object.freeze([0, 1, 2]);
+export const DEFAULT_PLAYBACK_MODE = 1;
+
+const asText = (value, maxLength = 2048) => {
+  if (typeof value === 'string') return value.slice(0, maxLength);
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return '';
+};
+
+const asSeconds = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+};
+
+// 只保留播放一首歌所需的最小字段集，丢弃 url/歌词等临时或大块数据
+export const sanitizePlaybackSong = (song) => {
+  if (!song || typeof song !== 'object') return null;
+  const hash = asText(song.hash, 128).trim();
+  if (!hash) return null;
+  const timeLength = Number(song.timeLength);
+  return {
+    hash,
+    name: asText(song.name, 512),
+    author: asText(song.author, 512),
+    img: asText(song.img),
+    timeLength: Number.isFinite(timeLength) && timeLength > 0 ? Math.round(timeLength) : 0,
+    albumId: asText(song.albumId, 128),
+    albumAudioId: asText(song.albumAudioId, 128)
+  };
+};
+
+export const emptyPlaybackState = (mode = DEFAULT_PLAYBACK_MODE) => ({
+  queue: [],
+  index: -1,
+  mode: PLAYBACK_MODES.includes(mode) ? mode : DEFAULT_PLAYBACK_MODE,
+  progress: 0
+});
+
+// 永不抛异常：任何缺失/畸形输入都收敛为合法状态（队列非法时等价于「空启动」）
+export const sanitizePlaybackState = (state) => {
+  // ?? NaN：mode 缺失（null/undefined）必须落默认列表循环，Number(null)===0 会被误判成随机
+  const rawMode = Math.round(Number(state?.mode ?? NaN));
+  const mode = PLAYBACK_MODES.includes(rawMode) ? rawMode : DEFAULT_PLAYBACK_MODE;
+  if (!state || typeof state !== 'object') return emptyPlaybackState(mode);
+
+  const queue = (Array.isArray(state.queue) ? state.queue : [])
+    .map(sanitizePlaybackSong)
+    .filter(Boolean)
+    .slice(0, PLAYBACK_QUEUE_LIMIT);
+  if (!queue.length) return emptyPlaybackState(mode);
+
+  const rawIndex = Math.round(Number(state.index));
+  const index = Number.isFinite(rawIndex) && rawIndex > 0
+    ? Math.min(rawIndex, queue.length - 1)
+    : 0;
+
+  // progress 单位是秒；timeLength 单位是毫秒（library.js 约定），钳制上界需换算
+  const { timeLength } = queue[index];
+  const ceiling = timeLength > 0 ? timeLength / 1000 : Number.MAX_SAFE_INTEGER;
+  const progress = Math.min(asSeconds(state.progress), ceiling);
+
+  return { queue, index, mode, progress };
 };

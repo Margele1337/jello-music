@@ -44,6 +44,11 @@ contextBridge.exposeInMainWorld('jello', {
       return () => ipcRenderer.removeListener('player:command', handler);
     }
   },
+  playbackState: {
+    get: () => ipcRenderer.invoke('playback-state:get'),
+    // 高频写入（播放中每 5 秒 + 暂停/换歌/退出），单向 send 即可，无需回执
+    save: (state) => ipcRenderer.send('playback-state:set', state)
+  },
   ui: {
     onNavigate: (callback) => {
       const handler = (_event, payload) => callback(payload);

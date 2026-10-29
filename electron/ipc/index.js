@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, screen, shell } from 'electron';
 import { IPC } from '../../shared/ipc.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
+import { getPlaybackState, savePlaybackState } from '../services/playbackStateStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
 import { proxyApiRequest, resetDeviceRegistration } from '../services/apiProxy.js';
 import { clearAuthSession, getProfile, resetDeviceCookies } from '../services/authSession.js';
@@ -129,6 +130,21 @@ export const registerIpc = (getWindow, intents = {}) => {
   ipcMain.handle(IPC.AUTH_GET, (event) => {
     assertTrusted(event, getWindow);
     return getProfile();
+  });
+
+  // 播放状态持久化：仅主窗口可读写（HUD 窗口跑同一个 App.vue，不拦会被抢走/误写）
+  ipcMain.handle(IPC.PLAYBACK_STATE_GET, (event) => {
+    assertTrusted(event, getWindow);
+    const main = getWindow()?.[0];
+    if (!main || main.isDestroyed() || event.sender !== main.webContents) return null;
+    return getPlaybackState();
+  });
+
+  ipcMain.on(IPC.PLAYBACK_STATE_SET, (event, state) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    const main = getWindow()?.[0];
+    if (!main || main.isDestroyed() || event.sender !== main.webContents) return;
+    savePlaybackState(state);
   });
 
   ipcMain.handle(IPC.AUTH_CLEAR, (event) => {

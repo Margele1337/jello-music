@@ -21,11 +21,81 @@ let persistTimer = null;
 let autoAdvanceTimer = null;
 // 降级重取期间屏蔽旧的 audio error 事件，避免降级循环自我触发
 let recovering = false;
+// 播放状态持久化：播放中每 5 秒落盘一次 + 暂停/换歌/退出时立即落盘
+let playbackPersistTimer = null;
+let unloadHooksBound = false;
+// 启动恢复用的一次性定位（hash 匹配才生效，消费后即清空）
+let pendingRestoreSeek = null;
 
 const MAX_QUALITY_RETRIES = 2;
 const MAX_CONSECUTIVE_FAILURES = 5;
+const PLAYBACK_PERSIST_INTERVAL_MS = 5000;
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+
+// 只送播放所需的最小字段集，主进程还会再消毒/截断一次
+const slimSong = (song) => ({
+  hash: song?.hash || '',
+  name: song?.name || '',
+  author: song?.author || '',
+  img: song?.img || '',
+  timeLength: song?.timeLength || 0,
+  albumId: song?.albumId || '',
+  albumAudioId: song?.albumAudioId || ''
+});
+
+const persistPlaybackState = (store) => {
+  if (!store) return;
+  try {
+    // loading 中换歌尚未完成，元素进度还是上一首的：此时按 0 记录
+    const position = store.loading ? 0 : Number(audio?.currentTime) || 0;
+    window.jello?.playbackState?.save?.({
+      queue: store.queue.map(slimSong),
+      index: store.index,
+      mode: store.mode,
+      progress: Math.max(0, position)
+    });
+  } catch {
+    /* 持久化失败不影响播放 */
+  }
+};
+
+const stopPlaybackPersistLoop = () => {
+  if (playbackPersistTimer) {
+    clearInterval(playbackPersistTimer);
+    playbackPersistTimer = null;
+  }
+};
+
+const startPlaybackPersistLoop = () => {
+  stopPlaybackPersistLoop();
+  playbackPersistTimer = setInterval(() => {
+    if (boundStore?.playing) persistPlaybackState(boundStore);
+  }, PLAYBACK_PERSIST_INTERVAL_MS);
+  // node --test 环境下不挂住进程退出
+  playbackPersistTimer?.unref?.();
+};
+
+const bindUnloadPersistHooks = () => {
+  if (unloadHooksBound) return;
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+  unloadHooksBound = true;
+  window.addEventListener('beforeunload', () => persistPlaybackState(boundStore));
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    // 最小化到托盘/切后台不一定触发 beforeunload，隐藏时也补一次
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') persistPlaybackState(boundStore);
+    });
+  }
+};
+
+// 恢复的定位只在「加载的正是保存那首」时生效；无论是否命中都只消费一次
+const consumeRestoreSeek = (song) => {
+  if (!pendingRestoreSeek) return 0;
+  const seconds = pendingRestoreSeek.hash === song?.hash ? pendingRestoreSeek.seconds : 0;
+  pendingRestoreSeek = null;
+  return seconds > 0 ? seconds : 0;
+};
 
 const playbackErrorText = (error) => {
   if (error?.name === 'NotSupportedError') return '该音源格式不受支持';
@@ -64,9 +134,12 @@ const ensureAudio = (store) => {
 
   audio.addEventListener('play', () => {
     if (boundStore) boundStore.playing = true;
+    startPlaybackPersistLoop();
   });
   audio.addEventListener('pause', () => {
     if (boundStore) boundStore.playing = false;
+    stopPlaybackPersistLoop();
+    persistPlaybackState(boundStore);
   });
   audio.addEventListener('ended', () => {
     boundStore?.handleEnded();
@@ -100,7 +173,13 @@ export const usePlayerStore = defineStore('player', {
     failStreak: 0,
     qualityRetries: 0,
     qualityRetryHash: '',
-    autoAdvanceDelayMs: 3000
+    autoAdvanceDelayMs: 3000,
+    // 随机模式历史栈：按实际播放顺序记录队列索引，
+    // shuffleCursor 指向当前曲目在栈中的位置（回溯后 next 可沿栈前进）
+    shuffleHistory: [],
+    shuffleCursor: -1,
+    // 本轮已播集合：整轮播完前随机选歌不重复，播完开新一轮
+    shuffleCycle: []
   }),
 
   getters: {
@@ -119,6 +198,46 @@ export const usePlayerStore = defineStore('player', {
       const volume = Number(settings.volume);
       this.volume = clampPercent((Number.isFinite(volume) ? volume : 1) * 100);
       ensureAudio(this).volume = this.volume / 100;
+      bindUnloadPersistHooks();
+      void this.restorePersistedState();
+    },
+
+    // 启动恢复：拉取主进程持久化的队列/索引/模式/进度。
+    // 不自动播放：只填充状态；进度通过一次性 pendingRestoreSeek
+    // 在用户首次加载该曲目（hash 匹配）时随 loadedmetadata 定位。
+    // 任何缺失/损坏都静默按空启动。
+    async restorePersistedState() {
+      if (typeof window === 'undefined' || !window.jello?.playbackState?.get) return;
+      let state = null;
+      try {
+        state = await window.jello.playbackState.get();
+      } catch {
+        return;
+      }
+      const queue = Array.isArray(state?.queue) ? state.queue.filter((song) => song?.hash) : [];
+      if (!queue.length) return;
+      const index = Number.isInteger(state.index) && state.index >= 0 && state.index < queue.length
+        ? state.index
+        : 0;
+      const mode = [0, 1, 2].includes(state.mode) ? state.mode : 1;
+      const progress = Number(state.progress);
+
+      // 与手动换列表同等待遇：复位失败计数，避免恢复触发自动跳歌连锁
+      clearAutoAdvance();
+      this.failStreak = 0;
+      this.qualityRetries = 0;
+      this.qualityRetryHash = '';
+
+      this.queue = queue;
+      this.index = index;
+      this.mode = mode;
+      this.resetShuffleTracking(index);
+
+      if (Number.isFinite(progress) && progress > 0) {
+        pendingRestoreSeek = { hash: queue[index].hash, seconds: progress };
+      }
+      // 不在启动时取址加载：离线场景会触发失败降级/自动跳歌连锁，违背「恢复不自动播」。
+      // 用户首次播放该曲目时 loadCurrent 消费 pendingRestoreSeek，随 loadedmetadata 定位。
     },
 
     applyPersistedVolume(fraction) {
@@ -136,7 +255,8 @@ export const usePlayerStore = defineStore('player', {
 
       const element = ensureAudio(this);
       const token = ++loadToken;
-      const resumeAt = keepTime ? element.currentTime : 0;
+      // 启动恢复的定位在这里消费：仅 hash 与保存曲目一致时生效
+      const resumeAt = keepTime ? element.currentTime : consumeRestoreSeek(song);
 
       // 新的加载取代排队中的自动跳歌
       clearAutoAdvance();
@@ -207,6 +327,8 @@ export const usePlayerStore = defineStore('player', {
             this.qualityRetryHash = song.hash;
             this.qualityRetries = 0;
           }
+          // 换歌完成即落盘一次（loading 中 progress 按 0 记录）
+          persistPlaybackState(this);
         }
       } catch (error) {
         if (token === loadToken) {
@@ -302,6 +424,8 @@ export const usePlayerStore = defineStore('player', {
       this.queue = list;
       const index = hash ? list.findIndex((song) => song.hash === hash) : -1;
       this.index = index >= 0 ? index : 0;
+      // 整份列表被替换：随机历史全部失效，以当前曲目重新起栈
+      this.resetShuffleTracking(this.index);
       void this.loadCurrent();
     },
 
@@ -309,6 +433,8 @@ export const usePlayerStore = defineStore('player', {
       if (index < 0 || index >= this.queue.length) return;
       this.failStreak = 0;
       this.index = index;
+      // 随机模式下的手选曲目也是「实际播放过」：入历史栈供上一首回溯
+      if (this.mode === 0) this.noteShufflePlay(index);
       void this.loadCurrent();
     },
 
@@ -319,12 +445,74 @@ export const usePlayerStore = defineStore('player', {
       else if (this.index >= this.queue.length) {
         this.index = this.queue.length - 1;
       }
+      this.pruneShuffleHistory(index);
+      persistPlaybackState(this);
     },
 
     clearQueue() {
       clearAutoAdvance();
       this.queue = [];
       this.index = -1;
+      this.resetShuffleTracking();
+      persistPlaybackState(this);
+    },
+
+    // ===== 随机模式历史栈 =====
+
+    // 清空历史（换列表/清队列/切模式），seedIndex >= 0 时以当前曲目起栈
+    resetShuffleTracking(seedIndex = -1) {
+      this.shuffleHistory = [];
+      this.shuffleCursor = -1;
+      this.shuffleCycle = [];
+      if (seedIndex >= 0 && seedIndex < this.queue.length) this.noteShufflePlay(seedIndex);
+    },
+
+    // 记录一次实际播放：截掉回溯后未再前进的「未来」分支再入栈
+    noteShufflePlay(index) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.queue.length) return;
+      if (this.shuffleCursor < this.shuffleHistory.length - 1) {
+        this.shuffleHistory = this.shuffleHistory.slice(0, this.shuffleCursor + 1);
+      }
+      this.shuffleHistory.push(index);
+      this.shuffleCursor = this.shuffleHistory.length - 1;
+      this.markShuffleCyclePlayed(index);
+    },
+
+    markShuffleCyclePlayed(index) {
+      if (!this.shuffleCycle.includes(index)) this.shuffleCycle.push(index);
+      // 整队播完 → 开新一轮（下一首起允许重复）
+      if (this.shuffleCycle.length >= this.queue.length) this.shuffleCycle = [];
+    },
+
+    // 本轮未播的索引里等概率挑一个；本轮播完则自动开新轮（始终避开当前曲）
+    pickShuffleIndex() {
+      const total = this.queue.length;
+      if (total <= 1) return Math.max(0, this.index);
+      let candidates = [];
+      for (let i = 0; i < total; i += 1) {
+        if (i !== this.index && !this.shuffleCycle.includes(i)) candidates.push(i);
+      }
+      if (!candidates.length) {
+        this.shuffleCycle = [];
+        for (let i = 0; i < total; i += 1) {
+          if (i !== this.index) candidates.push(i);
+        }
+      }
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    },
+
+    // 队列删歌后修正历史栈：剔除被删索引、其后索引整体前移，游标跟随当前曲目
+    pruneShuffleHistory(removedIndex) {
+      const remap = (entry) => (entry === removedIndex ? null : (entry > removedIndex ? entry - 1 : entry));
+      const cursorEntry = this.shuffleHistory[this.shuffleCursor];
+      this.shuffleHistory = this.shuffleHistory.map(remap).filter((entry) => entry !== null);
+      this.shuffleCycle = this.shuffleCycle.map(remap).filter((entry) => entry !== null);
+      const relocated = cursorEntry === undefined || cursorEntry === removedIndex
+        ? -1
+        : this.shuffleHistory.indexOf(remap(cursorEntry));
+      this.shuffleCursor = relocated >= 0
+        ? relocated
+        : Math.min(this.shuffleCursor, this.shuffleHistory.length - 1);
     },
 
     togglePlayPause() {
@@ -354,9 +542,15 @@ export const usePlayerStore = defineStore('player', {
         return;
       }
       if (this.mode === 0) {
-        let next = this.index;
-        while (next === this.index) next = Math.floor(Math.random() * this.queue.length);
-        this.index = next;
+        // 回溯过历史（上一首）时先沿栈前进重放，栈尾才随机挑新歌
+        const forward = this.shuffleHistory[this.shuffleCursor + 1];
+        if (this.shuffleCursor >= 0 && Number.isInteger(forward) && forward < this.queue.length) {
+          this.shuffleCursor += 1;
+          this.index = forward;
+        } else {
+          this.index = this.pickShuffleIndex();
+          this.noteShufflePlay(this.index);
+        }
       } else {
         this.index = (this.index + 1) % this.queue.length;
       }
@@ -370,9 +564,19 @@ export const usePlayerStore = defineStore('player', {
         return;
       }
       if (this.mode === 0) {
-        let previous = this.index;
-        while (previous === this.index) previous = Math.floor(Math.random() * this.queue.length);
-        this.index = previous;
+        // 沿历史栈回退到上一首实际播放过的歌
+        const backward = this.shuffleHistory[this.shuffleCursor - 1];
+        if (this.shuffleCursor > 0 && Number.isInteger(backward) && backward < this.queue.length) {
+          this.shuffleCursor -= 1;
+          this.index = backward;
+        } else {
+          // 栈头无更早历史：随机挑一首插到栈首（游标指向新歌，next 可原路返回）
+          const picked = this.pickShuffleIndex();
+          this.shuffleHistory.unshift(picked);
+          this.shuffleCursor = 0;
+          this.markShuffleCyclePlayed(picked);
+          this.index = picked;
+        }
       } else {
         this.index = (this.index - 1 + this.queue.length) % this.queue.length;
       }
@@ -391,6 +595,9 @@ export const usePlayerStore = defineStore('player', {
 
     togglePlaybackMode() {
       this.mode = (this.mode + 1) % 3;
+      // 切模式即清随机历史（旧版同款），以当前曲目重新起栈
+      this.resetShuffleTracking(this.index);
+      persistPlaybackState(this);
     },
 
     seekBy(delta) {
