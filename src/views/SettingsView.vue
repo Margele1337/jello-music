@@ -13,7 +13,7 @@ import {
   checkProxyInput,
   proxyRejectedMessage
 } from '../components/settings/addressChecks.js';
-import { claimDailyVip, formatVipDate } from '../services/api/vip.js';
+import { claimDailyVip, formatVipDate, readClaimedDay } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRiskStore } from '../stores/risk.js';
 import { useSettingsStore } from '../stores/settings.js';
@@ -51,7 +51,7 @@ const hasUpdateBridge = ref(false);
 const claimingVip = ref(false);
 const vipMessage = ref('');
 const vipError = ref(false);
-const claimedDay = ref('');
+const claimedDay = ref(readClaimedDay());
 const activeTab = ref(0);
 let noticeTimer = null;
 let unsubscribeUpdates = null;
@@ -436,9 +436,15 @@ const claimVip = async () => {
   try {
     const result = await claimDailyVip();
     claimedDay.value = result.day;
-    vipMessage.value = result.upgradeOk
-      ? '今日概念版 VIP 已领取并升级'
-      : `今日 VIP 已领取${result.upgradeMessage ? `（${result.upgradeMessage}）` : ''}`;
+    if (result.alreadyClaimed) {
+      // 服务端判定重复领取（如别处已领）：按状态展示，不当作失败
+      vipMessage.value = '今天已经领取过了';
+      vipError.value = false;
+    } else {
+      vipMessage.value = result.upgradeOk
+        ? '今日概念版 VIP 已领取并升级'
+        : `今日 VIP 已领取${result.upgradeMessage ? `（${result.upgradeMessage}）` : ''}`;
+    }
   } catch (error) {
     vipMessage.value = error?.message || '领取失败';
     vipError.value = true;
