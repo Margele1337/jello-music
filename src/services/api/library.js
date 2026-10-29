@@ -330,12 +330,45 @@ const buildStreamResult = (url, candidate, payload, isTrial, qualityOptions) => 
     qualityLabel: qualityLabel(candidate.quality),
     isTrial,
     qualityOptions,
-    // 音源真实扩展名（mp3/flac/…）：频谱自解码链路据此决定是否走 WebCodecs
+    // 音源真实扩展名（mp3/flac/mp4/…）：频谱自解码链路据此决定是否走 WebCodecs
     extName: pickExtName(payload)
   };
   const loudness = pickLoudness(payload);
   if (loudness) result.loudness = loudness;
   return result;
+};
+
+// ===== mp4 候选闸门 =====
+// sigmarebase 原版解码的**就是** MP4/AAC（jaad 解 m4a），aac 是它的唯一自解码格式；
+// 但把 mp4 容器 URL 直接丢给 <audio> 在本机不可验证，所以只在自解码准备整条链路
+// 成功（整首字节可取 + MP4 解封装出 AudioSpecificConfig + AudioDecoder.isConfigSupported）
+// 时才放行该候选——放行后播放用的是准备阶段生成的 blob，分析路径同一条链路。
+// 任一环节失败（含探测模块加载失败、fetch/CORS 失败、容器结构意外、解码器不支持）
+// 一律沿用今天的行为：跳过该候选继续沿阶梯降档，播放绝不比现在差。
+// 探测成功后准备好的字节/blob 由 spectrum 侧暂存复用，player.js 不会再下一遍。
+let selfDecodeProbeLoader = null;
+
+const loadSelfDecodeProbe = async () => {
+  if (!selfDecodeProbeLoader) {
+    selfDecodeProbeLoader = import('../audio/spectrum.js')
+      .then((module) => (typeof module.probeSelfDecode === 'function' ? module.probeSelfDecode : null))
+      .catch(() => null);
+  }
+  return selfDecodeProbeLoader;
+};
+
+// 纯判定：mp4 需要探测成功才放行，其他扩展名保持既有的无条件放行（含空 extName）。
+// probe 缺失/抛错/返回非 true 一律拒绝。
+export const acceptStreamCandidate = async ({ url, extName, probe }) => {
+  if (!url) return false;
+  const ext = String(extName || '').toLowerCase();
+  if (ext !== 'mp4') return true;
+  if (typeof probe !== 'function') return false;
+  try {
+    return (await probe({ url, extName: ext })) === true;
+  } catch {
+    return false;
+  }
 };
 
 export const getSongUrl = async (song, quality = '320') => {
@@ -367,8 +400,9 @@ export const getSongUrl = async (song, quality = '320') => {
     try {
       const payload = await requestSongUrl(song, candidate.hash, candidate.quality);
       const url = pickUrl(payload);
-      // MP4 源 <audio> 无法直接播放，跳过继续降档
-      if (url && pickExtName(payload) !== 'mp4') {
+      const extName = pickExtName(payload);
+      // mp4 只在自解码准备成功时放行（其余扩展名沿用既有行为），失败继续降档
+      if (await acceptStreamCandidate({ url, extName, probe: await loadSelfDecodeProbe() })) {
         return buildStreamResult(url, candidate, payload, false, qualityOptions);
       }
       if (Number(payload?.status) === 3) noCopyright = true;
@@ -382,7 +416,8 @@ export const getSongUrl = async (song, quality = '320') => {
   try {
     const payload = await requestSongUrl(song, song.hash, '128', { free_part: 1 });
     const url = pickUrl(payload);
-    if (url && pickExtName(payload) !== 'mp4') {
+    const extName = pickExtName(payload);
+    if (await acceptStreamCandidate({ url, extName, probe: await loadSelfDecodeProbe() })) {
       return buildStreamResult(url, { hash: song.hash, quality: '128' }, payload, true, qualityOptions);
     }
     message = errorMessage(payload, '') || message;
