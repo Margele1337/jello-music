@@ -1,19 +1,29 @@
-// mp3 自解码 Worker：Chromium 内建 WebCodecs AudioDecoder（无需任何 npm 依赖）。
+// mp3/FLAC 自解码 Worker：Chromium 内建 WebCodecs AudioDecoder（无需任何 npm 依赖）。
 // 对齐所有者 sigmarebase MusicManager 解码循环（~:383-407）：
 //   decode → 写入行缓冲（阻塞背压）→ fft(整帧) → visualizerData.add
 // 浏览器里没有 SourceDataLine，背压由主线程 line buffer 上限（≈4s）驱动：
 // 主线程发 hold/resume 消息代替 write() 的阻塞。
 //
-// 每帧流程：EncodedAudioChunk(一个 mp3 帧) → AudioDecoder → AudioData(f32)
+// 每帧流程：EncodedAudioChunk(一个编解码帧) → AudioDecoder → AudioData(f32)
 // → 取帧首 2048 个交错采样并缩放到 Int16 量级 → 2048 点 FFT →
 // sqrt(re²+im²) 前半幅度取前 114 个 → postMessage 给主线程做门控。
 // 原版对 AAC 整帧（1024×2ch = 2048 交错采样）做 FFT；mp3 帧 1152×2ch = 2304
-// 交错采样，截断到 2048 保持同样的 FFT 几何（2 的幂）。
+// 交错采样，截断到 2048 保持同样的 FFT 几何（2 的幂）。FLAC 常规块长
+// 4096/ch（8192 交错采样）同理是「整帧截断到 2048」，窗几何与标度不变。
 // Int16 量级是 HUD 公式 sqrt(x)/12 − 5（上限 2.256e7 / 低音参考 1000/4750）的前提。
+//
+// flac 与 mp3 的差异只有两处：config（codec 'flac' + description='fLaC'+元数据块
+// 前缀，Chromium 的 flac 解码器要从 STREAMINFO 初始化）与帧切分（帧头无长度字段，
+// 帧尾=下一个 CRC 校验通过的同步字，见 mp3Frame.js findNextFlacFrameOffset）。
 //
 // 解码恒 1x：倍速由可听元素处理（原版无倍速功能），帧时间轴与倍速无关。
 import { createSpectrumFft } from './fft.js';
-import { findNextFrameOffset, parseMp3FrameHeader } from './mp3Frame.js';
+import {
+  findNextFlacFrameOffset,
+  findNextFrameOffset,
+  parseFlacFrameHeader,
+  parseMp3FrameHeader
+} from './mp3Frame.js';
 
 const FFT_SIZE = 2048;
 const BAR_COUNT = 114;
@@ -28,6 +38,8 @@ const imagOut = new Float32Array(FFT_SIZE);
 let decoder = null;
 let decoderConfig = null;
 let bytes = null;
+let format = 'mp3';
+let streaminfo = null;
 let nextOffset = 0;
 let timestampUs = 0;
 let hold = false;
@@ -44,22 +56,44 @@ const postError = (message) => {
   }
 };
 
+// 格式感知帧头解析：mp3 帧头自带 frameSize；flac 帧头只有 headerSize（无长度字段）
+const parseFrameAt = (offset) => (format === 'flac'
+  ? parseFlacFrameHeader(bytes, offset, streaminfo)
+  : parseMp3FrameHeader(bytes, offset));
+
+// 伪同步/损坏后重新对齐帧同步
+const resyncFrom = (offset) => (format === 'flac'
+  ? findNextFlacFrameOffset(bytes, offset, streaminfo)
+  : findNextFrameOffset(bytes, offset));
+
+// 帧字节终点：flac 帧长可变且头部无长度，帧尾=下一个 CRC 有效的同步字；
+// 末帧到文件尾时裁掉可能存在的 ID3v1 尾标签（128 字节 'TAG'，混进 chunk 会解码报错）
+const frameEnd = (header) => {
+  if (format !== 'flac') return Math.min(header.offset + header.frameSize, bytes.byteLength);
+  const next = findNextFlacFrameOffset(bytes, header.offset + header.headerSize, streaminfo);
+  if (next >= 0) return next;
+  let end = bytes.byteLength;
+  if (end >= 128 && bytes[end - 128] === 0x54 && bytes[end - 127] === 0x41
+    && bytes[end - 126] === 0x47) end -= 128;
+  return Math.max(header.offset + header.headerSize, end);
+};
+
 // 逐帧切分并喂给解码器；hold（主线程 line buffer 满）或解码队列满时暂停拉取，
 // 对应 SourceDataLine.write() 的阻塞点
 const pump = () => {
   if (stopped || hold || !decoder || !bytes) return;
   try {
     while (decoder.decodeQueueSize < MAX_DECODE_QUEUE && nextOffset + 4 <= bytes.byteLength) {
-      let header = parseMp3FrameHeader(bytes, nextOffset);
+      let header = parseFrameAt(nextOffset);
       if (!header) {
         // 字节流损坏/估算偏移落在帧中间：向前扫描重新对齐帧同步
-        const resync = findNextFrameOffset(bytes, nextOffset + 1);
+        const resync = resyncFrom(nextOffset + 1);
         if (resync < 0) break;
         nextOffset = resync;
-        header = parseMp3FrameHeader(bytes, nextOffset);
+        header = parseFrameAt(nextOffset);
         if (!header) break;
       }
-      const end = Math.min(nextOffset + header.frameSize, bytes.byteLength);
+      const end = frameEnd(header);
       if (end <= nextOffset) break;
       const frameDurationUs = Math.round(header.frameDuration * 1e6);
       decoder.decode(new EncodedAudioChunk({
@@ -148,15 +182,24 @@ const initDecoder = () => {
   decoder.configure(decoderConfig);
 };
 
-const startDecode = ({ buffer, offset, sampleRate, channels }) => {
+const startDecode = ({ buffer, offset, sampleRate, channels, format: fmt, description, streaminfo: si }) => {
   try {
     if (typeof AudioDecoder !== 'function') throw new Error('WebCodecs AudioDecoder unavailable');
     bytes = new Uint8Array(buffer);
+    format = fmt === 'flac' ? 'flac' : 'mp3';
+    streaminfo = si || null;
     decoderConfig = {
-      codec: 'mp3',
+      codec: format,
       sampleRate: Number(sampleRate) || 44100,
       numberOfChannels: Number(channels) || 2
     };
+    // Chromium 的 flac 解码器要求 description 携带 'fLaC'+元数据块前缀（内含
+    // STREAMINFO），否则 configure 失败；mp3 不需要也不接受 description
+    if (format === 'flac') {
+      decoderConfig.description = description instanceof Uint8Array
+        ? description
+        : new Uint8Array(description || []);
+    }
     nextOffset = Math.max(0, Number(offset) || 0);
     timestampUs = 0;
     flushScheduled = false;

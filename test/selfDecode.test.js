@@ -168,15 +168,20 @@ test('display queue keeps the newest 18 frames and clears wholesale', () => {
 
 // ===== 回退判定矩阵 =====
 
-test('decideSelfDecode only admits mp3 + WebCodecs + spectrum enabled', () => {
+test('decideSelfDecode only admits mp3/flac + WebCodecs + spectrum enabled', () => {
   const base = { extName: 'mp3', hasAudioDecoder: true, spectrumEnabled: true };
-  assert.equal(decideSelfDecode(base).ok, true);
-  assert.equal(decideSelfDecode({ ...base, extName: 'MP3' }).ok, true);   // 大小写不敏感
+  assert.deepEqual(decideSelfDecode(base), { ok: true, reason: '', format: 'mp3' });
+  // 大小写不敏感
+  assert.equal(decideSelfDecode({ ...base, extName: 'MP3' }).format, 'mp3');
   assert.deepEqual(
-    decideSelfDecode({ ...base, extName: 'flac' }),
-    { ok: false, reason: 'ext-not-mp3' }
+    decideSelfDecode({ ...base, extName: 'FLAC' }),
+    { ok: true, reason: '', format: 'flac' }
   );
-  assert.deepEqual(decideSelfDecode({ ...base, extName: '' }).reason, 'ext-not-mp3');
+  assert.deepEqual(
+    decideSelfDecode({ ...base, extName: 'ogg' }),
+    { ok: false, reason: 'ext-unsupported' }
+  );
+  assert.deepEqual(decideSelfDecode({ ...base, extName: '' }).reason, 'ext-unsupported');
   assert.deepEqual(
     decideSelfDecode({ ...base, hasAudioDecoder: false }),
     { ok: false, reason: 'webcodecs-unavailable' }
@@ -185,6 +190,17 @@ test('decideSelfDecode only admits mp3 + WebCodecs + spectrum enabled', () => {
     decideSelfDecode({ ...base, spectrumEnabled: false }),
     { ok: false, reason: 'spectrum-disabled' }
   );
+});
+
+// ===== 门控/容量推导是格式无关的：FLAC 常规块长 4096 直接代入同一公式 =====
+
+test('gate/capacity derivation is format-agnostic with FLAC blocksize 4096', () => {
+  // B = round(421.7 / 92.879ms) + 17 = 5 + 17 = 22；净领先 = 5 帧 ≈ 464ms（<1 帧量化残差）
+  assert.equal(deriveGateFrames(44100, 4096), 22);
+  assert.equal(lineBufferCapFrames(44100, 4096), 44);   // ceil(4*44100/4096) ≈ 4s
+  const fd = 4096 / 44100;
+  const netLeadMs = (deriveGateFrames(44100, 4096) - (SIGMA_QUEUE_MAX - 1)) * fd * 1000;
+  assert.ok(Math.abs(netLeadMs - SIGMA_NET_LEAD_MS) < fd * 1000, `flac net lead ${netLeadMs}`);
 });
 
 // ===== getSongUrl 透出 extName + prepareSelfDecode 静默回退 =====

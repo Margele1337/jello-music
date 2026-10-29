@@ -1,25 +1,29 @@
 // 频谱采集与 FFT：移植自所有者 sigmarebase 的 MusicManager/JavaFFT 频谱实现。
 //
 // 两条链路（按歌曲无缝二选一，回退静默无提示）：
-// 1) mp3 自解码链路（主链路，对齐 MusicManager 解码循环 ~:383-407）：
-//    player.js 把整首 mp3 字节 fetch 一次，可听路径用 blob URL 喂现有 audio 元素，
+// 1) 自解码链路（主链路，mp3/flac，对齐 MusicManager 解码循环 ~:383-407）：
+//    player.js 把整首歌字节 fetch 一次，可听路径用 blob URL 喂现有 audio 元素，
 //    分析路径由 mp3DecodeWorker.js 用 Chromium 内建 WebCodecs AudioDecoder 解成
-//    原生采样率 PCM，逐帧做 2048 点 FFT（mp3 帧 2304 交错采样截断到 2048，
-//    复刻原版 AAC 整帧 FFT 的几何），幅度按 Int16 量级传回主线程。
+//    原生采样率 PCM，逐帧做 2048 点 FFT（mp3 帧 2304 交错采样、FLAC 常规块
+//    4096/ch = 8192 交错采样，都截断到 2048，复刻原版 AAC 整帧 FFT 的几何），
+//    幅度按 Int16 量级传回主线程。flac 需要 config.description 携带
+//    'fLaC'+元数据块前缀（Chromium 从 STREAMINFO 初始化解码器）。
 //    主线程 line buffer（≈4s，超出 hold Worker = SourceDataLine.write 阻塞背压的
 //    类比物）+ 门控（frameTime <= element.currentTime + B*frameDuration，
-//    B = round(421.7ms/frameDuration)+17，44.1kHz 下 33）把帧放入 18 深显示队列
+//    B = round(421.7ms/frameDuration)+17，44.1kHz mp3 下 33）把帧放入 18 深显示队列
 //    （add；>18 shift），渲染读 queue[0] 不弹出（MusicManager:134）——
 //    净视觉领先 (B-17) 帧 ≈ 421.7ms，且由 currentTime 派生，seek/暂停自校正。
+//    门控/队列/领先推导/Int16 标度全部格式无关（帧时长=每帧样本数/原生采样率）。
 //    playbackRate 由可听元素处理；解码链路恒 1x（原版无倍速功能）。
 // 2) tap 回退链路（保持原样）：AudioWorklet 每攒满一个 MP3 帧回调 1024 个交错
 //    Int16 采样，对帧首做 1024 点 FFT；预读元素领先 avDelayMs 播放同一 URL 喂频谱。
-//    非 mp3 / fetch 失败 / WebCodecs 不可用 / 解码器错误时走这条。
+//    非 mp3/flac / fetch 失败 / WebCodecs 不可用 / 解析或解码器错误时走这条。
 import { createSpectrumFft } from './fft.js';
 import {
   SigmaDisplayQueue,
   decideSelfDecode,
   deriveGateFrames,
+  findFirstFlacFrame,
   findFirstMp3Frame,
   gateFrontierSeconds,
   lineBufferCapFrames,
@@ -68,7 +72,7 @@ let avDelayMs = AV_DELAY_DEFAULT_MS;
 let spectrumScale = 1;
 let spectrumSmoothing = 0.335;
 
-// ===== mp3 自解码链路状态（WebCodecs；tap+预读回退链路的状态在上方）=====
+// ===== 自解码链路状态（mp3/flac，WebCodecs；tap+预读回退链路的状态在上方）=====
 let decodeActive = false;
 let decodeWorker = null;
 let decodeElement = null;
@@ -216,8 +220,9 @@ export { setLookaheadSource };
 // 净领先 = 421.7ms(B-17 帧) + (avDelayMs-590)ms
 const decodeTrimSeconds = () => (avDelayMs - AV_DELAY_DEFAULT_MS) / 1000;
 
-// 估算 anchorTime 对应的 mp3 字节偏移（CBR 近似；VBR 有偏差但 seek 少见，
-// 门控由 currentTime 派生会逐步自校正）。首帧偏移之后按码率线性推算。
+// 估算 anchorTime 对应的字节偏移（mp3 按首帧码率 CBR 近似；flac 按全文件平均
+// 码率。VBR/变块长有偏差但 seek 少见，门控由 currentTime 派生会逐步自校正）。
+// 首帧偏移之后按码率线性推算。
 const estimateByteOffset = (anchorTime) => {
   const bytesPerSecond = decodeBitrate > 0 ? decodeBitrate / 8 : 0;
   if (!bytesPerSecond || !(anchorTime > 0)) return decodeFirstOffset;
@@ -261,7 +266,7 @@ const handleDecodeMessage = (event) => {
 // 频谱就地降级到 tap+预读链路，不重载、不提示（避免可听卡顿）
 const handleDecodeFailure = (message) => {
   if (!decodeActive) return;
-  console.warn('[spectrum] mp3 自解码失败，降级到 tap 链路:', message || 'unknown');
+  console.warn('[spectrum] 自解码失败，降级到 tap 链路:', message || 'unknown');
   const element = decodeElement;
   teardownDecodeWorker();
   decodeActive = false;
@@ -341,6 +346,7 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
     spectrumEnabled: enabled
   });
   if (!decision.ok || !url) return { src: url, decode: null };
+  const format = decision.format;
   // 取字节预算：blob 路径要等整首下完才能出声，弱网下会拖慢播放开始。
   // 超预算即中止并静默回退远程 URL + tap 链路，播放可靠性优先于频谱同构。
   const controller = new AbortController();
@@ -349,18 +355,54 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
     const response = await fetch(url, { mode: 'cors', credentials: 'omit', signal: controller.signal });
     if (!response.ok) return { src: url, decode: null };
     const buffer = await response.arrayBuffer();
-    const parsed = findFirstMp3Frame(new Uint8Array(buffer));
-    if (!parsed) return { src: url, decode: null };
-    const { header, offset } = parsed;
-    const config = { codec: 'mp3', sampleRate: header.sampleRate, numberOfChannels: header.channels };
+    const bytesView = new Uint8Array(buffer);
+    let parsed;
+    let header;
+    let description = null;
+    let streaminfo = null;
+    let config;
+    if (format === 'flac') {
+      parsed = findFirstFlacFrame(bytesView);
+      if (!parsed) return { src: url, decode: null };
+      const { stream } = parsed;
+      streaminfo = stream.streaminfo;
+      // description = 'fLaC'+全部元数据块前缀（Chromium flac 解码器靠 STREAMINFO
+      // 初始化）。slice 复制一份：buffer 稍后整体转移给 Worker，不能共享视图
+      description = bytesView.slice(stream.descriptionStart, stream.descriptionEnd);
+      // 与 mp3 帧头同构的「header」：samplesPerFrame=块长（门控 B / line buffer
+      // 上限推导用），bitrate=全文件平均码率（seek 重锚的字节偏移估算用）
+      header = {
+        sampleRate: parsed.header.sampleRate,
+        channels: parsed.header.channels,
+        samplesPerFrame: parsed.header.blocksize,
+        frameDuration: parsed.header.frameDuration,
+        bitrate: Math.round(stream.averageBitrate)
+      };
+      config = {
+        codec: 'flac',
+        sampleRate: header.sampleRate,
+        numberOfChannels: header.channels,
+        description
+      };
+    } else {
+      parsed = findFirstMp3Frame(bytesView);
+      if (!parsed) return { src: url, decode: null };
+      header = parsed.header;
+      config = { codec: 'mp3', sampleRate: header.sampleRate, numberOfChannels: header.channels };
+    }
     if (typeof globalThis.AudioDecoder.isConfigSupported === 'function') {
       const support = await globalThis.AudioDecoder.isConfigSupported(config);
       if (support && support.supported === false) return { src: url, decode: null };
     }
-    const blobUrl = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
+    const blobUrl = URL.createObjectURL(new Blob([buffer], {
+      type: format === 'flac' ? 'audio/flac' : 'audio/mpeg'
+    }));
     return {
       src: blobUrl,
-      decode: { blobUrl, buffer, offset, config, header }
+      decode: {
+        blobUrl, buffer, offset: parsed.offset, config, header,
+        format, description, streaminfo
+      }
     };
   } catch {
     return { src: url, decode: null };
@@ -404,7 +446,12 @@ export const startDecodeAnalysis = (element, decode) => {
       buffer: decode.buffer,
       offset: decode.offset,
       sampleRate: header.sampleRate,
-      channels: header.channels
+      channels: header.channels,
+      // 格式感知：flac 需要 description（'fLaC'+元数据块）与 streaminfo
+      //（帧头采样率位 0 / 位宽位 0 的回退取值）；mp3 两者为 undefined 不影响
+      format: decode.format || 'mp3',
+      description: decode.description || null,
+      streaminfo: decode.streaminfo || null
     }, [decode.buffer]);   // 转移字节（blob 已在 createObjectURL 时复制）
   } catch (error) {
     handleDecodeFailure(error?.message);
