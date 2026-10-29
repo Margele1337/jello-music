@@ -115,10 +115,14 @@ api/                 KuGouMusicApi git submodule (MIT)
 7. Search, public/user playlists, daily recommendations, and song URLs go through
    this proxy. Covers are upgraded to HTTPS; audio URLs keep the CDN's original
    protocol because some concept-edition CDN hosts (`youthandroid2`) have a
-   mismatched HTTPS certificate. `media-src` therefore allows `http:`. QR login
-   is available at `/login`, together with phone/SMS-code login
-   (`/captcha/sent` → `/login/cellphone`). Login responses also strip
-   `secu_params` and other token-shaped fields before reaching the renderer.
+   mismatched HTTPS certificate. `media-src` therefore allows `http:`. `/login`
+   offers QR, phone/SMS-code (`/captcha/sent` → `/login/cellphone`), and
+   username/password (`POST /login`, exact path also stripped of token fields)
+   login. When phone login returns several accounts (`info_list`), the renderer
+   shows a selection step and resubmits with the chosen `userid`. Login
+   responses also strip `secu_params` and other token-shaped fields before
+   reaching the renderer. Guest mode is remembered and cleared on the next
+   successful login.
 8. The settings account card can manually claim the concept-edition daily VIP
    (`/youth/day/vip` → `/youth/day/vip/upgrade`). It is never automatic; it needs
    a logged-in session with the concept data source, and the same token-field
@@ -203,8 +207,8 @@ still open.
 8. Tray and minimize-to-tray — done; desktop lyrics — done.
 9. Real-time spectrum HUD — done.
 10. Auto-update plumbing — done (release upload/signing still open).
-11. QR + phone/SMS login — done; username/password and multi-account selection
-    remain.
+11. QR + phone/SMS + username/password login, phone multi-account selection
+    (`info_list`), and guest memory — done.
 12. Manual concept-VIP daily claim — done (never automatic).
 13. Per-launch sidecar token — done.
 14. Code signing and broader tests.

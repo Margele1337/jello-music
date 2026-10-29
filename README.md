@@ -8,8 +8,10 @@ Sigma player backed by the real KuGou API:
 
 - Electron 45 + Vue 3 + Vite 8; secure main window plus an optional transparent
   desktop-lyrics window with its own narrow preload
-- QR and phone/SMS-code login with encrypted session persistence (`safeStorage`);
-  cookies/token never reach the renderer
+- QR, phone/SMS-code, and username/password login with encrypted session
+  persistence (`safeStorage`); cookies/token never reach the renderer. Phone
+  login that returns several accounts opens a selection step before the session
+  is kept.
 - Real search, public/user playlists, daily recommendations, queue playback,
   quality fallback (FLAC/320/128), in-app lyrics, desktop lyrics, tray mode,
   real-time spectrum HUD, right-Shift dock/collapse, and quality/data-source
@@ -22,8 +24,10 @@ Sigma player backed by the real KuGou API:
 - `node:test` coverage for settings, API policy, URL normalization, lyrics,
   desktop-lyric state, and trusted senders
 
-Not implemented yet: username/password login and multi-account selection. Code
-signing is wired to optional `CSC_LINK` / `CSC_KEY_PASSWORD` repository secrets;
+Multi-account selection covers the phone/SMS flow returning several accounts
+(pick one and resubmit with its `userid`); there is no separate switcher between
+saved accounts. Not implemented yet: code signing is wired to optional
+`CSC_LINK` / `CSC_KEY_PASSWORD` repository secrets;
 without them builds are unsigned. Core runtime flows were verified in a real
 Electron window; phone SMS delivery and packaged self-update still need a live
 account/release to exercise end to end.
