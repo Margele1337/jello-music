@@ -803,6 +803,17 @@ const settingSections = [
         label: '桌面音频频谱'
       },
       {
+        key: 'spectrumPreset',
+        control: 'seg',
+        icon: 'waveform',
+        label: '预设样式',
+        description: '预设 1 = 真立体声交错、2048 点 FFT；预设 2 = 原版 sigmarebase 语义（左声道×2 打包、1024 点 FFT）。切换后下一首生效。',
+        options: [
+          { value: 'modern', displayText: '预设 1' },
+          { value: 'classic', displayText: '预设 2（原版）' }
+        ]
+      },
+      {
         key: 'spectrumScale',
         control: 'slider',
         icon: 'chart',

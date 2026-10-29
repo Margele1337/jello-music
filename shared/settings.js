@@ -23,6 +23,7 @@ export const nextLowerQuality = (quality) => {
 
 export const DATA_SOURCE_VALUES = Object.freeze(['concept', 'official']);
 export const PLAYBACK_RATES = Object.freeze([0.5, 0.75, 1, 1.25, 1.5, 2]);
+export const SPECTRUM_PRESET_VALUES = Object.freeze(['modern', 'classic']);
 
 export const API_BASE_URL_MODES = Object.freeze(['default', 'custom']);
 
@@ -116,6 +117,9 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumInfoVisible: true,
   spectrumSigmaSmoothing: 0.335,
   spectrumAvDelayMs: 590,
+  // 频谱预设：modern = 真立体声交错窗 + 2048 点 FFT；classic = 原版 sigmarebase
+  // 打包语义（L*2 + R/32768）+ 1024 点 FFT。仅影响自解码分析管线，下一首生效
+  spectrumPreset: 'modern',
   spectrumLocked: true,
   autoStart: false,
   preventAppSuspension: false,
@@ -206,6 +210,11 @@ export const sanitizeSettings = (patch) => {
 
     if (key === 'dataSource') {
       if (DATA_SOURCE_VALUES.includes(value)) next.dataSource = value;
+      continue;
+    }
+
+    if (key === 'spectrumPreset') {
+      if (SPECTRUM_PRESET_VALUES.includes(value)) next.spectrumPreset = value;
       continue;
     }
 

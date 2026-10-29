@@ -98,7 +98,12 @@ api/                 KuGouMusicApi git submodule (MIT)
    sigmarebase-style 1024-point FFT on each MP3 frame, and sends 114 raw levels
    plus song metadata to main. Main clamps/pads the levels and forwards them to
    the click-through HUD, which renders the gray bars, blurred-cover overlay, and
-   bottom-left song info.
+   bottom-left song info. The self-decode analysis has a preset setting
+   (`spectrumPreset`): `modern` = true-stereo interleaved window at 2048 points
+   (default), `classic` = the original sigmarebase packed window (`L*2 +
+   R/32768`, effectively left-channel-dominant) at 1024 points. The preset is
+   baked into each song's prepared decode and takes effect on the next song;
+   the tap fallback always uses the modern geometry.
 
 ## API flow
 

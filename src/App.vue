@@ -27,7 +27,7 @@ import {
   initMediaSession,
   teardownMediaSession
 } from './services/audio/mediaSession.js';
-import { refreshSpectrum, startSpectrum, stopSpectrum } from './services/audio/spectrum.js';
+import { refreshSpectrum, startSpectrum, stopSpectrum, updateSpectrumSettings } from './services/audio/spectrum.js';
 import { useAuthStore } from './stores/auth.js';
 import { usePlayerStore } from './stores/player.js';
 import { useSettingsStore } from './stores/settings.js';
@@ -241,6 +241,10 @@ const syncSpectrum = () => {
 };
 
 watch(() => settings.spectrum, syncSpectrum);
+// 频谱预设只影响之后的自解码准备（下一首生效），即时同步到分析管线即可
+watch(() => settings.spectrumPreset, (preset) => {
+  updateSpectrumSettings({ spectrumPreset: preset });
+}, { immediate: true });
 watch(() => player.currentSong?.hash, () => {
   if (settings.spectrum) refreshSpectrum();
 });

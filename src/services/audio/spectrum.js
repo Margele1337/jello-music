@@ -51,6 +51,7 @@ import {
   mp4SampleTimeSeconds,
   parseMp4Audio
 } from './mp4Demux.js';
+import { SPECTRUM_PRESET_VALUES } from '../../../shared/settings.js';
 
 const BAR_COUNT = 114;
 const FFT_SIZE = 1024;
@@ -79,6 +80,8 @@ let lookaheadSourceNode = null;
 let lookaheadTapGainNode = null;
 let starting = null;
 let enabled = false;
+// 频谱预设（modern/classic）：prepareSelfDecode 时烘进 decode 对象，下一首生效
+let decodePreset = 'modern';
 let sourceBound = false;
 let audioListeners = [];
 let getSong = null;
@@ -558,7 +561,8 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
       decode: {
         blobUrl, buffer, offset, config, header,
         format, description, streaminfo, vbr, seektable, sampleTable,
-        fileBytes: bytesView.byteLength
+        fileBytes: bytesView.byteLength,
+        preset: decodePreset
       }
     };
   } catch {
@@ -621,7 +625,8 @@ export const startDecodeAnalysis = (element, decode) => {
       format: decode.format || 'mp3',
       description: decode.description || null,
       streaminfo: decode.streaminfo || null,
-      sampleTable: decode.sampleTable || null
+      sampleTable: decode.sampleTable || null,
+      preset: decode.preset === 'classic' ? 'classic' : 'modern'
     }, [decode.buffer]);   // 转移字节（blob 已在 createObjectURL 时复制）
   } catch (error) {
     handleDecodeFailure(error?.message);
@@ -950,6 +955,10 @@ export const stopSpectrum = (send) => {
 
 export const updateSpectrumSettings = (settings = {}) => {
   if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
+  if (SPECTRUM_PRESET_VALUES.includes(settings.spectrumPreset)) {
+    // 只影响之后的 prepareSelfDecode（预设烘进每首歌的 decode 对象），当前歌不变
+    decodePreset = settings.spectrumPreset;
+  }
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
   if (Number.isFinite(settings.spectrumAvDelayMs)) {
     // 音画差补偿（0..2000ms，默认 590）：

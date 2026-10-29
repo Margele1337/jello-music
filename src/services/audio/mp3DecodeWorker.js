@@ -28,19 +28,28 @@ import {
   findNextFrameOffset,
   flacFrameForSample,
   mixFrameIntoWindow,
+  mixFrameIntoWindowClassic,
   parseFlacFrameHeader,
   parseMp3FrameHeader
 } from './mp3Frame.js';
 
-const FFT_SIZE = 2048;
+const FFT_SIZE = 2048;          // 预设 1（modern）：真立体声交错窗
+const CLASSIC_FFT_SIZE = 1024;  // 预设 2（classic）：原版 1024 点打包窗
 const BAR_COUNT = 114;
 const MAX_DECODE_QUEUE = 16;   // AudioDecoder 入队上限（帧级背压）
 const INT16_SCALE = 32768;     // 与 tap 链路 spectrum-tap.js 的 Int16 量纲一致
 
-const spectrumFft = createSpectrumFft(FFT_SIZE);
-const windowSamples = new Float32Array(FFT_SIZE);
-const realOut = new Float32Array(FFT_SIZE);
-const imagOut = new Float32Array(FFT_SIZE);
+const fftCache = new Map();
+const getFft = (size) => {
+  if (!fftCache.has(size)) fftCache.set(size, createSpectrumFft(size));
+  return fftCache.get(size);
+};
+let fftSize = FFT_SIZE;
+let fftRun = getFft(FFT_SIZE);
+let windowSamples = new Float32Array(FFT_SIZE);
+let realOut = new Float32Array(FFT_SIZE);
+let imagOut = new Float32Array(FFT_SIZE);
+let classic = false;
 
 let decoder = null;
 let decoderConfig = null;
@@ -167,27 +176,39 @@ const onAudioFrame = (audioData) => {
       audioData.close();
       return;
     }
-    // copyTo 按平面取（f32-planar：每平面正好 frameSamples 个样本），这里自己
-    // 交错成 L0,R0,L1,R1… —— 原版 convertToPCMFloatArray 产出的就是交错布局。
+    // copyTo 按平面取（f32-planar：每平面正好 frameSamples 个样本）。
     // 之前请求 f32（交错）时平面含 frameSamples*channels 个样本，scratch 按
     // frameSamples 分配，立体声必然 copyTo 抛 "destination is not large enough"
-    mixFrameIntoWindow({
-      readPlane: (planeIndex) => {
-        if (!planeScratch || planeScratch.length < frameSamples) {
-          planeScratch = new Float32Array(frameSamples);
-        }
-        audioData.copyTo(planeScratch, { planeIndex, format: 'f32-planar' });
-        return planeScratch;
-      },
-      frameSamples,
-      channels,
-      windowSamples,
-      pairsNeeded: FFT_SIZE / 2,
-      int16Scale: INT16_SCALE
-    });
+    const readPlane = (planeIndex) => {
+      if (!planeScratch || planeScratch.length < frameSamples) {
+        planeScratch = new Float32Array(frameSamples);
+      }
+      audioData.copyTo(planeScratch, { planeIndex, format: 'f32-planar' });
+      return planeScratch;
+    };
+    if (classic) {
+      // 预设 2：原版打包语义，窗口值域 ±65534（L*2 主导），不做 Int16 归一
+      mixFrameIntoWindowClassic({
+        readPlane,
+        frameSamples,
+        channels,
+        windowSamples,
+        pairsNeeded: fftSize / 2
+      });
+    } else {
+      // 预设 1：真立体声交错，Int16 量级与 tap 链路一致
+      mixFrameIntoWindow({
+        readPlane,
+        frameSamples,
+        channels,
+        windowSamples,
+        pairsNeeded: fftSize / 2,
+        int16Scale: INT16_SCALE
+      });
+    }
     audioData.close();
 
-    spectrumFft(windowSamples, realOut, imagOut);
+    fftRun(windowSamples, realOut, imagOut);
     const magnitudes = new Float32Array(BAR_COUNT);
     for (let i = 0; i < BAR_COUNT; i += 1) {
       const re = realOut[i];
@@ -222,10 +243,20 @@ const initDecoder = () => {
 const normalizeFormat = (value) => (value === 'flac' || value === 'aac' ? value : 'mp3');
 
 const startDecode = ({
-  buffer, offset, sampleRate, channels, format: fmt, description, streaminfo: si, sampleTable: table
+  buffer, offset, sampleRate, channels, format: fmt, description, streaminfo: si, sampleTable: table, preset
 }) => {
   try {
     if (typeof AudioDecoder !== 'function') throw new Error('WebCodecs AudioDecoder unavailable');
+    // 预设决定窗几何：modern = 2048 点真立体声交错；classic = 原版 1024 点
+    // 打包窗（L*2 + R/32768）。窗口/FFT 实例按尺寸缓存，换歌携带同预设零开销
+    classic = preset === 'classic';
+    fftSize = classic ? CLASSIC_FFT_SIZE : FFT_SIZE;
+    if (windowSamples.length !== fftSize) {
+      windowSamples = new Float32Array(fftSize);
+      realOut = new Float32Array(fftSize);
+      imagOut = new Float32Array(fftSize);
+    }
+    fftRun = getFft(fftSize);
     bytes = new Uint8Array(buffer);
     format = normalizeFormat(fmt);
     streaminfo = si || null;

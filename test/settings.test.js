@@ -44,11 +44,14 @@ test('sanitize clamps volume and rejects wrong types', () => {
 test('sanitize rejects unknown quality and data source values', () => {
   assert.deepEqual(sanitizeSettings({ quality: 'hires' }), {});
   assert.deepEqual(sanitizeSettings({ dataSource: 'other' }), {});
+  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'retro' }), {});
   assert.deepEqual(sanitizeSettings({ quality: 'flac', dataSource: 'official' }), {
     quality: 'flac',
     dataSource: 'official'
   });
   assert.deepEqual(sanitizeSettings({ quality: 'high' }), { quality: 'high' });
+  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'classic' }), { spectrumPreset: 'classic' });
+  assert.equal(SETTING_DEFAULTS.spectrumPreset, 'modern');
 });
 
 test('quality ladder covers all seven tiers from low to high', () => {
