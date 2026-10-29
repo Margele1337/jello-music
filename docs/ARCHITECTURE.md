@@ -99,11 +99,13 @@ api/                 KuGouMusicApi git submodule (MIT)
    plus song metadata to main. Main clamps/pads the levels and forwards them to
    the click-through HUD, which renders the gray bars, blurred-cover overlay, and
    bottom-left song info. The self-decode analysis has a preset setting
-   (`spectrumPreset`): `modern` = true-stereo interleaved window at 2048 points
-   (default), `classic` = the original sigmarebase packed window (`L*2 +
-   R/32768`, effectively left-channel-dominant) at 1024 points. The preset is
-   baked into each song's prepared decode and takes effect on the next song;
-   the tap fallback always uses the modern geometry.
+   (`spectrumPreset`) replicating the original per-format semantics as the
+   default: `original`（预设 1）= mp3/flac take the first 1024 interleaved
+   samples per frame (JLayer pushVisualizer path) and aac packs each L,R pair
+   into one frame value (`L*2 + R/32768`, jaad path), both at 1024 points —
+   the same geometry as the tap fallback; `wide`（预设 2）= full-frame true
+   stereo at 2048 points. The preset is baked into each song's prepared decode
+   and takes effect on the next song.
 
 ## API flow
 

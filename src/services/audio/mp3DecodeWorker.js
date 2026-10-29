@@ -28,13 +28,14 @@ import {
   findNextFrameOffset,
   flacFrameForSample,
   mixFrameIntoWindow,
-  mixFrameIntoWindowClassic,
+  mixFrameIntoWindowPacked,
   parseFlacFrameHeader,
   parseMp3FrameHeader
 } from './mp3Frame.js';
 
-const FFT_SIZE = 2048;          // 预设 1（modern）：真立体声交错窗
-const CLASSIC_FFT_SIZE = 1024;  // 预设 2（classic）：原版 1024 点打包窗
+const FFT_SIZE = 2048;          // 预设 2（wide）：全帧真立体声交错
+const ORIGINAL_FFT_SIZE = 1024; // 预设 1（original）：原版 1024 点（mp3/flac 帧首
+                                // 1024 交错采样；aac 每帧值 = 打包 L,R 对）
 const BAR_COUNT = 114;
 const MAX_DECODE_QUEUE = 16;   // AudioDecoder 入队上限（帧级背压）
 const INT16_SCALE = 32768;     // 与 tap 链路 spectrum-tap.js 的 Int16 量纲一致
@@ -49,8 +50,7 @@ let fftRun = getFft(FFT_SIZE);
 let windowSamples = new Float32Array(FFT_SIZE);
 let realOut = new Float32Array(FFT_SIZE);
 let imagOut = new Float32Array(FFT_SIZE);
-let classic = false;
-
+let original = true;
 let decoder = null;
 let decoderConfig = null;
 let bytes = null;
@@ -186,17 +186,29 @@ const onAudioFrame = (audioData) => {
       audioData.copyTo(planeScratch, { planeIndex, format: 'f32-planar' });
       return planeScratch;
     };
-    if (classic) {
-      // 预设 2：原版打包语义，窗口值域 ±65534（L*2 主导），不做 Int16 归一
-      mixFrameIntoWindowClassic({
-        readPlane,
-        frameSamples,
-        channels,
-        windowSamples,
-        pairsNeeded: fftSize / 2
-      });
+    if (original) {
+      // 预设 1（原版）：aac 每帧值 = 打包 L,R 对（值域 ±65534，不削波），
+      // mp3/flac 帧首 1024 个交错 Int16 采样——对齐原版 jaad/JLayer 两条路径
+      if (format === 'aac') {
+        mixFrameIntoWindowPacked({
+          readPlane,
+          frameSamples,
+          channels,
+          windowSamples,
+          pairsNeeded: fftSize
+        });
+      } else {
+        mixFrameIntoWindow({
+          readPlane,
+          frameSamples,
+          channels,
+          windowSamples,
+          pairsNeeded: fftSize / 2,
+          int16Scale: INT16_SCALE
+        });
+      }
     } else {
-      // 预设 1：真立体声交错，Int16 量级与 tap 链路一致
+      // 预设 2：全帧真立体声交错，Int16 量级与 tap 链路一致
       mixFrameIntoWindow({
         readPlane,
         frameSamples,
@@ -248,10 +260,11 @@ const startDecode = ({
 }) => {
   try {
     if (typeof AudioDecoder !== 'function') throw new Error('WebCodecs AudioDecoder unavailable');
-    // 预设决定窗几何：modern = 2048 点真立体声交错；classic = 原版 1024 点
-    // 打包窗（L*2 + R/32768）。窗口/FFT 实例按尺寸缓存，换歌携带同预设零开销
-    classic = preset === 'classic';
-    fftSize = classic ? CLASSIC_FFT_SIZE : FFT_SIZE;
+    // 预设决定窗几何：original（默认）= 原版分格式语义——mp3/flac 取帧首
+    // 1024 个交错采样、aac 每帧值 = 打包 L,R 对（L*2 + R/32768），均 1024 点；
+    // wide = 全帧真立体声交错 2048 点。窗口/FFT 实例按尺寸缓存
+    original = preset !== 'wide';
+    fftSize = original ? ORIGINAL_FFT_SIZE : FFT_SIZE;
     if (windowSamples.length !== fftSize) {
       windowSamples = new Float32Array(fftSize);
       realOut = new Float32Array(fftSize);

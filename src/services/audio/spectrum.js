@@ -80,8 +80,8 @@ let lookaheadSourceNode = null;
 let lookaheadTapGainNode = null;
 let starting = null;
 let enabled = false;
-// 频谱预设（modern/classic）：prepareSelfDecode 时烘进 decode 对象，下一首生效
-let decodePreset = 'modern';
+// 频谱预设（original/wide）：prepareSelfDecode 时烘进 decode 对象，下一首生效
+let decodePreset = 'original';
 let sourceBound = false;
 let audioListeners = [];
 let getSong = null;
@@ -636,7 +636,7 @@ export const startDecodeAnalysis = (element, decode) => {
       description: decode.description || null,
       streaminfo: decode.streaminfo || null,
       sampleTable: decode.sampleTable || null,
-      preset: decode.preset === 'classic' ? 'classic' : 'modern'
+      preset: decode.preset === 'wide' ? 'wide' : 'original'
     }, [decode.buffer]);   // 转移字节（blob 已在 createObjectURL 时复制）
   } catch (error) {
     handleDecodeFailure(error?.message);

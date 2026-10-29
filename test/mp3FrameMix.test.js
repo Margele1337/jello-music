@@ -76,16 +76,16 @@ function clampMid(value) {
   return value < -1 ? -1 : value > 1 ? 1 : value;
 }
 
-// ===== 预设 2（classic）：原版打包语义 =====
-const { mixFrameIntoWindowClassic } = await import('../src/services/audio/mp3Frame.js');
+// ===== 预设 1（original）· aac 打包语义 =====
+const { mixFrameIntoWindowPacked } = await import('../src/services/audio/mp3Frame.js');
 
-test('classic preset packs frames as L*2 + R/32768 with no Int16 clamp', () => {
+test('original aac packs frames as L*2 + R/32768 with no Int16 clamp', () => {
   const plane0 = Float32Array.from([1, -1, 0.5, 0]);      // L（s16 量级 ±32767 缩放前）
   const plane1 = Float32Array.from([0.25, -0.25, 3, -3]); // R
   const windowSamples = new Float32Array(1024);
   windowSamples.fill(9);
 
-  const take = mixFrameIntoWindowClassic({
+  const take = mixFrameIntoWindowPacked({
     readPlane: (planeIndex) => (planeIndex === 0 ? plane0 : plane1),
     frameSamples: 4,
     channels: 2,
@@ -104,13 +104,13 @@ test('classic preset packs frames as L*2 + R/32768 with no Int16 clamp', () => {
   assert.equal(windowSamples[1023], 0);
 });
 
-test('classic preset truncates to pairsNeeded and reads only plane 0 for mono', () => {
+test('original packed truncates to pairsNeeded and reads only plane 0 for mono', () => {
   const plane0 = Float32Array.from({ length: 1152 }, (_, i) => (i < 512 ? 1 : 7));
   const plane1 = Float32Array.from({ length: 1152 }, () => 0.5);
   const windowSamples = new Float32Array(1024);
   const calls = [];
 
-  const take = mixFrameIntoWindowClassic({
+  const take = mixFrameIntoWindowPacked({
     readPlane: (planeIndex) => {
       calls.push(planeIndex);
       return planeIndex === 0 ? plane0 : plane1;
@@ -127,7 +127,7 @@ test('classic preset truncates to pairsNeeded and reads only plane 0 for mono', 
   assert.equal(windowSamples[512], 0);   // 截断段不进窗
 
   const monoWindow = new Float32Array(1024);
-  mixFrameIntoWindowClassic({
+  mixFrameIntoWindowPacked({
     readPlane: () => plane0,
     frameSamples: 1152,
     channels: 1,

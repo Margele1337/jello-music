@@ -50,8 +50,9 @@ test('sanitize rejects unknown quality and data source values', () => {
     dataSource: 'official'
   });
   assert.deepEqual(sanitizeSettings({ quality: 'high' }), { quality: 'high' });
-  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'classic' }), { spectrumPreset: 'classic' });
-  assert.equal(SETTING_DEFAULTS.spectrumPreset, 'modern');
+  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'original' }), { spectrumPreset: 'original' });
+  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'wide' }), { spectrumPreset: 'wide' });
+  assert.equal(SETTING_DEFAULTS.spectrumPreset, 'original');
 });
 
 test('quality ladder covers all seven tiers from low to high', () => {
