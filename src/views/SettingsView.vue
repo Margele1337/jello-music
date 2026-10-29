@@ -401,11 +401,21 @@ const onAccountAction = () => {
   else goLogin();
 };
 
+const vipSwitching = ref(false);
+
+const vipAction = computed(() => {
+  if (!auth.isAuthenticated) return 'login';
+  if (claimingVip.value) return 'claiming';
+  if (vipSwitching.value) return 'switching';
+  if (claimedDay.value === formatVipDate()) return 'claimed';
+  return settings.dataSource === 'concept' ? 'claim' : 'switch-claim';
+});
+
 const canClaimVip = computed(() => (
   auth.isAuthenticated
-  && settings.dataSource === 'concept'
   && !claimingVip.value
-  && claimedDay.value !== formatVipDate()
+  && !vipSwitching.value
+  && vipAction.value !== 'claimed'
 ));
 
 // 打开设置页/登录态变化时向服务端核对当天是否已领（覆盖手机端领取的场景）
@@ -424,14 +434,18 @@ const refreshVipClaimStatus = async () => {
 
 watch(() => [auth.isAuthenticated, settings.dataSource], () => { void refreshVipClaimStatus(); }, { immediate: true });
 
-const vipButtonLabel = computed(() => {
-  if (claimingVip.value) return '领取中…';
-  if (claimedDay.value === formatVipDate()) return '今日已领取';
-  return '领取今日 VIP';
-});
+const vipButtonLabel = computed(() => ({
+  claiming: '领取中…',
+  switching: '切换数据源中…',
+  claimed: '今日已领取',
+  claim: '领取今日 VIP',
+  'switch-claim': '切换到概念版并领取'
+}[vipAction.value] || ''));
 
 const vipDescText = computed(() => (
-  settings.dataSource === 'concept' ? '每日可手动领取一次，请勿频繁调用。' : '切换到概念版数据源后可领取。'
+  settings.dataSource === 'concept'
+    ? '每日可手动领取一次，请勿频繁调用。'
+    : '当前为官方版数据源：点击右侧一键切换到概念版并领取。'
 ));
 
 const claimVip = async () => {
@@ -440,9 +454,27 @@ const claimVip = async () => {
     vipError.value = true;
     return;
   }
+
+  // 官方版数据源下一键切到概念版再领取；settings:set 会等新接口实例就绪才返回
   if (settings.dataSource !== 'concept') {
-    vipMessage.value = '概念版 VIP 仅在概念版数据源下可领取';
-    vipError.value = true;
+    vipSwitching.value = true;
+    vipMessage.value = '';
+    vipError.value = false;
+    try {
+      await settings.update({ dataSource: 'concept' });
+    } catch (error) {
+      vipMessage.value = error?.message || '切换数据源失败，未领取';
+      vipError.value = true;
+      vipSwitching.value = false;
+      return;
+    }
+    vipSwitching.value = false;
+  }
+
+  if (claimedDay.value === formatVipDate()) {
+    // 切源后核对到今天已领（含手机端等其他渠道）
+    vipMessage.value = '今天已经领取过了';
+    vipError.value = false;
     return;
   }
 
