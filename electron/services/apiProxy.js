@@ -1,5 +1,6 @@
+import { net } from 'electron';
 import { sanitizeApiRequest, sanitizeApiResponse } from '../../shared/apiPolicy.js';
-import { getSidecarBaseUrl, getSidecarToken, waitForSidecar } from './sidecar.js';
+import { resolveApiBaseUrl, sidecarTokenFor } from './apiEndpoint.js';
 import {
   getAuthHeader,
   getCookieHeader,
@@ -21,9 +22,10 @@ const ensureDeviceCookie = async (baseUrl) => {
   deviceReadyPromise = (async () => {
     try {
       const headers = {};
-      const token = getSidecarToken();
+      // 只对内置 sidecar 附带本机启动密钥；自定义 RPC 地址必须拿不到它
+      const token = sidecarTokenFor(baseUrl);
       if (token) headers['x-jello-token'] = token;
-      const response = await fetch(new URL('/register/dev', baseUrl), {
+      const response = await net.fetch(new URL('/register/dev', baseUrl), {
         method: 'POST',
         headers
       });
@@ -43,7 +45,7 @@ const ensureDeviceCookie = async (baseUrl) => {
 
 export const proxyApiRequest = async (input) => {
   const request = sanitizeApiRequest(input);
-  const baseUrl = getSidecarBaseUrl() || await waitForSidecar();
+  const baseUrl = await resolveApiBaseUrl();
   if (!baseUrl) throw new Error('API sidecar is not ready');
 
   await ensureDeviceCookie(baseUrl);
@@ -55,7 +57,8 @@ export const proxyApiRequest = async (input) => {
   }
 
   const headers = {};
-  const sidecarToken = getSidecarToken();
+  // 同上：per-launch 密钥只在打内置 sidecar 时携带，不随自定义 RPC 地址外发
+  const sidecarToken = sidecarTokenFor(baseUrl);
   if (sidecarToken) headers['x-jello-token'] = sidecarToken;
   const cookieHeader = getCookieHeader();
   if (cookieHeader) headers.Cookie = cookieHeader;
@@ -68,7 +71,8 @@ export const proxyApiRequest = async (input) => {
     body = JSON.stringify(request.data || {});
   }
 
-  const response = await fetch(url, { method: request.method, headers, body });
+  // net.fetch 走 Chromium 网络栈，才会吃到 session.setProxy 的代理设置
+  const response = await net.fetch(url, { method: request.method, headers, body });
   const setCookies = response.headers.getSetCookie?.() || [];
   if (setCookies.length) storeSetCookies(setCookies);
 
@@ -79,7 +83,9 @@ export const proxyApiRequest = async (input) => {
     throw new Error(`sidecar returned non-JSON response (${response.status})`);
   }
 
-  if (request.path.startsWith('/login/') && payload?.data) {
+  // 精确 /login 是账号密码登录（POST /login），/login/ 前缀覆盖二维码与手机号登录；
+  // 只匹配前缀会让密码登录拿到响应却不落会话
+  if ((request.path === '/login' || request.path.startsWith('/login/')) && payload?.data) {
     storeLoginData(payload.data);
   }
 

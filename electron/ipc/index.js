@@ -1,11 +1,16 @@
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, screen, shell } from 'electron';
 import { IPC } from '../../shared/ipc.js';
+import { shortcutsEqual } from '../../shared/settings.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
 import { getPlaybackState, savePlaybackState } from '../services/playbackStateStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
 import { proxyApiRequest, resetDeviceRegistration } from '../services/apiProxy.js';
 import { clearAuthSession, getProfile, resetDeviceCookies } from '../services/authSession.js';
-import { restartSidecar } from '../services/sidecar.js';
+import { restartSidecar, initSidecar } from '../services/sidecar.js';
+import { applyProxySettings, proxyUrlForSidecar, testProxy } from '../services/proxyService.js';
+import { testApiBaseUrl } from '../services/apiEndpoint.js';
+import { exportLogsDialog } from '../services/logSink.js';
+import { applyGlobalShortcuts, getGlobalShortcutStatus, setGlobalShortcutsSuspended } from '../services/globalShortcuts.js';
 import { syncTray } from '../tray.js';
 import {
   getDesktopLyricsWindow,
@@ -57,6 +62,27 @@ const applySystemSettings = (previous, next) => {
   }
 };
 
+// 代理改动要同时落到两层：Chromium 网络栈（渲染层 fetch/媒体下载，实时生效）
+// 与 sidecar 的出站 axios（只在 spawn 时读一次 KUGOU_API_PROXY，必须重启进程）。
+// 后者只在 http/https 代理时才有差异，socks 代理不重启、不打断正在播的歌。
+const applyProxyChange = async (previous, next) => {
+  await applyProxySettings(next);
+  const before = proxyUrlForSidecar(previous);
+  const after = proxyUrlForSidecar(next);
+  if (before === after) return;
+  const platform = next.dataSource === 'concept' ? 'lite' : 'official';
+  await restartSidecar({ platform }).catch((error) => {
+    console.error('[sidecar] 代理变更重启失败:', error?.message || error);
+  });
+};
+
+const applyShortcutChange = (previous, next) => {
+  if (shortcutsEqual(previous.shortcuts, next.shortcuts)) return;
+  const status = applyGlobalShortcuts(next.shortcuts);
+  // 只有失败才广播：成功时不打扰渲染层，失败时把「哪个动作、哪个键、为什么」带回去
+  if (!status.ok) broadcast(IPC.SHORTCUTS_STATUS, status);
+};
+
 const broadcast = (channel, payload) => {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(channel, payload);
@@ -84,12 +110,61 @@ export const registerIpc = (getWindow, intents = {}) => {
     return shell.openPath(app.getPath('userData'));
   });
 
+  // 导出的是「脱敏副本」：原始 main.log 留在 userData 便于本地排查，
+  // 用户拿出去反馈问题的这份先过 token/手机号/设备标识的替换规则
+  ipcMain.handle(IPC.APP_EXPORT_LOGS, async (event) => {
+    assertTrusted(event, getWindow);
+    const main = getWindow()?.[0];
+    const parent = main && !main.isDestroyed() ? main : null;
+    try {
+      return await exportLogsDialog(parent);
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error).slice(0, 300) };
+    }
+  });
+
+  // 代理连通性：主进程用独立 session 代发，返回探测到的公网 IP；
+  // 渲染层做不了这件事（fetch 不能设 agent，Proxy-Authorization 是 forbidden header）
+  ipcMain.handle(IPC.NET_TEST_PROXY, async (event, payload) => {
+    assertTrusted(event, getWindow);
+    return testProxy(payload?.url ?? payload);
+  });
+
+  ipcMain.handle(IPC.NET_TEST_API_BASE, async (event, payload) => {
+    assertTrusted(event, getWindow);
+    return testApiBaseUrl(payload?.url ?? payload);
+  });
+
+  // 热键注册结果可能被设置页在订阅前错过（保存即注册、注册即广播），
+  // 所以留一个拉取式的兜底口
+  ipcMain.handle(IPC.SHORTCUTS_GET_STATUS, (event) => {
+    assertTrusted(event, getWindow);
+    return getGlobalShortcutStatus();
+  });
+
+  // 录键开始/结束：挂起时摘键，恢复时重挂并把结果广播出去
+  // （挂起期间保存的新键位可能在恢复时才暴露冲突）
+  ipcMain.handle(IPC.SHORTCUTS_SET_SUSPENDED, (event, payload) => {
+    assertTrusted(event, getWindow);
+    const status = setGlobalShortcutsSuspended(payload?.suspended);
+    if (payload?.suspended !== true) broadcast(IPC.SHORTCUTS_STATUS, status);
+    return status;
+  });
+
+  // GPU 开关之类「重启后才生效」的设置：重启动作由用户点确认，主进程只负责
+  // relaunch + 退出（走 before-quit 清理链，把 sidecar 与 session 落盘做完）
+  ipcMain.handle(IPC.APP_RESTART, (event) => {
+    assertTrusted(event, getWindow);
+    intents.restartApp?.();
+    return true;
+  });
+
   ipcMain.handle(IPC.SETTINGS_GET, (event) => {
     assertTrusted(event, getWindow);
     return getSettings();
   });
 
-  ipcMain.handle(IPC.SETTINGS_SET, (event, patch) => {
+  ipcMain.handle(IPC.SETTINGS_SET, async (event, patch) => {
     assertTrusted(event, getWindow);
     const previous = getSettings();
     const next = updateSettings(patch);
@@ -102,6 +177,20 @@ export const registerIpc = (getWindow, intents = {}) => {
         console.error('[sidecar] 数据源切换重启失败:', error.message);
       });
     }
+
+    // 代理与自定义 RPC 地址都是「改了就要立刻能在下一次请求上体现」的设置：
+    // 代理走 fire-and-forget（setProxy 可能要等网络栈切换），RPC 地址由 apiProxy
+    // 每次请求现读，不需要额外通知。设备注册状态与 baseURL 绑定，改地址要重来一次。
+    if (next.proxyEnabled !== previous.proxyEnabled || next.proxyUrl !== previous.proxyUrl) {
+      void applyProxyChange(previous, next).catch((error) => {
+        console.error('[proxy] 应用代理失败:', error?.message || error);
+      });
+    }
+    if (next.apiBaseUrlMode !== previous.apiBaseUrlMode || next.apiBaseUrl !== previous.apiBaseUrl) {
+      resetDeviceRegistration();
+    }
+
+    applyShortcutChange(previous, next);
 
     if (next.minimizeToTray !== previous.minimizeToTray) {
       syncTray(next.minimizeToTray);
@@ -157,7 +246,8 @@ export const registerIpc = (getWindow, intents = {}) => {
   ipcMain.handle(IPC.API_REQUEST, async (event, request) => {
     assertTrusted(event, getWindow);
     const response = await proxyApiRequest(request);
-    if (String(request?.path || '').startsWith('/login/')) {
+    const loginPath = String(request?.path || '');
+    if (loginPath === '/login' || loginPath.startsWith('/login/')) {
       const profile = getProfile();
       if (profile) broadcast(IPC.AUTH_CHANGED, profile);
     }

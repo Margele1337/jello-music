@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { IPC, SETTINGS_ARG, findDeepLinkArg, hasSettingsArg, parseDeepLink, formatTrayTooltip } from '../shared/ipc.js';
 import { initSettings, getSettings, updateSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
-import { startSidecar, stopSidecar } from './services/sidecar.js';
+import { startSidecar, stopSidecar, initSidecar } from './services/sidecar.js';
+import { applyProxySettings } from './services/proxyService.js';
+import { initLogSink, flushLogs, recordRendererMessage } from './services/logSink.js';
+import { applyGpuAccelerationFlag } from './services/runtimeFlags.js';
 import { initAuthSession, flushAuthSession } from './services/authSession.js';
 import { getTrayInstance, hasTray, initTray, setTrayTooltip, syncTray } from './tray.js';
 import customTrayMenu from './services/customTrayMenu.js';
@@ -12,7 +15,7 @@ import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from 
 import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
 import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
-import { initGlobalShortcuts, stopGlobalShortcuts } from './services/globalShortcuts.js';
+import { applyGlobalShortcuts, initGlobalShortcuts, stopGlobalShortcuts } from './services/globalShortcuts.js';
 import {
   initDockController,
   isMainWindowDocked,
@@ -38,6 +41,15 @@ if (process.platform === 'win32') {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+
+// ===== ready 之前必须完成的设置 =====
+// 日志器最先起：后面所有 console 才有落盘副本可导
+initLogSink();
+// GPU 开关必须在 app.ready 之前落定：disableHardwareAcceleration 与透明窗口的
+// 软件合成开关只对「尚未建起的 GPU 进程」有效，ready 之后再调只是记个标志。
+// 因此设置存储也要提前初始化（electron-store 只读 userData，不依赖 ready）。
+initSettings();
+applyGpuAccelerationFlag(getSettings().gpuAcceleration);
 
 let mainWindow = null;
 let isQuitting = false;
@@ -183,6 +195,20 @@ function sendPlayerCommand(command) {
   }
 }
 
+const quitApplication = () => {
+  isQuitting = true;
+  app.quit();
+};
+
+// GPU 开关之类的设置在 UI 上提示「需重启」，用户点「立即重启」时走这里。
+// 仍走正常退出链（不 app.exit）：sidecar 与 session 落盘都要在退出前完成，
+// 否则重启后拿到的是一个孤儿接口进程。
+const restartApp = () => {
+  app.relaunch();
+  flushLogs();
+  quitApplication();
+};
+
 const toggleAuxSetting = (key, sync) => {
   const next = !getSettings()[key];
   updateSettings({ [key]: next });
@@ -327,25 +353,37 @@ const stopTrayTooltipSync = () => {
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
+  // Electron 45 起事件对象带 level/message/location，旧签名是位置参数：两种都收
+  contents.on('console-message', (event, legacyLevel, legacyMessage, legacyLine, legacySource) => {
+    const level = event?.level ?? legacyLevel;
+    const message = event?.message ?? legacyMessage;
+    if (message == null) return;
+    const source = event?.location?.url || legacySource || '';
+    const line = event?.location?.lineNumber ?? legacyLine;
+    recordRendererMessage(level, message, line ? `${source}:${line}` : source);
+  });
 });
 
 app.whenReady().then(async () => {
-  initSettings();
   await initAuthSession();
   initUpdater();
+  // 代理在 sidecar 启动与首个窗口创建之前应用：Chromium 网络栈与 sidecar
+  // 的出站请求从第一个包起就走同一条代理链路
+  await applyProxySettings(getSettings());
+  initSidecar(({ crashed, detail }) => {
+    if (!crashed) return;
+    console.error(`[sidecar] 运行期退出 ${detail}`);
+  });
   registerDeepLinkProtocol();
   setupJumpList();
   initDockController(() => mainWindow);
   registerIpc(
     () => [mainWindow, getDesktopLyricsWindow(), getSpectrumWindow()].filter(Boolean),
-    { consumeLaunchIntent }
+    { consumeLaunchIntent, restartApp }
   );
   initTray({
     showWindow: showMainWindow,
-    quit: () => {
-      isQuitting = true;
-      app.quit();
-    },
+    quit: quitApplication,
     playPause: () => sendPlayerCommand('toggle'),
     previous: () => sendPlayerCommand('previous'),
     next: () => sendPlayerCommand('next'),
@@ -373,10 +411,7 @@ app.whenReady().then(async () => {
       playPause: () => sendPlayerCommand('toggle'),
       previous: () => sendPlayerCommand('previous'),
       next: () => sendPlayerCommand('next'),
-      quit: () => {
-        isQuitting = true;
-        app.quit();
-      }
+      quit: quitApplication
     }
   );
   syncTray(getSettings().minimizeToTray);
@@ -393,8 +428,13 @@ app.whenReady().then(async () => {
     sendCommand: sendPlayerCommand,
     toggleDesktopLyrics: () => toggleAuxSetting('desktopLyrics', syncDesktopLyrics),
     toggleSpectrum: () => toggleAuxSetting('spectrum', syncSpectrumHud),
-    toggleMainWindow: showMainWindow
+    toggleMainWindow: handleRightShift,
+    quitApp: quitApplication
   });
+  const shortcutStatus = applyGlobalShortcuts(getSettings().shortcuts);
+  if (!shortcutStatus.ok) {
+    console.warn('[shortcuts] 部分热键注册失败:', JSON.stringify(shortcutStatus.failed));
+  }
 
   app.on('activate', showMainWindow);
 }).catch((error) => {
@@ -416,6 +456,7 @@ app.on('before-quit', (event) => {
 
   shutdownStarted = true;
   event.preventDefault();
+  flushLogs();
   stopTrayTooltipSync();
   stopGlobalShortcuts();
   stopGlobalKeyListener();
@@ -424,10 +465,15 @@ app.on('before-quit', (event) => {
   customTrayMenu.cleanup();
   destroyDesktopLyrics();
   destroySpectrumHud();
-  void stopSidecar();
+  // stopSidecar 最坏路径约 5s（shutdown POST 2s + 子进程退出 3s），
+  // 不能只 fire-and-forget：否则被复用的实例会在退出闸门之后仍活着
+  const cleanup = Promise.allSettled([
+    stopSidecar(),
+    flushAuthSession()
+  ]);
   void Promise.race([
-    flushAuthSession(),
-    new Promise((resolve) => setTimeout(resolve, 1500))
+    cleanup,
+    new Promise((resolve) => setTimeout(resolve, 5000))
   ]).finally(() => app.quit());
 });
 

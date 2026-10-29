@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import electronUpdater from 'electron-updater';
-import { IPC } from '../../shared/ipc.js';
+import { IPC, formatReleaseNotes } from '../../shared/ipc.js';
 
 // electron-updater 是 CommonJS 包，ESM 命名导入会在启动时抛 SyntaxError
 let autoUpdater = null;
@@ -9,6 +9,8 @@ const INITIAL_STATE = {
   status: 'idle',
   version: '',
   percent: 0,
+  // GitHub Releases 正文（Markdown 已拍平成纯文本，可能为空）
+  releaseNotes: '',
   error: ''
 };
 
@@ -46,10 +48,21 @@ export const initUpdater = () => {
 
   autoUpdater.on('checking-for-update', () => setState({ status: 'checking', error: '' }));
   autoUpdater.on('update-available', (info) => {
-    setState({ status: 'available', version: String(info?.version || ''), percent: 0, error: '' });
+    setState({
+      status: 'available',
+      version: String(info?.version || ''),
+      percent: 0,
+      releaseNotes: formatReleaseNotes(info?.releaseNotes),
+      error: ''
+    });
   });
   autoUpdater.on('update-not-available', (info) => {
-    setState({ status: 'current', version: String(info?.version || app.getVersion()), error: '' });
+    setState({
+      status: 'current',
+      version: String(info?.version || app.getVersion()),
+      releaseNotes: '',
+      error: ''
+    });
   });
   autoUpdater.on('download-progress', (progress) => {
     const percent = Number(progress?.percent);
@@ -60,7 +73,14 @@ export const initUpdater = () => {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
-    setState({ status: 'downloaded', version: String(info?.version || ''), percent: 100, error: '' });
+    setState({
+      status: 'downloaded',
+      version: String(info?.version || ''),
+      percent: 100,
+      // 下载完成事件里的 info 可能缺 releaseNotes，保留检查阶段拿到的那份
+      releaseNotes: formatReleaseNotes(info?.releaseNotes) || state.releaseNotes,
+      error: ''
+    });
   });
   autoUpdater.on('error', (error) => {
     setState({ status: 'error', error: errorText(error) });
@@ -83,7 +103,7 @@ export const checkForUpdates = async () => {
   if (!initialized || !autoUpdater) return getUpdateState();
   if (state.status === 'checking' || state.status === 'downloading') return getUpdateState();
 
-  setState({ status: 'checking', version: '', percent: 0, error: '' });
+  setState({ status: 'checking', version: '', percent: 0, releaseNotes: '', error: '' });
   try {
     await autoUpdater.checkForUpdates();
   } catch (error) {

@@ -1,7 +1,21 @@
 <script setup>
-import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { PLAYBACK_RATES, SETTING_DEFAULTS } from '../../shared/settings.js';
+import {
+  DEFAULT_SHORTCUTS,
+  PLAYBACK_RATES,
+  SETTING_DEFAULTS,
+  normalizeApiBaseUrl,
+  normalizeProxyUrl
+} from '../../shared/settings.js';
+import SettingsShortcutModal from '../components/settings/SettingsShortcutModal.vue';
+import {
+  apiBaseRejectedMessage,
+  checkApiBaseInput,
+  checkProxyInput,
+  proxyRejectedMessage
+} from '../components/settings/addressChecks.js';
+import { shortcutActionLabel } from '../components/settings/shortcutChords.js';
 import { claimDailyVip, formatVipDate } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRiskStore } from '../stores/risk.js';
@@ -13,11 +27,13 @@ const settings = useSettingsStore();
 const auth = useAuthStore();
 
 // 无边框窗口：设置页非控件区域拖动窗口（四边夹屏、右缘橡皮筋由主进程处理）
+// 新增交互控件（地址输入行 / 更新进度条 / 更新说明）必须一并登记，否则点击会被窗口拖动吞掉
 const SETTINGS_NO_DRAG_SELECTOR = [
   'button', 'input', 'select', 'textarea', 'a',
   '.settings-chip', '.row-pill', '.row-switch', '.row-seg', '.row-slider',
   '.modal', '.modal-content', '.font-search', '.modal-close',
-  '.reset-section-btn', '.factory-reset-button', '.confirm-btn'
+  '.reset-section-btn', '.factory-reset-button', '.confirm-btn',
+  '.row-field', '.field-input', '.field-btn', '.update-extra', '.update-progress', '.update-notes'
 ].join(', ');
 const { onPointerDown: onSettingsDragPointerDown } = useSigmaWindowDrag({
   noDragSelector: SETTINGS_NO_DRAG_SELECTOR
@@ -99,6 +115,25 @@ const ICONS = {
     shapeLine(12, 15, 12, 3)
   ],
   folder: [shapePath('M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z')],
+  // 代理（ globe ）/ 地址链路（link）/ GPU（cpu）/ 导出（upload 形状，download 的反向）
+  globe: [
+    shapeCircle(12, 12, 9), shapeLine(3, 12, 21, 12), shapeEllipse(12, 12, 4, 9)
+  ],
+  link: [
+    shapeRect(2, 9, 9, 6, 3), shapeRect(13, 9, 9, 6, 3), shapeLine(8, 12, 16, 12)
+  ],
+  cpu: [
+    shapeRect(5, 5, 14, 14, 2), shapeRect(9, 9, 6, 6, 1),
+    shapeLine(9, 2, 9, 5), shapeLine(15, 2, 15, 5),
+    shapeLine(9, 19, 9, 22), shapeLine(15, 19, 15, 22),
+    shapeLine(2, 9, 5, 9), shapeLine(2, 15, 5, 15),
+    shapeLine(19, 9, 22, 9), shapeLine(19, 15, 22, 15)
+  ],
+  export: [
+    shapePath('M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'),
+    shapePolyline('7 8 12 3 17 8'),
+    shapeLine(12, 3, 12, 15)
+  ],
   shield: [shapePath('M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z')],
   database: [
     shapeEllipse(12, 5, 9, 3),
@@ -142,6 +177,216 @@ const openLogs = async () => {
     setNotice('打开日志目录失败');
   }
 };
+
+// 导出的是脱敏副本（主进程弹保存框）：用户取消不算失败，保持静默
+const exportLogs = async () => {
+  const bridge = window.jello?.app?.exportLogs;
+  if (!bridge) {
+    setNotice('当前版本不支持导出日志');
+    return;
+  }
+  try {
+    const result = await bridge();
+    if (result?.ok && result.path) {
+      setNotice(`日志已导出：${result.path}`, 5000);
+      return;
+    }
+    if (!result?.canceled) setNotice(`导出日志失败：${result?.error || '未知错误'}`);
+  } catch (error) {
+    setNotice(`导出日志失败：${error?.message || '未知错误'}`);
+  }
+};
+
+// ===== 代理 / 自定义 RPC 地址 =====
+// 主进程存的是归一化后的形态，输入框里是用户草稿：两份分开持有，
+// 否则用户输入到一半被回写成的规范地址打断。
+const hasSettingsBridge = () => !!window.jello?.settings?.set;
+
+const proxyDraft = ref('');
+const proxyHint = ref(null);
+const proxyTesting = ref(false);
+const proxyFocused = ref(false);
+
+const apiDraft = ref('');
+const apiHint = ref(null);
+const apiTesting = ref(false);
+const apiFocused = ref(false);
+
+watch(() => settings.proxyUrl, (value) => {
+  if (proxyFocused.value) return;
+  proxyDraft.value = String(value || '');
+}, { immediate: true });
+
+watch(() => settings.apiBaseUrl, (value) => {
+  if (apiFocused.value) return;
+  apiDraft.value = String(value || '');
+}, { immediate: true });
+
+// 「输入被 sanitize 静默拒绝」的判定见 components/settings/addressChecks.js
+const saveProxyUrl = async () => {
+  const typed = proxyDraft.value.trim();
+  if (typed === String(settings.proxyUrl || '')) return;
+  try {
+    await settings.update({ proxyUrl: typed });
+  } catch (error) {
+    proxyHint.value = { tone: 'error', text: error?.message || '保存代理地址失败' };
+    return;
+  }
+  const rejected = hasSettingsBridge() ? checkProxyInput(typed, settings.proxyUrl) : '';
+  proxyDraft.value = String(settings.proxyUrl || '');
+  if (rejected) {
+    proxyHint.value = { tone: 'error', text: `地址无效，未保存：${rejected}` };
+    return;
+  }
+  proxyHint.value = typed
+    ? { tone: 'ok', text: `代理地址已保存：${settings.proxyUrl}` }
+    : { tone: '', text: '已清空代理地址' };
+};
+
+const runProxyTest = async () => {
+  const bridge = window.jello?.net?.testProxy;
+  if (!bridge) {
+    proxyHint.value = { tone: 'error', text: '当前版本不支持代理探测' };
+    return;
+  }
+  const candidate = normalizeProxyUrl(proxyDraft.value) || String(settings.proxyUrl || '');
+  if (!candidate) {
+    const typed = proxyDraft.value.trim();
+    proxyHint.value = { tone: 'error', text: typed ? `地址无效：${proxyRejectedMessage(typed)}` : '请先填写代理地址' };
+    return;
+  }
+  proxyTesting.value = true;
+  try {
+    const result = await bridge({ url: candidate });
+    proxyHint.value = result?.ok
+      ? { tone: 'ok', text: `连接成功，出口 IP：${result.ip}` }
+      : { tone: 'error', text: `连接失败：${result?.error || '未知错误'}` };
+  } catch (error) {
+    proxyHint.value = { tone: 'error', text: `连接失败：${error?.message || '未知错误'}` };
+  } finally {
+    proxyTesting.value = false;
+  }
+};
+
+const saveApiBaseUrl = async () => {
+  const typed = apiDraft.value.trim();
+  if (typed === String(settings.apiBaseUrl || '')) return;
+  try {
+    await settings.update({ apiBaseUrl: typed });
+  } catch (error) {
+    apiHint.value = { tone: 'error', text: error?.message || '保存 RPC 地址失败' };
+    return;
+  }
+  const rejected = hasSettingsBridge() ? checkApiBaseInput(typed, settings.apiBaseUrl) : '';
+  apiDraft.value = String(settings.apiBaseUrl || '');
+  if (rejected) {
+    apiHint.value = { tone: 'error', text: `地址无效，未保存：${rejected}` };
+    return;
+  }
+  apiHint.value = typed
+    ? { tone: 'ok', text: `RPC 地址已保存：${settings.apiBaseUrl}` }
+    : { tone: '', text: '已清空 RPC 地址，将回落到内置服务' };
+};
+
+const runApiBaseTest = async () => {
+  const bridge = window.jello?.net?.testApiBase;
+  if (!bridge) {
+    apiHint.value = { tone: 'error', text: '当前版本不支持 RPC 地址探测' };
+    return;
+  }
+  const candidate = normalizeApiBaseUrl(apiDraft.value) || String(settings.apiBaseUrl || '');
+  if (!candidate) {
+    const typed = apiDraft.value.trim();
+    apiHint.value = { tone: 'error', text: typed ? `地址无效：${apiBaseRejectedMessage(typed)}` : '请先填写 RPC 地址' };
+    return;
+  }
+  apiTesting.value = true;
+  try {
+    const result = await bridge({ url: candidate });
+    apiHint.value = result?.ok
+      ? { tone: 'ok', text: '连接成功，返回了有效的 RPC 响应' }
+      : { tone: 'error', text: `连接失败：${result?.error || '未知错误'}` };
+  } catch (error) {
+    apiHint.value = { tone: 'error', text: `连接失败：${error?.message || '未知错误'}` };
+  } finally {
+    apiTesting.value = false;
+  }
+};
+
+// ===== GPU 加速（需重启） =====
+// 记下进入本页时的值：改回来就不该再催重启
+const gpuAtBoot = ref(null);
+watch([() => settings.ready, () => settings.gpuAcceleration], () => {
+  if (gpuAtBoot.value === null && settings.ready) gpuAtBoot.value = settings.gpuAcceleration;
+}, { immediate: true });
+
+const gpuRestartPending = computed(() => (
+  gpuAtBoot.value !== null && !!settings.gpuAcceleration !== !!gpuAtBoot.value
+));
+
+const restartForGpu = () => {
+  openConfirm({
+    title: '重启应用',
+    message: 'GPU 硬件加速的改动要重启应用才会生效，现在重启吗？',
+    confirmText: '立即重启',
+    onConfirm: async () => {
+      const restart = window.jello?.app?.restart;
+      if (!restart) {
+        setNotice('当前版本不支持应用内重启，请手动退出后重新打开', 5000);
+        return;
+      }
+      await restart();
+    }
+  });
+};
+
+// ===== 全局快捷键 =====
+const isShortcutOpen = ref(false);
+const shortcutFailures = ref([]);
+const shortcutsBusy = ref(false);
+let unsubscribeShortcuts = null;
+
+const refreshShortcutStatus = async () => {
+  const getStatus = window.jello?.shortcuts?.getStatus;
+  if (!getStatus) return;
+  try {
+    const status = await getStatus();
+    shortcutFailures.value = Array.isArray(status?.failed) ? status.failed : [];
+  } catch {
+    /* 读不到就沿用上一次结果，不打扰用户 */
+  }
+};
+
+const shortcutProblemText = computed(() => {
+  if (!shortcutFailures.value.length) return '';
+  const names = shortcutFailures.value.map((item) => shortcutActionLabel(item?.action)).filter(Boolean).join('、');
+  return names ? `注册失败：${names}` : '存在注册失败的快捷键';
+});
+
+const openShortcuts = () => {
+  isShortcutOpen.value = true;
+  void refreshShortcutStatus();
+};
+
+const saveShortcuts = async (next) => {
+  shortcutsBusy.value = true;
+  try {
+    await settings.update({ shortcuts: next });
+    // 注册结果只在失败时广播，成功后主动拉一次，避免残留上一次的失败标注
+    await refreshShortcutStatus();
+    if (shortcutFailures.value.length) {
+      setNotice(`快捷键已保存，${shortcutFailures.value.length} 项注册失败，详见面板标注`, 5000);
+    } else {
+      setNotice('快捷键已更新');
+    }
+  } catch (error) {
+    setNotice(error?.message || '快捷键保存失败');
+  } finally {
+    shortcutsBusy.value = false;
+  }
+};
+
+const restoreShortcuts = () => saveShortcuts({ ...DEFAULT_SHORTCUTS });
 
 const showTutorial = () => {
   updateSetting('hotkeyIntroSeen', false);
@@ -290,6 +535,19 @@ const updateLabel = computed(() => {
 
 const updateBusy = computed(() => ['checking', 'downloading'].includes(updateState.value.status));
 const updateDisabled = computed(() => !hasUpdateBridge.value || updateBusy.value || updateState.value.status === 'dev');
+
+// 下载进度与版本说明：releaseNotes 由主进程拍平成纯文本，可能为空串
+const isDownloadingUpdate = computed(() => updateState.value.status === 'downloading');
+const updatePercent = computed(() => {
+  const raw = Number(updateState.value.percent);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.min(100, Math.round(raw)));
+});
+const updateNotes = computed(() => {
+  const state = updateState.value;
+  if (!['available', 'downloading', 'downloaded'].includes(state.status)) return '';
+  return String(state.releaseNotes || '');
+});
 
 const onUpdateAction = async () => {
   const bridge = window.jello?.updates;
@@ -444,6 +702,16 @@ const settingSections = [
         customText: '打开',
         action: () => showTutorial(),
         description: '重新播放右 Shift 新手教程（快捷呼出面板）。'
+      },
+      {
+        key: 'shortcuts',
+        control: 'action',
+        icon: 'keyboard',
+        label: '全局快捷键',
+        customText: '自定义',
+        action: () => openShortcuts(),
+        description: '12 个动作可自定义；播放/暂停等媒体键由系统固定注册，不参与自定义。',
+        hint: () => (shortcutProblemText.value ? { tone: 'error', text: shortcutProblemText.value } : null)
       }
     ]
   },
@@ -465,6 +733,8 @@ const settingSections = [
         control: 'seg',
         icon: 'waveform',
         label: '播放速率',
+        // 6 档（新增 0.5x）后按常规内边距会顶到 800px 窗口右缘，这一行收紧间距
+        segCompact: true,
         options: PLAYBACK_RATES.map((rate) => ({ value: rate, displayText: rateText(rate) }))
       },
       {
@@ -591,12 +861,109 @@ const settingSections = [
         label: '关闭或最小化时收起到托盘'
       },
       {
+        key: 'gpuAcceleration',
+        control: 'toggle',
+        icon: 'cpu',
+        label: 'GPU 硬件加速',
+        tag: '需重启',
+        description: '关闭后走软件合成，兼容性更好、功耗略高；改动要重启应用才生效。'
+      },
+      {
+        key: 'gpuRestart',
+        control: 'action',
+        icon: 'power',
+        label: 'GPU 加速改动待生效',
+        customText: '立即重启',
+        visible: () => gpuRestartPending.value,
+        action: () => restartForGpu()
+      },
+      {
+        key: 'proxyEnabled',
+        control: 'toggle',
+        icon: 'globe',
+        label: '启用代理',
+        description: '全部网络请求（含接口、封面与更新下载）走代理；127.0.0.1 等回环地址始终直连。',
+        // 主进程在地址为空时会回落成「跟随系统代理」，这里必须说出来，否则用户以为代理已生效
+        hint: () => (settings.proxyEnabled && !settings.proxyUrl
+          ? { tone: '', text: '尚未填写代理地址，当前回落为跟随系统代理' }
+          : null)
+      },
+      {
+        key: 'proxyUrl',
+        control: 'field',
+        icon: 'link',
+        label: '代理地址',
+        visible: () => !!settings.proxyEnabled,
+        placeholder: 'http://127.0.0.1:7890 或 socks5://127.0.0.1:7890',
+        getValue: () => proxyDraft.value,
+        setValue: (value) => {
+          proxyDraft.value = value;
+          proxyHint.value = null;
+        },
+        onFocus: () => { proxyFocused.value = true; },
+        onBlur: () => {
+          proxyFocused.value = false;
+          void saveProxyUrl();
+        },
+        buttonText: () => (proxyTesting.value ? '测试中…' : '测试连接'),
+        buttonDisabled: () => proxyTesting.value,
+        onButton: () => runProxyTest(),
+        hint: () => proxyHint.value,
+        description: '支持 http / https / socks4 / socks4a / socks5，可省略协议前缀；socks 必须写明端口。'
+      },
+      {
+        key: 'apiBaseUrlMode',
+        control: 'seg',
+        icon: 'database',
+        label: 'RPC 地址',
+        options: [
+          { value: 'default', displayText: '默认' },
+          { value: 'custom', displayText: '自定义' }
+        ],
+        description: '默认走内置本地服务；切到自定义后可把酷狗 RPC 请求指向自建地址。',
+        hint: () => (settings.apiBaseUrlMode === 'custom' && !settings.apiBaseUrl
+          ? { tone: 'error', text: '尚未填写有效的 RPC 地址，请求仍会走内置服务' }
+          : null)
+      },
+      {
+        key: 'apiBaseUrl',
+        control: 'field',
+        icon: 'link',
+        label: '自定义 RPC 地址',
+        visible: () => settings.apiBaseUrlMode === 'custom',
+        placeholder: 'https://rpc.example.com 或 http://127.0.0.1:6521',
+        getValue: () => apiDraft.value,
+        setValue: (value) => {
+          apiDraft.value = value;
+          apiHint.value = null;
+        },
+        onFocus: () => { apiFocused.value = true; },
+        onBlur: () => {
+          apiFocused.value = false;
+          void saveApiBaseUrl();
+        },
+        buttonText: () => (apiTesting.value ? '测试中…' : '测试'),
+        buttonDisabled: () => apiTesting.value,
+        onButton: () => runApiBaseTest(),
+        hint: () => apiHint.value,
+        description: '仅允许 https，或指向本机的 http（127.0.0.1 / localhost）：token、userid、dfid 等凭据会随请求头外发，明文出网等于泄露。'
+      },
+      {
         key: 'log',
         control: 'action',
         icon: 'folder',
         label: '日志',
         customText: '打开目录',
         action: () => openLogs()
+      },
+      {
+        key: 'exportLogs',
+        control: 'action',
+        icon: 'export',
+        label: '导出日志',
+        customText: '导出脱敏副本',
+        action: () => exportLogs(),
+        description: '另存一份去掉 token、手机号与设备标识的日志副本，便于反馈问题。'
       },
       {
         key: 'update',
@@ -653,6 +1020,20 @@ const descText = (item) => (
 );
 const pillText = (item) => (item.getText ? item.getText() : (item.customText || ''));
 const pillDisabled = (item) => (item.isDisabled ? !!item.isDisabled() : false);
+
+// 依赖开关的行（代理地址跟随代理开关、RPC 地址跟随自定义模式）不渲染占位行
+const visibleItems = (section) => (section.items || []).filter((item) => (
+  !item.visible || !!item.visible()
+));
+
+// hint 是「本次操作的结果」（保存成功 / 被 sanitize 拒绝 / 探测结果），与固定说明分开
+const hintText = (item) => (item.hint ? String(item.hint()?.text || '') : '');
+const hintTone = (item) => (item.hint ? String(item.hint()?.tone || '') : '');
+
+// 回车等价于失焦：直接 blur，让 blur 事件走同一条保存路径（避免重复发一次 IPC）
+const onFieldEnter = (event) => {
+  event.target?.blur?.();
+};
 
 const clickPill = (item) => {
   if (item.control === 'action') {
@@ -750,6 +1131,10 @@ const factoryReset = () => {
     onConfirm: async () => {
       // 全部偏好恢复默认（settings:set 走主进程持久化）
       await settings.update({ ...SETTING_DEFAULTS });
+      // 热键回到默认键位后主进程会重挂，拉一次结果清掉面板里的失败标注
+      await refreshShortcutStatus();
+      proxyHint.value = null;
+      apiHint.value = null;
       // 清登录态
       await auth.clear();
       // 清渲染层 localStorage：桌面歌词窗口把颜色/锁定/字号存在这里
@@ -779,6 +1164,11 @@ const onKeyDown = (event) => {
     closeConfirm();
     return;
   }
+  // 层级由上到下：快捷键录制面板 → 选择弹窗 → 返回播放页
+  if (isShortcutOpen.value) {
+    isShortcutOpen.value = false;
+    return;
+  }
   if (isSelectionOpen.value) {
     isSelectionOpen.value = false;
     return;
@@ -793,6 +1183,14 @@ onMounted(async () => {
     version.value = await window.jello?.app?.getVersion?.() || '';
   } catch {
     version.value = '';
+  }
+
+  if (window.jello?.shortcuts) {
+    // 保存即注册、注册即广播：失败项要在面板里逐行标注，其余键位保持生效
+    unsubscribeShortcuts = window.jello.shortcuts.onStatus((status) => {
+      shortcutFailures.value = Array.isArray(status?.failed) ? status.failed : [];
+    });
+    void refreshShortcutStatus();
   }
 
   if (window.jello?.updates) {
@@ -811,6 +1209,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
   clearTimeout(noticeTimer);
+  unsubscribeShortcuts?.();
+  unsubscribeShortcuts = null;
   unsubscribeUpdates?.();
   unsubscribeUpdates = null;
 });
@@ -874,7 +1274,7 @@ onBeforeUnmount(() => {
           </template>
 
           <!-- 通用行渲染（账号分区先渲染自定义块，再继续渲染自己的 items） -->
-          <template v-for="(item, itemIndex) in section.items" :key="itemIndex">
+          <template v-for="item in visibleItems(section)" :key="item.key">
             <div class="setting-row">
               <div class="row-main">
                 <SvgIcon :name="item.icon" class="row-icon" />
@@ -891,11 +1291,23 @@ onBeforeUnmount(() => {
               </button>
 
               <!-- 少量选项：行内分段按钮 -->
-              <div v-else-if="item.control === 'seg'" class="row-seg">
+              <div v-else-if="item.control === 'seg'" class="row-seg" :class="{ 'is-compact': item.segCompact }">
                 <button v-for="option in item.options" :key="String(option.value)" type="button"
                   :class="{ 'is-on': segIsOn(item, option) }" :disabled="segDisabled(item)"
                   @click.stop="onSegClick(item, option)">
                   {{ option.displayText }}
+                </button>
+              </div>
+
+              <!-- 地址输入：草稿在输入框、生效值在主进程，失焦即保存 + 「输入被拒」判定 -->
+              <div v-else-if="item.control === 'field'" class="row-field">
+                <input type="text" class="field-input" spellcheck="false" autocomplete="off"
+                  :value="item.getValue()" :placeholder="item.placeholder || ''"
+                  :aria-label="labelText(item)" @input="item.setValue($event.target.value)"
+                  @focus="item.onFocus?.()" @blur="item.onBlur?.()" @keydown.enter.prevent="onFieldEnter($event)" />
+                <button type="button" class="field-btn" :disabled="item.buttonDisabled ? item.buttonDisabled() : false"
+                  @click.stop="item.onButton?.()">
+                  {{ item.buttonText() }}
                 </button>
               </div>
 
@@ -915,6 +1327,18 @@ onBeforeUnmount(() => {
             </div>
 
             <p v-if="descText(item)" class="row-desc">{{ descText(item) }}</p>
+            <p v-if="hintText(item)" class="row-desc" :class="{ 'is-error': hintTone(item) === 'error', 'is-ok': hintTone(item) === 'ok' }">
+              {{ hintText(item) }}
+            </p>
+
+            <!-- 更新行专属：下载进度条 + 版本说明（纯文本、限高可滚） -->
+            <div v-if="item.key === 'update' && (isDownloadingUpdate || updateNotes)" class="update-extra">
+              <div v-if="isDownloadingUpdate" class="update-progress" role="progressbar"
+                :aria-valuenow="updatePercent" aria-valuemin="0" aria-valuemax="100">
+                <i :style="{ width: `${updatePercent}%` }"></i>
+              </div>
+              <pre v-if="updateNotes" class="update-notes">{{ updateNotes }}</pre>
+            </div>
           </template>
         </div>
         <p v-if="section.description" class="group-desc">{{ section.description }}</p>
@@ -969,6 +1393,13 @@ onBeforeUnmount(() => {
           <button type="button" class="modal-close" @click="isSelectionOpen = false">关闭</button>
         </div>
       </div>
+    </teleport>
+
+    <!-- 快捷键录制面板：12 个动作逐行录制，保存由本页走 settings.set -->
+    <teleport to="body">
+      <SettingsShortcutModal v-if="isShortcutOpen" :shortcuts="settings.shortcuts || {}"
+        :failures="shortcutFailures" :busy="shortcutsBusy" :platform="platform" @close="isShortcutOpen = false"
+        @save="saveShortcuts" @restore="restoreShortcuts" />
     </teleport>
 
     <!-- 二次确认弹窗（恢复出厂设置）：复用页面自己的弹窗外观 -->
@@ -1144,6 +1575,10 @@ onBeforeUnmount(() => {
   color: #ff8f8f;
 }
 
+.row-desc.is-ok {
+  color: rgba(255, 154, 213, 0.95);
+}
+
 .settings-rows {
   display: flex;
   flex-direction: column;
@@ -1273,6 +1708,18 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
+/* 6 档播放速率（含 0.5x）在 800px 窗口里会顶到右缘：收紧一档内边距与间隙 */
+.row-seg.is-compact {
+  gap: 2px;
+  padding: 2px;
+}
+
+.row-seg.is-compact button {
+  height: 22px;
+  padding: 0 7px;
+  font-size: 11.5px;
+}
+
 /* ===== 行内滑条 ===== */
 .row-slider-wrap {
   display: flex;
@@ -1292,6 +1739,106 @@ onBeforeUnmount(() => {
   width: 140px;
   accent-color: #FF69B4;
   cursor: pointer;
+}
+
+/* ===== 行内地址输入 ===== */
+.row-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.field-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 190px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(254, 254, 254, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #ece9f1;
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.field-input::placeholder {
+  color: rgba(236, 233, 241, 0.3);
+}
+
+.field-input:focus {
+  border-color: #FF69B4;
+}
+
+.field-btn {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 105, 180, 0.16);
+  color: rgba(255, 154, 213, 0.95);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.field-btn:hover:not(:disabled) {
+  background: rgba(255, 105, 180, 0.28);
+}
+
+.field-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ===== 更新进度 / 版本说明 ===== */
+.update-extra {
+  margin: -1px 4px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(254, 254, 254, 0.1);
+  overflow: hidden;
+}
+
+.update-progress i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #FF69B4;
+  transition: width 0.2s ease;
+}
+
+.update-notes {
+  max-height: 132px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(254, 254, 254, 0.07);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(236, 233, 241, 0.65);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: none;
+}
+
+.update-notes::-webkit-scrollbar {
+  display: none;
 }
 
 /* ===== 值胶囊 ===== */

@@ -213,6 +213,8 @@ const handlePlayerCommand = (command) => {
     } else {
       player.setVolumePercent(lastVolumeBeforeMute || 50);
     }
+  } else if (command === 'toggle-mode') {
+    player.togglePlaybackMode();
   } else if (command === 'like') {
     collectSongToLiked(player.currentSong)
       .then(() => showToast('已添加到「我喜欢」'))
