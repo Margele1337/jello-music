@@ -88,7 +88,10 @@ const consumeLaunchIntent = () => {
 
 const openSettingsView = () => {
   showMainWindow();
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+  const ready = !!mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading();
+  console.info('[tray-menu] 打开设置：窗口就绪=', ready,
+    '可见=', !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+  if (ready) {
     mainWindow.webContents.send(IPC.UI_NAVIGATE, { path: '/settings' });
   } else {
     // 窗口尚未就绪：记下意图，渲染层挂载后拉取

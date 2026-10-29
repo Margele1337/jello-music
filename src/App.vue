@@ -382,6 +382,7 @@ onMounted(async () => {
   unsubscribeNavigate = window.jello?.ui?.onNavigate?.((payload) => {
     // 托盘菜单「设置」等入口：主进程要求主窗口导航到指定路由
     const path = String(payload?.path || '');
+    console.info('[ui] 收到导航请求:', path, '允许=', NAVIGABLE_PATHS.includes(path), '当前=', route.path);
     if (NAVIGABLE_PATHS.includes(path)) router.push(path);
   }) || null;
   unsubscribePlayer = window.jello?.player?.onCommand?.((command) => {

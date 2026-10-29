@@ -43,7 +43,11 @@ class CustomTrayMenuService {
     ipcMain.on('tray-menu:hide', () => this.hide());
 
     ipcMain.on('tray-menu:action', (event, action) => {
-      if (!isMenuSender(event)) return;
+      if (!isMenuSender(event)) {
+        console.warn('[tray-menu] 动作来自非菜单窗口，已忽略:', action);
+        return;
+      }
+      console.info('[tray-menu] 主进程收到动作:', action);
       void this.handleAction(String(action));
     });
 
