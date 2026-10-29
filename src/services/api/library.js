@@ -65,10 +65,80 @@ export const getPlaylistTracks = async (playlist, { page = 1, pagesize = 300 } =
   return normalizeSongList(list);
 };
 
+// 每日推荐分页拉满 60 首：上游侧车模块只发固定 POST 体（见 tools/patch-api.cjs
+// 的安装期补丁，透传 pagesize/page）。服务端不认分页参数时按 hash 去重无新增即停，
+// 硬上限 4 页；整段全部失败则回退旧的单次无参请求（错误照常抛出给调用方）。
+const DAILY_TARGET_COUNT = 60;
+const DAILY_MAX_PAGES = 4;
+
 export const getDailyRecommend = async () => {
+  const collected = [];
+  const seen = new Set();
+
+  for (let page = 1; page <= DAILY_MAX_PAGES && collected.length < DAILY_TARGET_COUNT; page += 1) {
+    let list;
+    try {
+      const payload = await apiRequest({
+        method: 'POST',
+        path: '/everyday/recommend',
+        data: { pagesize: DAILY_TARGET_COUNT, page }
+      });
+      ensureOk(payload, '获取每日推荐失败');
+      list = normalizeSongList(payload?.data?.song_list);
+    } catch {
+      break;
+    }
+    if (!list.length) break;
+    const before = collected.length;
+    for (const song of list) {
+      if (!song?.hash || seen.has(song.hash)) continue;
+      seen.add(song.hash);
+      collected.push(song);
+    }
+    if (collected.length === before) break;
+  }
+
+  if (collected.length) return collected.slice(0, DAILY_TARGET_COUNT);
+
   const payload = await apiRequest({ method: 'POST', path: '/everyday/recommend' });
   ensureOk(payload, '获取每日推荐失败');
   return normalizeSongList(payload?.data?.song_list);
+};
+
+// /song/climax 原始字段以毫秒计：start_time 起点，timelength 时长，
+// 个别曲目可能直接给 end_time；统一归一化成秒的 {start, end} 列表，
+// 缺失/非法字段直接丢弃（宁缺毋滥，进度条装饰性信息不值得报错）
+export const normalizeClimaxSegments = (payload) => {
+  if (!payload || Number(payload.status) !== 1) return [];
+  const list = Array.isArray(payload.data) ? payload.data : [];
+  const segments = [];
+  for (const item of list) {
+    const startMs = Number(item?.start_time ?? item?.startTime);
+    if (!Number.isFinite(startMs) || startMs < 0) continue;
+    const endMs = Number(item?.end_time ?? item?.endTime);
+    const lengthMs = Number(item?.timelength ?? item?.time_length ?? item?.timeLength);
+    const stopMs = Number.isFinite(endMs) && endMs > startMs
+      ? endMs
+      : (Number.isFinite(lengthMs) && lengthMs > 0 ? startMs + lengthMs : NaN);
+    if (!Number.isFinite(stopMs) || stopMs <= startMs) continue;
+    segments.push({ start: startMs / 1000, end: stopMs / 1000 });
+  }
+  return segments;
+};
+
+// 歌曲高潮点：失败一律静默返回空数组（无高潮数据 = 进度条不画标记）
+export const getSongClimax = async (hash) => {
+  if (!hash) return [];
+  try {
+    const payload = await apiRequest({
+      method: 'GET',
+      path: '/song/climax',
+      params: { hash }
+    });
+    return normalizeClimaxSegments(payload);
+  } catch {
+    return [];
+  }
 };
 
 // 猜你喜欢（主页「私人专属好歌推荐」/top/card?card_id=1）。
