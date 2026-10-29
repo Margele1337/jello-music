@@ -55,7 +55,10 @@ const stripAuthFields = (value) => {
 };
 
 export const sanitizeApiResponse = (path, body) => {
-  const sensitive = path.startsWith('/login/')
+  // 精确 /login（账号密码登录）与 /login/* 同为敏感响应：代理会在此剥离 token，
+  // 渲染层只拿昵称/userid 等展示字段，登录态由主进程侧保存。
+  const sensitive = path === '/login'
+    || path.startsWith('/login/')
     || path.startsWith('/user/')
     || path.startsWith('/register/')
     || path.startsWith('/youth/');

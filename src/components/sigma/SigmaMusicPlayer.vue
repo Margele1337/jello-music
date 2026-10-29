@@ -17,6 +17,27 @@
     <SigmaText class="smp-title" :class="{ single: !titleLine2 }" :text="titleLine1" :size="14" :box-width="190" :box-height="16" align="center" scroll :phase="0" />
     <SigmaText class="smp-subtitle" v-if="titleLine2" :text="titleLine2" :size="14" :box-width="190" :box-height="16" align="center" scroll :phase="0" />
 
+    <!-- 试听片段标识（图集绘制，中文走 sans 字族）：未登录时点击可去登录 -->
+    <SigmaText
+      v-if="trialBadge.visible"
+      class="smp-trial"
+      :text="trialBadge.label"
+      :size="12"
+      family="sans"
+      :box-width="64"
+      :box-height="16"
+      align="center"
+      :color="trialBadge.color"
+      :alpha="0.95"
+    />
+    <button
+      v-if="trialBadge.nudgesLogin"
+      type="button"
+      class="smp-trial-hit"
+      title="登录后可听完整歌曲"
+      @click="emit('request-login')"
+    ></button>
+
     <!-- 时长 -->
     <SigmaText class="smp-time-left" :text="elapsedText" :size="14" :box-height="16" />
     <SigmaText class="smp-time-right" :text="durationText" :size="14" :box-width="50" :box-height="16" align="right" />
@@ -71,6 +92,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useAuthStore } from '../../stores/auth.js';
+import { computeTrialBadge } from '../../services/api/auth.js';
 import { getGuessYouLike } from '../../services/api/library.js';
 import playImg from '../../assets/sigma/music/play.png';
 import pauseImg from '../../assets/sigma/music/pause.png';
@@ -238,6 +260,12 @@ const titleLine1 = computed(() => {
 });
 
 const titleLine2 = computed(() => (hasArtist.value ? (currentSong.value?.author || '') : ''));
+
+// 试听标识：仅当实际解析到 free_part 试听片段时显示；未登录时高亮为「去登录」提示
+const trialBadge = computed(() => computeTrialBadge({
+  trial: !!props.player?.trial,
+  authenticated: auth.isAuthenticated
+}));
 
 const repeatType = computed(() => {
   const index = Number(props.player?.currentPlaybackModeIndex);
@@ -653,6 +681,35 @@ onBeforeUnmount(() => {
   top: 570px;
   width: 190px;
   text-align: center;
+}
+
+/* 试听标识：位于封面右侧、歌行之上的空隙（x186..250 / y524..540），不与封面/歌行/左栏歌单重叠 */
+.smp-trial {
+  position: absolute;
+  left: 186px;
+  top: 524px;
+  width: 64px;
+  height: 16px;
+  font-family: 'SigmaLight', sans-serif;
+  pointer-events: none;
+}
+
+.smp-trial-hit {
+  position: absolute;
+  left: 186px;
+  top: 524px;
+  width: 64px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.smp-trial-hit:hover {
+  background: rgba(255, 105, 180, 0.14);
 }
 
 .smp-time-left {
