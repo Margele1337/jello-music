@@ -15,7 +15,7 @@ import { destroyDesktopLyrics, getDesktopLyricsWindow, syncDesktopLyrics } from 
 import { destroySpectrumHud, getSpectrumWindow, syncSpectrumHud } from './windows/spectrumHud.js';
 import { initUpdater, stopUpdater } from './services/updater.js';
 import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
-import { applyGlobalShortcuts, initGlobalShortcuts, stopGlobalShortcuts } from './services/globalShortcuts.js';
+import { registerMediaKeys, stopMediaKeys } from './services/mediaShortcuts.js';
 import {
   initDockController,
   isMainWindowDocked,
@@ -210,15 +210,6 @@ const restartApp = () => {
   app.relaunch();
   flushLogs();
   quitApplication();
-};
-
-const toggleAuxSetting = (key, sync) => {
-  const next = !getSettings()[key];
-  updateSettings({ [key]: next });
-  sync(next);
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('settings:changed', getSettings());
-  }
 };
 
 // 多屏时在光标所在显示器打开：用户通常在当前工作的屏幕上唤起面板，
@@ -427,17 +418,7 @@ app.whenReady().then(async () => {
   syncDesktopLyrics(getSettings().desktopLyrics);
   syncSpectrumHud(getSettings().spectrum);
   initGlobalKeyListener({ onRightShift: handleRightShift });
-  initGlobalShortcuts({
-    sendCommand: sendPlayerCommand,
-    toggleDesktopLyrics: () => toggleAuxSetting('desktopLyrics', syncDesktopLyrics),
-    toggleSpectrum: () => toggleAuxSetting('spectrum', syncSpectrumHud),
-    toggleMainWindow: handleRightShift,
-    quitApp: quitApplication
-  });
-  const shortcutStatus = applyGlobalShortcuts(getSettings().shortcuts);
-  if (!shortcutStatus.ok) {
-    console.warn('[shortcuts] 部分热键注册失败:', JSON.stringify(shortcutStatus.failed));
-  }
+  registerMediaKeys({ sendCommand: sendPlayerCommand });
 
   app.on('activate', showMainWindow);
 }).catch((error) => {
@@ -461,7 +442,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   flushLogs();
   stopTrayTooltipSync();
-  stopGlobalShortcuts();
+  stopMediaKeys();
   stopGlobalKeyListener();
   stopDockAnimation();
   stopUpdater();

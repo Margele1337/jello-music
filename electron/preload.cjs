@@ -117,16 +117,6 @@ contextBridge.exposeInMainWorld('jello', {
     testProxy: (input) => ipcRenderer.invoke('net:test-proxy', asUrlPayload(input)),
     testApiBase: (input) => ipcRenderer.invoke('net:test-api-base', asUrlPayload(input))
   },
-  shortcuts: {
-    getStatus: () => ipcRenderer.invoke('shortcuts:get-status'),
-    // 录键期间挂起全部热键，关闭弹窗时恢复；恢复返回最新注册结果
-    setSuspended: (value) => ipcRenderer.invoke('shortcuts:set-suspended', { suspended: value === true }),
-    onStatus: (callback) => {
-      const handler = (_event, status) => callback(status);
-      ipcRenderer.on('shortcuts:status', handler);
-      return () => ipcRenderer.removeListener('shortcuts:status', handler);
-    }
-  },
   api: {
     request: (request) => ipcRenderer.invoke('api:request', request)
   }

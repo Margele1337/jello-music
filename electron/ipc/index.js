@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain, powerSaveBlocker, screen, shell } from 'electron';
 import { IPC } from '../../shared/ipc.js';
-import { shortcutsEqual } from '../../shared/settings.js';
 import { getSettings, updateSettings } from '../services/settingsStore.js';
 import { getPlaybackState, savePlaybackState } from '../services/playbackStateStore.js';
 import { isTrustedSender } from '../security/trustedSender.js';
@@ -10,7 +9,6 @@ import { restartSidecar, initSidecar } from '../services/sidecar.js';
 import { applyProxySettings, proxyUrlForSidecar, testProxy } from '../services/proxyService.js';
 import { testApiBaseUrl } from '../services/apiEndpoint.js';
 import { exportLogsDialog } from '../services/logSink.js';
-import { applyGlobalShortcuts, getGlobalShortcutStatus, setGlobalShortcutsSuspended } from '../services/globalShortcuts.js';
 import { syncTray } from '../tray.js';
 import {
   getDesktopLyricsWindow,
@@ -76,13 +74,6 @@ const applyProxyChange = async (previous, next) => {
   });
 };
 
-const applyShortcutChange = (previous, next) => {
-  if (shortcutsEqual(previous.shortcuts, next.shortcuts)) return;
-  const status = applyGlobalShortcuts(next.shortcuts);
-  // 只有失败才广播：成功时不打扰渲染层，失败时把「哪个动作、哪个键、为什么」带回去
-  if (!status.ok) broadcast(IPC.SHORTCUTS_STATUS, status);
-};
-
 const broadcast = (channel, payload) => {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send(channel, payload);
@@ -135,22 +126,6 @@ export const registerIpc = (getWindow, intents = {}) => {
     return testApiBaseUrl(payload?.url ?? payload);
   });
 
-  // 热键注册结果可能被设置页在订阅前错过（保存即注册、注册即广播），
-  // 所以留一个拉取式的兜底口
-  ipcMain.handle(IPC.SHORTCUTS_GET_STATUS, (event) => {
-    assertTrusted(event, getWindow);
-    return getGlobalShortcutStatus();
-  });
-
-  // 录键开始/结束：挂起时摘键，恢复时重挂并把结果广播出去
-  // （挂起期间保存的新键位可能在恢复时才暴露冲突）
-  ipcMain.handle(IPC.SHORTCUTS_SET_SUSPENDED, (event, payload) => {
-    assertTrusted(event, getWindow);
-    const status = setGlobalShortcutsSuspended(payload?.suspended);
-    if (payload?.suspended !== true) broadcast(IPC.SHORTCUTS_STATUS, status);
-    return status;
-  });
-
   // GPU 开关之类「重启后才生效」的设置：重启动作由用户点确认，主进程只负责
   // relaunch + 退出（走 before-quit 清理链，把 sidecar 与 session 落盘做完）
   ipcMain.handle(IPC.APP_RESTART, (event) => {
@@ -189,8 +164,6 @@ export const registerIpc = (getWindow, intents = {}) => {
     if (next.apiBaseUrlMode !== previous.apiBaseUrlMode || next.apiBaseUrl !== previous.apiBaseUrl) {
       resetDeviceRegistration();
     }
-
-    applyShortcutChange(previous, next);
 
     if (next.minimizeToTray !== previous.minimizeToTray) {
       syncTray(next.minimizeToTray);

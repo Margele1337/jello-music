@@ -10,12 +10,6 @@ export const IPC = Object.freeze({
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_CHANGED: 'settings:changed',
-  // 全局快捷键注册结果广播：{ ok, failed: [{ action, accelerator, reason }] }
-  SHORTCUTS_STATUS: 'shortcuts:status',
-  // 拉取式兜底：注册结果广播可能发生在设置页订阅之前
-  SHORTCUTS_GET_STATUS: 'shortcuts:get-status',
-  // 设置页录键期间临时挂起全部热键，否则旧键会抢走正在按的组合键并误触发
-  SHORTCUTS_SET_SUSPENDED: 'shortcuts:set-suspended',
   AUTH_GET: 'auth:get',
   AUTH_CLEAR: 'auth:clear',
   AUTH_CHANGED: 'auth:changed',

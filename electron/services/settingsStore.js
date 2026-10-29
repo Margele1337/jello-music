@@ -1,5 +1,5 @@
 import Store from 'electron-store';
-import { SETTING_DEFAULTS, normalizeShortcuts, sanitizeSettings } from '../../shared/settings.js';
+import { SETTING_DEFAULTS, sanitizeSettings } from '../../shared/settings.js';
 
 let store = null;
 
@@ -15,13 +15,12 @@ export const initSettings = () => {
 };
 
 export const getSettings = () => {
-  const raw = store?.store || {};
+  // settings.json 里遗留的 shortcuts 键随全局快捷键功能一并废弃，读出时丢弃
+  const { shortcuts: legacyShortcuts, ...rest } = store?.store || {};
+  void legacyShortcuts;
   return {
     ...SETTING_DEFAULTS,
-    ...raw,
-    // 旧版本/手工编辑过的 settings.json 里可能缺 shortcuts 或含非法键位，
-    // 每次读取都补齐成完整 12 键，调用方与渲染层都不用再做默认值合并
-    shortcuts: normalizeShortcuts(raw.shortcuts)
+    ...rest
   };
 };
 

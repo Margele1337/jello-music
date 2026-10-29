@@ -2,20 +2,17 @@
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
-  DEFAULT_SHORTCUTS,
   PLAYBACK_RATES,
   SETTING_DEFAULTS,
   normalizeApiBaseUrl,
   normalizeProxyUrl
 } from '../../shared/settings.js';
-import SettingsShortcutModal from '../components/settings/SettingsShortcutModal.vue';
 import {
   apiBaseRejectedMessage,
   checkApiBaseInput,
   checkProxyInput,
   proxyRejectedMessage
 } from '../components/settings/addressChecks.js';
-import { shortcutActionLabel } from '../components/settings/shortcutChords.js';
 import { claimDailyVip, formatVipDate } from '../services/api/vip.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useRiskStore } from '../stores/risk.js';
@@ -340,54 +337,6 @@ const restartForGpu = () => {
   });
 };
 
-// ===== 全局快捷键 =====
-const isShortcutOpen = ref(false);
-const shortcutFailures = ref([]);
-const shortcutsBusy = ref(false);
-let unsubscribeShortcuts = null;
-
-const refreshShortcutStatus = async () => {
-  const getStatus = window.jello?.shortcuts?.getStatus;
-  if (!getStatus) return;
-  try {
-    const status = await getStatus();
-    shortcutFailures.value = Array.isArray(status?.failed) ? status.failed : [];
-  } catch {
-    /* 读不到就沿用上一次结果，不打扰用户 */
-  }
-};
-
-const shortcutProblemText = computed(() => {
-  if (!shortcutFailures.value.length) return '';
-  const names = shortcutFailures.value.map((item) => shortcutActionLabel(item?.action)).filter(Boolean).join('、');
-  return names ? `注册失败：${names}` : '存在注册失败的快捷键';
-});
-
-const openShortcuts = () => {
-  isShortcutOpen.value = true;
-  void refreshShortcutStatus();
-};
-
-const saveShortcuts = async (next) => {
-  shortcutsBusy.value = true;
-  try {
-    await settings.update({ shortcuts: next });
-    // 注册结果只在失败时广播，成功后主动拉一次，避免残留上一次的失败标注
-    await refreshShortcutStatus();
-    if (shortcutFailures.value.length) {
-      setNotice(`快捷键已保存，${shortcutFailures.value.length} 项注册失败，详见面板标注`, 5000);
-    } else {
-      setNotice('快捷键已更新');
-    }
-  } catch (error) {
-    setNotice(error?.message || '快捷键保存失败');
-  } finally {
-    shortcutsBusy.value = false;
-  }
-};
-
-const restoreShortcuts = () => saveShortcuts({ ...DEFAULT_SHORTCUTS });
-
 const showTutorial = () => {
   updateSetting('hotkeyIntroSeen', false);
   setNotice('已重置教程，返回播放页即可查看');
@@ -692,30 +641,6 @@ const rateText = (rate) => (rate === 1 ? '1.0x' : `${rate}x`);
 // ===== 设置分区 schema（对齐参考版：分类胶囊 + 卡片行 + 通用渲染器） =====
 const settingSections = [
   {
-    title: '界面',
-    items: [
-      {
-        key: 'hotkeyIntroSeen',
-        control: 'action',
-        icon: 'keyboard',
-        label: '快捷呼入/呼出',
-        customText: '打开',
-        action: () => showTutorial(),
-        description: '重新播放右 Shift 新手教程（快捷呼出面板）。'
-      },
-      {
-        key: 'shortcuts',
-        control: 'action',
-        icon: 'keyboard',
-        label: '全局快捷键',
-        customText: '自定义',
-        action: () => openShortcuts(),
-        description: '12 个动作可自定义；播放/暂停等媒体键由系统固定注册，不参与自定义。',
-        hint: () => (shortcutProblemText.value ? { tone: 'error', text: shortcutProblemText.value } : null)
-      }
-    ]
-  },
-  {
     title: '声音',
     items: [
       {
@@ -841,6 +766,15 @@ const settingSections = [
   {
     title: '系统',
     items: [
+      {
+        key: 'hotkeyIntroSeen',
+        control: 'action',
+        icon: 'keyboard',
+        label: '快捷呼入/呼出',
+        customText: '打开',
+        action: () => showTutorial(),
+        description: '重新播放右 Shift 新手教程（快捷呼出面板）。'
+      },
       {
         key: 'autoStart',
         control: 'toggle',
@@ -1131,8 +1065,6 @@ const factoryReset = () => {
     onConfirm: async () => {
       // 全部偏好恢复默认（settings:set 走主进程持久化）
       await settings.update({ ...SETTING_DEFAULTS });
-      // 热键回到默认键位后主进程会重挂，拉一次结果清掉面板里的失败标注
-      await refreshShortcutStatus();
       proxyHint.value = null;
       apiHint.value = null;
       // 清登录态
@@ -1164,11 +1096,7 @@ const onKeyDown = (event) => {
     closeConfirm();
     return;
   }
-  // 层级由上到下：快捷键录制面板 → 选择弹窗 → 返回播放页
-  if (isShortcutOpen.value) {
-    isShortcutOpen.value = false;
-    return;
-  }
+  // 层级由上到下：选择弹窗 → 返回播放页
   if (isSelectionOpen.value) {
     isSelectionOpen.value = false;
     return;
@@ -1183,14 +1111,6 @@ onMounted(async () => {
     version.value = await window.jello?.app?.getVersion?.() || '';
   } catch {
     version.value = '';
-  }
-
-  if (window.jello?.shortcuts) {
-    // 保存即注册、注册即广播：失败项要在面板里逐行标注，其余键位保持生效
-    unsubscribeShortcuts = window.jello.shortcuts.onStatus((status) => {
-      shortcutFailures.value = Array.isArray(status?.failed) ? status.failed : [];
-    });
-    void refreshShortcutStatus();
   }
 
   if (window.jello?.updates) {
@@ -1209,8 +1129,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown);
   clearTimeout(noticeTimer);
-  unsubscribeShortcuts?.();
-  unsubscribeShortcuts = null;
   unsubscribeUpdates?.();
   unsubscribeUpdates = null;
 });
@@ -1393,13 +1311,6 @@ onBeforeUnmount(() => {
           <button type="button" class="modal-close" @click="isSelectionOpen = false">关闭</button>
         </div>
       </div>
-    </teleport>
-
-    <!-- 快捷键录制面板：12 个动作逐行录制，保存由本页走 settings.set -->
-    <teleport to="body">
-      <SettingsShortcutModal v-if="isShortcutOpen" :shortcuts="settings.shortcuts || {}"
-        :failures="shortcutFailures" :busy="shortcutsBusy" :platform="platform" @close="isShortcutOpen = false"
-        @save="saveShortcuts" @restore="restoreShortcuts" />
     </teleport>
 
     <!-- 二次确认弹窗（恢复出厂设置）：复用页面自己的弹窗外观 -->
