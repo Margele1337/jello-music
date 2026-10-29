@@ -143,7 +143,12 @@ follow-up.
 
 ## Packaging
 
-`npm run dist` builds the renderer and an NSIS installer. The KuGouMusicApi
+`npm run dist` builds the renderer and an NSIS installer. The release job runs
+in the `release` GitHub environment with a required reviewer and only
+`contents: write` (top-level workflow permissions stay `contents: read`), and
+the checkout does not persist credentials. Repository settings to keep in place:
+a ruleset protecting `v*` tags from deletion and force-push, and signed release
+tags (`git tag -s`, verify with `git tag -v`). The KuGouMusicApi
 sidecar is copied to `resources/api` (outside `app.asar`) together with its
 production `node_modules`; main resolves that path through `process.resourcesPath`
 when packaged. The wrapper and token guard are copied next to the sidecar.
@@ -182,8 +187,11 @@ Downloads are opt-in (`autoDownload: false`); once downloaded, the update instal
 on quit and the settings page offers an immediate restart. Development builds
 report "dev" and never contact the update server. `Jello-Music-Setup-x.y.z.exe`,
 `latest.yml`, and the `.blockmap` must be uploaded together to the GitHub release.
-Builds are unsigned, so SmartScreen warnings and update signature hardening are
-still open.
+Builds are unsigned, so SmartScreen warnings remain and the update channel
+trusts GitHub Releases entirely — updates install silently on quit, and
+`latest.yml`'s sha512 only proves download integrity, not publisher identity.
+Authenticode signing plus `publisherName` (electron-updater then verifies update
+signatures) is the planned fix once the user base justifies it.
 
 ## Security baseline
 

@@ -57,6 +57,14 @@ ships without dev tooling (the release workflow does this automatically).
 - The sidecar is loopback-only on a random port and requires a fresh per-launch
   token; direct local requests without it receive 401.
 - Keep a strict CSP and review it whenever a new origin is added.
+- Release hardening: the release job runs in the `release` GitHub environment
+  (approval required) with only `contents: write`; checkout does not persist
+  credentials; `v*` tags are protected from deletion and force-push; release
+  tags should be signed (`git tag -s`). Known accepted risk until code signing
+  lands: updates are unsigned and install silently on quit; `latest.yml`'s
+  sha512 proves download integrity only, so a GitHub account/repo compromise
+  could ship a malicious update. Code signing is planned once the user base
+  justifies it.
 
 ## Third-party and provenance
 
