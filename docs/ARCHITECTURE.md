@@ -197,8 +197,20 @@ signatures) is the planned fix once the user base justifies it.
 
 - Every IPC handler validates `event.sender` and `event.senderFrame` against the
   registered main window; subframes are rejected.
+- CSP lives in `index.html` but is not static: `vite.config.js` rewrites the
+  meta tag from `shared/csp.js` (`buildCsp({ dev })`) — dev gets the Vite HMR
+  `ws://127.0.0.1:5173` origins, packaged builds never mention the dev port.
+  Header-based injection was rejected on purpose: the packaged main window is a
+  `file:` document, so a response header would either miss it entirely or
+  intersect with the tray-menu page's own `file:`-based meta CSP and break it.
+- `connect-src` allowlists KuGou CDN suffixes (`kugou.com`, `kgimg.com`) instead
+  of a wide `https:`. The renderer calls `auditCspTarget` before the spectrum
+  self-decode fetch and before handing a media URL to `<audio>`; hosts outside
+  the list log a `[csp-audit]` line to main.log. A missing host degrades only
+  the spectrum path (remote-URL playback continues) and shows up in the audit
+  log — that is the procedure for extending the list. `media-src` remains broad
+  until the collected host list justifies narrowing it.
 - No `webSecurity: false`, no `allowRunningInsecureContent`, no webviews.
-- CSP lives in `index.html`; new origins require review.
 - No generic "fetch arbitrary URL" IPC; the API proxy has an allowlist.
 - The sidecar requires a random per-launch token supplied by main; direct local
   requests without it are rejected before reaching Express.

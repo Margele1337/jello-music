@@ -30,6 +30,7 @@
 // 所以可听路径不再强制 44.1kHz（原版也没有重采样这一步）；自解码分析链路始终用
 // 曲目原生采样率，是严格同构的那一条。tap 回退链路的窗宽随设备率变化，见 ensureGraph。
 import { createSpectrumFft } from './fft.js';
+import { auditCspTarget } from '../../../shared/csp.js';
 import {
   SigmaDisplayQueue,
   decideSelfDecode,
@@ -457,6 +458,7 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
   const format = decision.format;
   // 取字节预算：blob 路径要等整首下完才能出声，弱网下会拖慢播放开始。
   // 超预算即中止并静默回退远程 URL + tap 链路，播放可靠性优先于频谱同构。
+  auditCspTarget(url, '自解码 fetch');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), budgetMs);
   try {

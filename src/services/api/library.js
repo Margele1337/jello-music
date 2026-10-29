@@ -1,6 +1,7 @@
 import { parseKrc } from '../lyrics/krc.js';
 import { parseLrc } from '../lyrics/lrc.js';
 import { QUALITY_VALUES, qualityLabel } from '../../../shared/settings.js';
+import { auditCspTarget } from '../../../shared/csp.js';
 import { apiRequest } from './client.js';
 import {
   coverUrl,
@@ -323,6 +324,8 @@ const requestSongUrl = async (song, hash, quality, extra) => {
 };
 
 const buildStreamResult = (url, candidate, payload, isTrial, qualityOptions) => {
+  // media-src 目前仍是宽放行：这里只做主机名收集，为后续收紧提供数据
+  auditCspTarget(url, '媒体播放');
   const result = {
     url,
     quality: candidate.quality,

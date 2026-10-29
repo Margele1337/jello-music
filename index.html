@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- CSP 是 dev 用的占位值：vite.config.js 的 cspPlugin 会在 dev/build 两个阶段
+       用 shared/csp.js 的 buildCsp 重写这里（build 产物不带 5173 白名单）。 -->
   <meta
     http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https: http: blob:; connect-src 'self' ws://127.0.0.1:5173 http://127.0.0.1:5173 https: http://*.kugou.com;"

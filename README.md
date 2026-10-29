@@ -56,7 +56,14 @@ ships without dev tooling (the release workflow does this automatically).
   serve valid HTTP. Media is loaded directly from Kugou CDNs.
 - The sidecar is loopback-only on a random port and requires a fresh per-launch
   token; direct local requests without it receive 401.
-- Keep a strict CSP and review it whenever a new origin is added.
+- Keep a strict CSP, reviewed per change: it is written into `index.html` by
+  `vite.config.js` from `shared/csp.js` — dev builds carry the Vite HMR origins,
+  packaged builds do not. `connect-src` is an explicit KuGou-CDN suffix
+  allowlist (`kugou.com`, `kgimg.com`) instead of a wide `https:`; the renderer
+  logs `[csp-audit]` lines to main.log when a fetch/media target falls outside
+  the list, which is how new CDN hosts get collected before the list grows.
+  `media-src` stays broad (`https: http: blob:`) until enough media hosts are
+  collected; `blob:` is required by the spectrum self-decode pipeline.
 - Release hardening: the release job runs in the `release` GitHub environment
   (approval required) with only `contents: write`; checkout does not persist
   credentials; `v*` tags are protected from deletion and force-push; release
