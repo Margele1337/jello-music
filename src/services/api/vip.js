@@ -41,7 +41,15 @@ export const claimDailyVip = async (date = new Date(), storage) => {
     data: { receive_day: day }
   });
   if (!isOk(claim)) {
-    const message = authErrorMessage(claim, '领取 VIP 失败');
+    // 服务端失败响应没有稳定的错误字段：把（已脱敏的）完整载荷打进日志便于对码，
+    // UI 消息在无文案时至少带上 error_code
+    try {
+      console.warn('[vip] 领取响应:', JSON.stringify(claim).slice(0, 800));
+    } catch { /* ignore */ }
+    const detail = authErrorMessage(claim, '');
+    const code = claim?.error_code ?? claim?.data?.error_code;
+    const message = detail
+      || (code !== undefined ? `领取 VIP 失败（error_code ${code}）` : '领取 VIP 失败');
     // 服务端判定今天已领过：按状态处理并记住当天，而不是当作失败抛出
     if (ALREADY_CLAIMED_RE.test(message)) {
       writeClaimedDay(day, storage);
