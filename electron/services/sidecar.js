@@ -230,11 +230,13 @@ const spawnSidecar = async (port, platform) => {
   return baseUrl;
 };
 
-export const startSidecar = async ({ platform = 'lite' } = {}) => {
+export const startSidecar = async ({ platform } = {}) => {
   if (baseUrl) return baseUrl;
   if (starting) return starting;
-
-  currentPlatform = platform === 'official' ? 'official' : 'lite';
+  // 平台只在显式传入时定格；restartSidecar 已在 stop 之前钉住目标平台，
+  // 这里若无条件赋值，会把并发调用方（waitForSidecar 自动拉起）刚钉好的
+  // 新平台又改回旧值
+  if (platform) currentPlatform = platform === 'official' ? 'official' : 'lite';
 
   starting = (async () => {
     // 复用上一轮遗留的兼容实例（dev 热重启 / 崩溃后未回收的子进程仍在监听随机端口）
@@ -361,10 +363,14 @@ export const stopSidecar = async () => {
   });
 };
 
-export const restartSidecar = async (options) => {
+export const restartSidecar = async (options = {}) => {
+  // 目标平台必须先于 stop 定格：stop→start 之间（秒级）进来的请求会经
+  // waitForSidecar 自动拉起实例，拿到的必须是新平台，否则数据源切换会被
+  // 旧平台实例「抢跑」，表现成切了没生效
+  if (options.platform) currentPlatform = options.platform === 'official' ? 'official' : 'lite';
   await stopSidecar();
   intentionalStop = false;
-  return startSidecar(options);
+  return startSidecar();
 };
 
 // 主进程用来接 sidecar 状态变化（崩溃/复用），避免 service 反向依赖窗口层

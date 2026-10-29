@@ -368,7 +368,7 @@ const setDataSource = async (value) => {
   switching.value = true;
   try {
     await settings.update({ dataSource: value });
-    setNotice('数据源已切换，接口正在重启，稍后即可使用', 5000);
+    setNotice('数据源已切换', 5000);
   } catch (error) {
     setNotice(error?.message || '数据源切换失败');
   } finally {

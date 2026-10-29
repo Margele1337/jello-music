@@ -144,13 +144,23 @@ export const registerIpc = (getWindow, intents = {}) => {
     const previous = getSettings();
     const next = updateSettings(patch);
 
+    // 数据源切换要等新平台实例真正就绪（上限 12s）再广播与返回：UI 的
+    // 「已切换」必须属实。失败时设置保持已保存状态，waitForSidecar 会在
+    // 下次请求前按新平台重试；广播先于报错，保证渲染器设置不与服务端脱节
+    let dataSourceRestartError = null;
     if (next.dataSource !== previous.dataSource) {
       resetDeviceRegistration();
       resetDeviceCookies();
       const platform = next.dataSource === 'concept' ? 'lite' : 'official';
-      void restartSidecar({ platform }).catch((error) => {
+      try {
+        await Promise.race([
+          restartSidecar({ platform }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('重启超时')), 12000))
+        ]);
+      } catch (error) {
+        dataSourceRestartError = error;
         console.error('[sidecar] 数据源切换重启失败:', error.message);
-      });
+      }
     }
 
     // 代理与自定义 RPC 地址都是「改了就要立刻能在下一次请求上体现」的设置：
@@ -186,6 +196,9 @@ export const registerIpc = (getWindow, intents = {}) => {
     syncSpectrumHudSettings(next);
 
     broadcast(IPC.SETTINGS_CHANGED, next);
+    if (dataSourceRestartError) {
+      throw new Error(`数据源已保存，但接口重启失败：${dataSourceRestartError.message}`);
+    }
     return next;
   });
 
