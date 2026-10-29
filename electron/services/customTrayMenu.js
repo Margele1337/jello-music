@@ -123,7 +123,9 @@ class CustomTrayMenuService {
       }
     });
 
-    this.menuWindow.setAlwaysOnTop(true, 'pop-up-menu');
+    // 频谱 HUD 与桌面歌词都是 'screen-saver' 层级，托盘菜单必须压在它们之上，
+    // 否则覆盖层（尤其解锁态）会在 z 序上挡住菜单的点击
+    this.menuWindow.setAlwaysOnTop(true, 'screen-saver', 2);
     this.menuWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
     this.menuWindow.on('blur', () => this.hide());

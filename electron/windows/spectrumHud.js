@@ -86,10 +86,22 @@ const getHudArea = () => {
   return area || fallback;
 };
 
+// 解锁态只用于拖动定位：窗口收回底部条高，否则整块工作区的非穿透窗口
+// 会吃掉全屏点击（托盘菜单、Sigma 面板都点不动）
+const UNLOCKED_STRIP_DIP = 280;
+let hudLocked = true;
+
+const unlockedStripHeight = (area) => {
+  const display = getDisplay();
+  const dipScale = toDipScale(display, getGeometryScale(display));
+  return Math.max(120, Math.min(area.height, Math.round(UNLOCKED_STRIP_DIP * (dipScale || 1))));
+};
+
 // 目标几何：尺寸恒等于区域，位置按「是否被用户拖过」决定
 const getHudTarget = (area = getHudArea()) => {
   if (!area) return null;
   const size = hudSurfaceSize(area);
+  if (!hudLocked) size.height = unlockedStripHeight(area);
   const position = spectrumUserMoved
     ? clampHudPosition(area, size, hudPositionFromOffset(area, size, spectrumUserOffset))
     : hudAnchorPosition(area, size);
@@ -387,12 +399,15 @@ export const syncSpectrumHud = (enabled) => {
 // HUD 表面现在是整块工作区：解锁态整屏都会吃鼠标，渲染层为此提供「锁定」按钮 + 双击任意处复位，
 // 且解锁态指示框/徽标全程 pointer-events:none（只有按钮可点），不挡穿透路径。
 export const applySpectrumHudMouseEvents = (locked) => {
+  hudLocked = locked === true;
   if (!hudWindow || hudWindow.isDestroyed()) return;
   if (locked === true) {
     hudWindow.setIgnoreMouseEvents(true, { forward: true });
   } else {
     hudWindow.setIgnoreMouseEvents(false);
   }
+  // 锁定/解锁切换即改变目标尺寸：解锁收回底部条，锁定铺回整个区域
+  applyHudTarget();
 };
 
 export const syncSpectrumHudSettings = (settings) => {
