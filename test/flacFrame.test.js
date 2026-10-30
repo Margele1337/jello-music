@@ -253,25 +253,59 @@ test('rejects garbage syncs, bad CRC, reserved codes and truncated headers', () 
   assert.equal(parseFlacFrameHeader(full, -1, si44100), null);
 });
 
+// 帧体 + 正确的帧尾 CRC-16（多项式 0x8005，大端）
+const crc16 = (bytes) => {
+  let crc = 0;
+  for (const byte of bytes) {
+    crc ^= byte << 8;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) & 0xFFFF : (crc << 1) & 0xFFFF;
+    }
+  }
+  return crc;
+};
+const withCrc16 = (frameBytes) => {
+  const crc = crc16(frameBytes);
+  return [...frameBytes, (crc >> 8) & 0xFF, crc & 0xFF];
+};
+
 // ===== 文件级定位：首帧 / 下一帧（帧尾=下一同步字）=====
 
 test('findFirstFlacFrame locates the first frame after the metadata prefix', () => {
-  const frame1 = buildFlacFrameHeader({ frameNumber: 0 });
-  const frame2 = buildFlacFrameHeader({ frameNumber: 1 });
+  const body = new Array(300).fill(0);
+  const frame1 = withCrc16([...buildFlacFrameHeader({ frameNumber: 0 }), ...body]);
+  const frame2 = withCrc16([...buildFlacFrameHeader({ frameNumber: 1 }), ...body]);
   const bytes = buildFlacFile({
     streaminfo: {},
-    frames: [frame1, new Array(300).fill(0), frame2, new Array(300).fill(0)]
+    frames: [frame1, frame2]
   });
   const found = findFirstFlacFrame(bytes);
   assert.ok(found);
   assert.equal(found.offset, 42);
   assert.equal(found.header.blocksize, 4096);
   assert.equal(found.stream.descriptionEnd, 42);
-  // 下一帧 = 42 + 6(帧头) + 300(帧体)
-  const next = findNextFlacFrameOffset(bytes, found.offset + found.header.headerSize, found.stream.streaminfo);
-  assert.equal(next, 348);
-  // 填充垃圾里找不到第三帧
-  assert.equal(findNextFlacFrameOffset(bytes, next + 6, found.stream.streaminfo), -1);
+  // 下一帧 = 42 + 6(帧头) + 300(帧体) + 2(CRC16)
+  const next = findNextFlacFrameOffset(bytes, found.offset + found.header.headerSize, found.stream.streaminfo, found.offset);
+  assert.equal(next, 350);
+  // 帧2 之后没有帧
+  assert.equal(findNextFlacFrameOffset(bytes, next + 6, found.stream.streaminfo, next), -1);
+});
+
+test('frame CRC-16 rejects false syncs embedded in frame data', () => {
+  const body = new Array(300).fill(0);
+  // 帧体内埋一个「FF F8 + 合法字段 + 正确 CRC8」的假同步
+  const fake = buildFlacFrameHeader({ frameNumber: 5 });
+  const bodyWithFake = [...body.slice(0, 120), ...fake, ...body.slice(120)];
+  const frame1 = withCrc16([...buildFlacFrameHeader({ frameNumber: 0 }), ...bodyWithFake]);
+  const frame2 = withCrc16([...buildFlacFrameHeader({ frameNumber: 1 }), ...body]);
+  const bytes = buildFlacFile({ streaminfo: {}, frames: [frame1, frame2] });
+  const si = parseFlacStream(bytes).streaminfo;
+  const start = 42;
+  const fakeOffset = start + 6 + 120;
+  // 不带 frameStart：假同步会被接受（帧头 CRC8 不足以排除）
+  assert.equal(findNextFlacFrameOffset(bytes, start + 6, si), fakeOffset);
+  // 带 frameStart：上一帧的 CRC-16 校验排除假同步，直达真帧 2
+  assert.equal(findNextFlacFrameOffset(bytes, start + 6, si, start), start + frame1.length);
 });
 
 test('findFirstFlacFrame rejects files with no valid frame or broken magic', () => {

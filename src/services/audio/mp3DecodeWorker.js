@@ -92,7 +92,10 @@ const resyncFrom = (offset) => (format === 'flac'
 // 末帧到文件尾时裁掉可能存在的 ID3v1 尾标签（128 字节 'TAG'，混进 chunk 会解码报错）
 const frameEnd = (header) => {
   if (format !== 'flac') return Math.min(header.offset + header.frameSize, bytes.byteLength);
-  const next = findNextFlacFrameOffset(bytes, header.offset + header.headerSize, streaminfo);
+  let next = findNextFlacFrameOffset(bytes, header.offset + header.headerSize, streaminfo, header.offset);
+  // 距文件尾 ≤128 字节的「下一帧」几乎必是 ID3v1 尾标签区的假同步：
+  // 按 EOF 处理，真末帧才能完整送到（含自己的 CRC16）
+  if (next >= 0 && bytes.byteLength - next <= 128) next = -1;
   if (next >= 0) return next;
   let end = bytes.byteLength;
   if (end >= 128 && bytes[end - 128] === 0x54 && bytes[end - 127] === 0x41

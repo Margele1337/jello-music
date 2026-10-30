@@ -510,14 +510,37 @@ export const parseFlacFrameHeader = (bytes, offset = 0, streaminfo = null) => {
   };
 };
 
+// FLAC 帧 CRC-16（多项式 0x8005，初值 0，MSB 优先，不反转——CRC-16/IBM-3740）：
+// 覆盖帧头+子帧数据，大端存于帧尾 2 字节。帧头 CRC8 只有 1/256 的假同步排除力，
+// 11MB 的音频字节约有 0.7 次期望出现「FF F8 + 合法字段 + CRC8 巧合」的假帧；
+// 用上一帧的 CRC-16 校验候选边界，假同步几乎必挂。
+const flacCrc16 = (bytes, from, to) => {
+  let crc = 0;
+  for (let i = from; i < to; i += 1) {
+    crc ^= bytes[i] << 8;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x8000) ? ((crc << 1) ^ 0x8005) & 0xFFFF : (crc << 1) & 0xFFFF;
+    }
+  }
+  return crc;
+};
+
 // 从 from 起扫描下一个通过 CRC 校验的 FLAC 帧同步；找不到返回 -1。
-// 帧字节长度可变且头部不含长度字段，「帧尾=下一帧同步」是唯一切帧依据
-export const findNextFlacFrameOffset = (bytes, from, streaminfo = null) => {
+// 帧字节长度可变且头部不含长度字段，「帧尾=下一帧同步」是唯一切帧依据。
+// frameStart >= 0 时额外要求：[frameStart, offset-2) 的 CRC-16 等于 offset 前
+// 两字节——把「帧头 CRC8 巧合」的假同步彻底排除。
+export const findNextFlacFrameOffset = (bytes, from, streaminfo = null, frameStart = -1) => {
   if (!bytes) return -1;
   for (let offset = Math.max(0, from); offset + 5 <= bytes.byteLength; offset += 1) {
     if (bytes[offset] !== 0xFF) continue;
     if ((bytes[offset + 1] & 0xFE) !== 0xF8) continue;
-    if (parseFlacFrameHeader(bytes, offset, streaminfo)) return offset;
+    if (!parseFlacFrameHeader(bytes, offset, streaminfo)) continue;
+    if (frameStart >= 0) {
+      if (offset < frameStart + 4) continue;
+      const stored = (bytes[offset - 2] << 8) | bytes[offset - 1];
+      if (flacCrc16(bytes, frameStart, offset - 2) !== stored) continue;
+    }
+    return offset;
   }
   return -1;
 };
@@ -527,7 +550,14 @@ export const findNextFlacFrameOffset = (bytes, from, streaminfo = null) => {
 export const findFirstFlacFrame = (bytes) => {
   const stream = parseFlacStream(bytes);
   if (!stream) return null;
-  const offset = findNextFlacFrameOffset(bytes, stream.descriptionEnd, stream.streaminfo);
+  let offset = findNextFlacFrameOffset(bytes, stream.descriptionEnd, stream.streaminfo);
+  while (offset >= 0) {
+    // 首帧没有前帧可校验 CRC16——用「它能被下一帧的 CRC16 边界证实」代替：
+    // 元数据里的假同步后面接不上合法帧，真首帧可以
+    const next = findNextFlacFrameOffset(bytes, offset + 1, stream.streaminfo, offset);
+    if (next >= 0) break;
+    offset = findNextFlacFrameOffset(bytes, offset + 1, stream.streaminfo);
+  }
   if (offset < 0) return null;
   const header = parseFlacFrameHeader(bytes, offset, stream.streaminfo);
   if (!header) return null;
@@ -596,7 +626,7 @@ export const advanceFlacFrameIndex = (bytes, index, streaminfo, targetSample) =>
     const lastOffset = index.offsets[index.offsets.length - 1];
     const header = parseFlacFrameHeader(bytes, lastOffset, streaminfo);
     if (!header) { index.done = true; break; }
-    const nextOffset = findNextFlacFrameOffset(bytes, lastOffset + header.headerSize, streaminfo);
+    const nextOffset = findNextFlacFrameOffset(bytes, lastOffset + header.headerSize, streaminfo, lastOffset);
     if (nextOffset < 0) { index.done = true; break; }
     const nextSample = index.samples[index.samples.length - 1] + header.blocksize;
     index.offsets.push(nextOffset);
