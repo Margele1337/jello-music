@@ -737,6 +737,33 @@ export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled }) 
   return { ok: true, reason: '', format };
 };
 
+// ===== 音源响度归一化（FFT 输入前，两条链路共用）=====
+// 原版频谱的幅度量级由 YouTube 转码（响度归一约 -14 LUFS）决定；酷狗音源是原始
+// 母带响度（普遍更响 6~10dB），同一渲染公式下条高整体偏高 √c 倍。这里把任意
+// 音源的窗 RMS 慢速归一到原版等效量纲，消除乘性常数差异。
+//
+// 参考值推导：-14 LUFS ≈ RMS 0.099（[-1,1] 浮点量纲）→ Int16 量纲 ×32768 ≈ 3244。
+// packed 打包窗（aac original，值 ≈ 2L）的 RMS 约为交错窗的 2 倍 → 参考 ×2。
+// 用法：每帧填窗后、FFT 前调用 normalize(windowSamples)。内部维护慢速 RMS 估计
+// （EMA k=0.02/帧，43Hz 下 τ≈1.2s），增益限幅 [0.25, 4] 防止静音轨放大底噪；
+// 静音窗（RMS<1e-3）不更新估计也不增益，保持 0 输出。
+export const REF_RMS_INTERLEAVED = 0.099 * 32768;
+export const REF_RMS_PACKED = REF_RMS_INTERLEAVED * 2;
+
+export const createLoudnessNormalizer = (refRms = REF_RMS_INTERLEAVED) => {
+  let rmsAvg = 0;
+  return (windowSamples) => {
+    let sum = 0;
+    for (let i = 0; i < windowSamples.length; i += 1) sum += windowSamples[i] * windowSamples[i];
+    const frameRms = Math.sqrt(sum / windowSamples.length);
+    if (frameRms < 1e-3) return;
+    rmsAvg = rmsAvg === 0 ? frameRms : rmsAvg + (frameRms - rmsAvg) * 0.02;
+    const gain = Math.min(4, Math.max(0.25, refRms / rmsAvg));
+    if (Math.abs(gain - 1) < 1e-4) return;
+    for (let i = 0; i < windowSamples.length; i += 1) windowSamples[i] *= gain;
+  };
+};
+
 // ===== AudioData 帧 → 2048 点交错窗（Int16 量级，供 Worker FFT） =====
 // readPlane(planeIndex) 按 f32-planar 语义返回单声道平面（frameSamples 个样本）。
 // 注意 WebCodecs copyTo 请求 f32（交错）时平面含 frameSamples*channels 个样本，

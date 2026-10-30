@@ -47,8 +47,8 @@ import {
 const BAR_COUNT = 114;
 const SPECTRUM_SMOOTHING = DEFAULT_SMOOTHING_COEFFICIENT;
 const REFERENCE_DISPLAY_HEIGHT = 1080;
-const REFERENCE_GAME_HEIGHT = 1009;
-const REFERENCE_BAR_RATIO = REFERENCE_GAME_HEIGHT / REFERENCE_DISPLAY_HEIGHT;
+// 原版条高系数 = 窗口高/1080（MusicManager.java:180 heightRatio），无额外校准常数。
+// 曾经的 1009/1080 是从单次录像反推的私有修正，会把那台机器的误差焊死进所有屏幕。
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const detectDisplayScale = () => {
@@ -77,6 +77,28 @@ for (let i = 0; i < BAR_COUNT; i += 1) {
   barStyles[i] = `rgba(153, 153, 153, ${(0.2 * (1 - (i + 1) / BAR_COUNT)).toFixed(4)})`;
 }
 
+// ===== 目标帧时间插值（消除 43Hz 目标流被 60/144Hz rAF 采样产生的混叠拍频）=====
+// 原版 visualizerData[0] 以音频时钟 43Hz 均匀换帧、游戏 300-1100fps 过采样渲染，
+// 帧级台阶被 τ≈50ms 低通滤掉 93%，肉眼只见节拍包络。rAF 60Hz 采 43Hz 阶梯会
+// 混叠出 ~17Hz 的可见闪抖。这里把 IPC 帧流按到达时间线性插值成连续斜坡：
+// 频谱内容/节奏不变，仅把阶梯换成斜坡，采样混叠源头消失。
+let prevFrame = null;   // { levels: Float32Array, time: number }
+let nextFrame = null;
+const adoptLevels = (arr, now) => {
+  prevFrame = nextFrame;
+  nextFrame = { levels: Float32Array.from(arr), time: now };
+  if (!prevFrame) prevFrame = nextFrame;   // 首帧：立即到位，无渐变
+};
+const interpolateTargets = (now) => {
+  if (!nextFrame) return;
+  const prev = prevFrame || nextFrame;
+  const span = Math.max(4, nextFrame.time - prev.time);
+  const t = Math.min(1, Math.max(0, (now - nextFrame.time) / span));
+  for (let i = 0; i < BAR_COUNT; i += 1) {
+    targets[i] = prev.levels[i] + (nextFrame.levels[i] - prev.levels[i]) * t;
+  }
+};
+
 // 原版 renderSpectrum :206-212 低音脉冲：对平滑后的 bin0..2 取 max(sqrt(a) - 1000)（下限 0），
 // 按 (4750 - 1000) 归一化后 ×0.14，量化到 1/75 步长
 const computePulseScale = (smoothedLevels) => {
@@ -89,6 +111,7 @@ const computePulseScale = (smoothedLevels) => {
 };
 
 let lastDrawTime = 0;
+let dtAvgMs = 1000 / 60;   // 平滑 fps 输入的滑动平均（对齐 Minecraft.getFps() 的 1 秒平均）
 let raf = null;
 let pendingSnap = false;
 let spectrumScale = 1;
@@ -253,6 +276,9 @@ const draw = (now = performance.now()) => {
 
   const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 1000 / 60;
   lastDrawTime = now;
+  // 原版 fps 输入是 Minecraft.getFps()：每秒更新一次的 1 秒平均帧率（对帧率波动
+  // 做了低通）。逐帧瞬时 dt 会把渲染抖动直接放大进 alpha，这里用 EMA(τ≈1s) 对齐。
+  dtAvgMs += (dt - dtAvgMs) * Math.min(dt / 1000, 1);
 
   // 原版 onRender2D(EventRender2DCustom) 以 playing 门控整个 renderSpectrum：
   // 暂停时什么都不画（信息卡也随之消失），不做平滑塌缩
@@ -262,21 +288,23 @@ const draw = (now = performance.now()) => {
     return;
   }
 
+  // 目标帧插值：43Hz 阶梯 → 连续斜坡（详见 adoptLevels 注释）
+  interpolateTargets(now);
+
   // Java 原式（MusicManager.java:144-149）：alpha = min(0.335 × 60/实测帧率, 1)。
-  // 原版跑在 300-1100fps 的游戏渲染循环里，所以每帧只挪一点点、肉眼看着「很跟手」；
-  // 我们是 60/120/144Hz 的 rAF，同一公式在 60fps 下即 alpha≈系数本身。
-  const alpha = smoothingAlpha(spectrumSmoothing, dt);
+  const alpha = smoothingAlpha(spectrumSmoothing, dtAvgMs);
   for (let i = 0; i < BAR_COUNT; i += 1) {
     levels[i] = stepAmplitude(levels[i], targets[i], alpha);
   }
 
   const barWidth = Math.ceil(width / BAR_COUNT);
-  const sigmaAmp = REFERENCE_BAR_RATIO * displayScale * spectrumScale;
+  const sigmaAmp = displayScale * spectrumScale;
   for (let i = 0; i < BAR_COUNT; i += 1) {
     const refHeight = Math.sqrt(levels[i]) / 12 - 5;
     heights[i] = Math.min(height, Math.max(0, refHeight) * sigmaAmp);
   }
 
+  // 层 1：灰幽灵条（MID_GREY #999999，alpha 0.2 且逐条渐隐，MusicManager.java:178-189）
   for (let i = 0; i < BAR_COUNT; i += 1) {
     const x = i * barWidth;
     if (x >= width) break;
@@ -284,6 +312,17 @@ const draw = (now = performance.now()) => {
     ctx.fillRect(x, height - heights[i], barWidth, heights[i]);
   }
 
+  // 层 2：实心主条（LIGHT_GREYISH_BLUE #fefefe 不透明，MusicManager.java:193-197）。
+  // 原版 drawRoundedRect2 的五参重载（RenderUtil.java:606-637）实际画的是直角
+  // POSITION quad，所以 fillRect 即原版形状；负高度在原版被画到屏幕外，等价 clamp 0。
+  ctx.fillStyle = '#fefefe';
+  for (let i = 0; i < BAR_COUNT; i += 1) {
+    const x = i * barWidth;
+    if (x >= width) break;
+    ctx.fillRect(x, height - heights[i], barWidth, heights[i]);
+  }
+
+  // 层 3：封面 0.4 裁剪叠加（原版 stencil + drawImage 0.4），合成在主条之上
   const overlay = blurredCoverStrip || blurredCover;
   if (overlay) {
     // 整屏表面下只在实际有条的区域合成，避免每帧把整屏拉伸一遍
@@ -340,6 +379,8 @@ const applyPayload = (data) => {
   if (!nowPlaying) {
     levels.fill(0);
     targets.fill(0);
+    prevFrame = null;
+    nextFrame = null;
     if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
   } else {
     if (!wasPlaying) pendingSnap = true;
@@ -351,11 +392,16 @@ const applyPayload = (data) => {
       const now = performance.now();
       if (now - lastTargetTime >= interval) {
         lastTargetTime = now;
+        // 插值缓冲：prev/next 成对推进，draw() 按经过时间在两帧间线性插值
         const count = Math.min(BAR_COUNT, data.levels.length);
-        for (let i = 0; i < count; i += 1) targets[i] = Number(data.levels[i]) || 0;
+        const incoming = new Float32Array(BAR_COUNT);
+        for (let i = 0; i < count; i += 1) incoming[i] = Number(data.levels[i]) || 0;
+        adoptLevels(incoming, now);
       }
     }
     if (data.reset || pendingSnap) {
+      prevFrame = nextFrame;              // 立刻到位，不做跨歌/恢复渐变
+      interpolateTargets(performance.now());
       levels.set(targets);
       pendingSnap = false;
     }

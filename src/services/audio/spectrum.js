@@ -34,6 +34,7 @@
 import { createSpectrumFft } from './fft.js';
 import {
   SigmaDisplayQueue,
+  createLoudnessNormalizer,
   decideSelfDecode,
   deriveGateFrames,
   findFirstFlacFrame,
@@ -56,9 +57,6 @@ import { SPECTRUM_PRESET_VALUES } from '../../../shared/settings.js';
 const BAR_COUNT = 114;
 const FFT_SIZE = 1024;
 const QUEUE_MAX = 4;
-const BATCH_SECONDS = 0.25;
-const BATCH_MAX = 12;
-const FRAME_SECONDS = 1152 / 44100;
 const AV_DELAY_DEFAULT_MS = 590;
 
 const spectrumFft = createSpectrumFft(FFT_SIZE);
@@ -67,7 +65,10 @@ const samples = new Float32Array(FFT_SIZE);
 const realOut = new Float32Array(FFT_SIZE);
 const imagOut = new Float32Array(FFT_SIZE);
 const sigmaQueue = [];
-const pendingFrames = [];
+// tap 链路 FFT 输入的响度归一化（与自解码 Worker 共用算法，对齐原版响度量级）。
+// 必须每首歌重建：内部慢 RMS 估计（EMA k=0.02，τ≈1.2s）跨歌保留会让同一首歌
+// 的增益轨迹取决于之前播过什么——表现为「同一首歌再播频谱形态不一样」。
+let tapLoudnessNormalizer = createLoudnessNormalizer();
 
 let context = null;
 let sourceNode = null;
@@ -92,7 +93,6 @@ let sendFn = null;
 let idleTimer = null;
 let lastBlockAt = 0;
 let metaKey = '';
-let batchAccumulator = BATCH_SECONDS;
 let avDelayMs = AV_DELAY_DEFAULT_MS;
 let spectrumScale = 1;
 let spectrumSmoothing = 0.335;
@@ -108,7 +108,7 @@ let displayQueue = new SigmaDisplayQueue();       // 18 深显示队列（visual
 const decodeZeroLevels = new Float32Array(BAR_COUNT);
 let decodeAccumTime = 0;                          // 下一解码帧的歌曲绝对时间（秒）
 let decodeGateFrames = 33;                        // B = round(421.7ms/帧时长)+17（44.1kHz 下 33）
-let decodeFrameDuration = FRAME_SECONDS;
+let decodeFrameDuration = 1152 / 44100;
 let decodeCapFrames = 154;                        // line buffer 上限 ≈4s
 // seek 重锚的映射资料：格式、原生采样率、每帧样本数、首帧字节偏移、文件字节数、
 // 兜底码率，以及各格式的精确映射（mp3 vbr / flac seektable / aac 样本表）
@@ -123,11 +123,15 @@ const currentPlaying = () => !!isPlaying?.();
 
 const resetQueue = () => {
   sigmaQueue.length = 0;
-  pendingFrames.length = 0;
-  batchAccumulator = BATCH_SECONDS;
+  // 归一化慢估计一并归零：换歌/停止后不允许把上一首的 RMS 记忆带进下一首
+  tapLoudnessNormalizer = createLoudnessNormalizer();
 };
 
-const sendSpectrum = (levels, forceMeta = false) => {
+// forceMeta：重推封面/歌名（HUD 窗口迟开/重开时补发元数据），不带 reset；
+// forceReset：显式要求渲染端把平滑值立刻吸附到位（换歌/恢复播放）。
+// 两者必须分开：idle keep-alive 只需要 forceMeta——周期性带 reset 会让 HUD 的
+// 0.335 EMA 平滑被「瞬间吸附」打断，表现为频谱每隔几秒抽搐一次。
+const sendSpectrum = (levels, forceMeta = false, forceReset = false) => {
   if (!sendFn) return;
   const song = currentSong();
   const key = `${song?.hash || ''}|${song?.img || ''}`;
@@ -136,9 +140,13 @@ const sendSpectrum = (levels, forceMeta = false) => {
     levels: Array.from(levels),
     playing: currentPlaying()
   };
-  if (changed || forceMeta) {
+  if (changed || forceReset) {
     metaKey = key;
     payload.reset = true;
+    payload.cover = song?.img || '';
+    payload.title = song?.name || '';
+    payload.author = song?.author || '';
+  } else if (forceMeta) {
     payload.cover = song?.img || '';
     payload.title = song?.name || '';
     payload.author = song?.author || '';
@@ -164,6 +172,8 @@ const handleBlock = (block) => {
   }
 
   for (let i = 0; i < FFT_SIZE; i += 1) samples[i] = block[i];
+  // 响度归一化（FFT 输入前，与自解码链路同算法）：任意音源 → 原版等效幅度量级
+  tapLoudnessNormalizer(samples);
   spectrumFft(samples, realOut, imagOut);
   for (let i = 0; i < BAR_COUNT; i += 1) {
     const re = realOut[i];
@@ -171,19 +181,12 @@ const handleBlock = (block) => {
     rawLevels[i] = Math.sqrt(re * re + im * im);
   }
 
-  pendingFrames.push(Float32Array.from(rawLevels));
-  batchAccumulator += FRAME_SECONDS;
-  if (batchAccumulator >= BATCH_SECONDS || pendingFrames.length >= BATCH_MAX) {
-    for (const frame of pendingFrames) {
-      sigmaQueue.push(frame);
-      if (sigmaQueue.length > QUEUE_MAX) sigmaQueue.shift();
-    }
-    pendingFrames.length = 0;
-    batchAccumulator -= BATCH_SECONDS;
-    if (batchAccumulator < 0) batchAccumulator = 0;
-  }
+  // 每帧直接入队并发送队首（~43Hz，与自解码链路同节拍）。旧的 0.25s 攒批
+  // 会让队首每次突进 ~6 帧——运动变成 4Hz 顿挫，是 tap 链路「乱跳」的来源之一。
+  sigmaQueue.push(Float32Array.from(rawLevels));
+  if (sigmaQueue.length > QUEUE_MAX) sigmaQueue.shift();
 
-  sendSpectrum(sigmaQueue.length ? sigmaQueue[0] : rawLevels);
+  sendSpectrum(sigmaQueue[0]);
 };
 
 const isLookaheadReady = () => !!lookaheadAudio?.src && lookaheadAudio.readyState >= 2;
@@ -361,7 +364,7 @@ const handleDecodeFailure = (message) => {
 
 const teardownDecodeWorker = () => {
   if (decodeRaf) {
-    cancelAnimationFrame(decodeRaf);
+    clearTimeout(decodeRaf);
     decodeRaf = 0;
   }
   for (const { event, handler } of decodeListeners) {
@@ -381,10 +384,13 @@ const teardownDecodeWorker = () => {
   decodeSeek = null;
 };
 
-// 每渲染 tick 门控一帧（对齐 MusicManager:134 读 get(0) 不弹出）
+// 门控 tick 按音频帧节拍均匀调度（frameDuration 定时器），不再绑 rAF：
+// 原版显示帧 [0] 的推进由解码线程 write() 阻塞节流驱动，严格 43.1Hz 均匀；
+// rAF 与音频帧率不成整数比，每 tick 释放 0~2 帧且换帧时刻带 ±16.7ms 量化抖动，
+// 经 τ≈50ms 低通后表现为可见拍频。改为音频时钟节拍后释放节奏与原版一致。
 const decodeTick = () => {
   if (!decodeActive) return;
-  decodeRaf = requestAnimationFrame(decodeTick);
+  decodeRaf = setTimeout(decodeTick, Math.max(4, decodeFrameDuration * 1000));
   if (!enabled || !currentPlaying()) {
     // 暂停/停用：对齐原版 visualizerData.clear()，条子由 refreshSpectrum 归零
     return;
@@ -402,6 +408,11 @@ const decodeTick = () => {
   } else {
     sendSpectrum(decodeZeroLevels);
   }
+  // 自解码链路也在产出数据：刷新活跃度，让 idle keep-alive 定时器保持安静。
+  // 之前只有 tap 链路（handleBlock）更新 lastBlockAt，而 handleBlock 在
+  // decodeActive 时提前 return——自解码激活 2 秒后 idle 定时器每秒都会以
+  // forceMeta 发送（旧实现连带 reset），把平滑值瞬间吸附到目标，造成周期性抽搐。
+  lastBlockAt = performance.now();
 };
 
 // 重锚到 element.currentTime（seek/resume 时）：清两级缓冲，让 Worker 从算好的
@@ -450,6 +461,21 @@ export const probeSelfDecode = async ({ url, extName, budgetMs }) => {
   if (!media.decode) return false;
   stashPrepared(url, media);
   return true;
+};
+
+// 供 player.js 预热下一首：当前歌播放期间把下一首整首取字节 + 帧/容器/解码配置
+// 预检，成功则按 URL 暂存。下一首 loadCurrent 的 consumePreparedMedia 命中后
+// 直接用 blob 开播并挂自解码——路径从头恒定（不再依赖 0~8s 的后台 fetch 竞赛），
+// 起播窗口内也不再有「元素流 + 后台 fetch + 预读」三路并发抢带宽。任何一步
+// 失败静默不暂存，下一首回落原有的后台准备流程。
+export const prefetchSelfDecode = async ({ url, extName, budgetMs = 8000 }) => {
+  if (!url) return;
+  try {
+    const media = await prepareSelfDecode({ url, extName, budgetMs });
+    if (media.decode) stashPrepared(url, media);
+  } catch {
+    /* 预热失败不影响任何现有行为 */
+  }
 };
 
 // 准入判定 + fetch 字节 + 帧头/容器/解码配置预检；任何一步失败返回 { src: 远程URL, decode: null }
@@ -616,6 +642,21 @@ export const startDecodeAnalysis = (element, decode) => {
   currentBlobUrl = decode.blobUrl;
   decodeActive = true;
 
+  // 接管后预读元素已完成使命：它是 tap 链路的采集源，自解码激活后没人读它的
+  // 频谱，但它（preload=auto + 跟随播放）会在整首歌剩余时间里继续全速下载
+  // 同一文件——与主元素流经同一个 jello-media 代理抢带宽，慢网下直接把主
+  // 元素缓冲掏空（「歌曲加载到一半就停」的并发来源之一）。失败回退时
+  // handleDecodeFailure 会重新挂上 src，语义对称。
+  try {
+    if (lookaheadAudio) {
+      lookaheadAudio.pause();
+      lookaheadAudio.removeAttribute('src');
+      lookaheadAudio.load();
+    }
+  } catch {
+    /* ignore */
+  }
+
   worker.onmessage = handleDecodeMessage;
   worker.onerror = (event) => handleDecodeFailure(event?.message || 'worker error');
   try {
@@ -660,7 +701,7 @@ export const startDecodeAnalysis = (element, decode) => {
       return { event, handler };
     });
 
-  decodeRaf = requestAnimationFrame(decodeTick);
+  decodeRaf = setTimeout(decodeTick, 0);
   return true;
 };
 
@@ -808,8 +849,7 @@ const ensureGraph = async (audio) => {
     const workletUrl = new URL('spectrum-tap.js', window.location.href).href;
     await localContext.audioWorklet.addModule(workletUrl);
 
-    // tap 回退链路：按设备率折算「一个 MP3 帧」的采样数，块边界仍对齐帧边界，
-    // 所以 handleBlock 里 FRAME_SECONDS = 1152/44100 的攒块节奏仍然正确
+    // tap 回退链路：按设备率折算「一个 MP3 帧」的采样数，块边界仍对齐帧边界
     //（frameSize / context.sampleRate ≡ 1152 / 44100）。
     // 但 1024 点窗覆盖的时长 = 512 帧 / 设备率，其**谱线间隔随设备率变化**：
     // 44.1kHz 下 43.0Hz/条，48kHz 下 46.9Hz/条（96kHz 下 93.8Hz）——同一根柱子
@@ -946,7 +986,8 @@ export const refreshSpectrum = () => {
     sendSpectrum(rawLevels, true);
     return;
   }
-  sendSpectrum(currentDisplayLevels(), true);
+  // 换歌/恢复播放的主动刷新：显式 reset（跨歌不做渐变过渡，立刻锚到当前帧）
+  sendSpectrum(currentDisplayLevels(), true, true);
 };
 
 export const stopSpectrum = (send) => {

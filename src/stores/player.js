@@ -9,6 +9,7 @@ import {
   ensureAudioGraph,
   getAudioGraphDiagnostics,
   prepareSelfDecode,
+  prefetchSelfDecode,
   setAudioOutputDevice,
   setLoudnessEnabled,
   startDecodeAnalysis,
@@ -312,14 +313,26 @@ export const usePlayerStore = defineStore('player', {
           // 会让主元素/预读/后台三路并行下载抢带宽时频繁超时回落 tap
           void prepareSelfDecode({ url: result.url, extName: result.extName, budgetMs: 8000 })
             .then((media) => {
-              if (token !== loadToken) {
+              const revokeBlob = () => {
                 if (media.decode?.blobUrl) {
                   try { URL.revokeObjectURL(media.decode.blobUrl); } catch { /* ignore */ }
                 }
+              };
+              if (token !== loadToken) {
+                revokeBlob();
                 return;
               }
-              if (media.decode) startDecodeAnalysis(element, media.decode);
-              else stopDecodeAnalysis();
+              // 接管窗口：只允许在歌曲开头（≤5s）从 tap 切到自解码。两条链路的
+              // 窗几何/量纲不同，歌曲中途切换会让条高瞬时跳变（「乱跳」）；而
+              // 完成时间取决于网络（0~8s 任意时刻），不切窗口就等于把观感交给
+              // 网速抽签。窗口外一律本首坚持 tap，保证同一首歌内路径恒定。
+              const TAKEOVER_GRACE_SECONDS = 5;
+              if (media.decode && element.currentTime <= TAKEOVER_GRACE_SECONDS) {
+                startDecodeAnalysis(element, media.decode);
+              } else {
+                revokeBlob();
+                stopDecodeAnalysis();
+              }
             })
             .catch(() => {
               if (token === loadToken) stopDecodeAnalysis();
@@ -335,6 +348,22 @@ export const usePlayerStore = defineStore('player', {
           }, { once: true });
         }
         if (resume) await element.play();
+
+        // 预热下一首：当前歌播放期间备好下一首的字节，下一首开播即 blob 播放 +
+        // 自解码接管（路径从头恒定，观感不再被网速抽签），起播窗口内也不再出现
+        // 三路并发下载。预测依据 index+1，随机模式猜错只浪费一次 fetch。
+        if (settings.spectrum) {
+          const nextSong = this.queue[(this.index + 1) % this.queue.length];
+          if (nextSong?.hash && nextSong.hash !== song.hash) {
+            void getSongUrl(nextSong, settings.quality || '320')
+              .then((nextResult) => prefetchSelfDecode({
+                url: nextResult.url,
+                extName: nextResult.extName,
+                budgetMs: 8000
+              }))
+              .catch(() => { /* 预热失败不影响播放 */ });
+          }
+        }
 
         // 起播诊断（2.5s 后采样一次）：区分「在播但无声」与「根本没播起来」，
         // 附带音频图状态（context/各级增益/预读/接管）

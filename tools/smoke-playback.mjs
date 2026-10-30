@@ -97,8 +97,11 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false });
   await win.loadURL('data:text/html,<html></html>');
   const mediaUrl = `jello-media://media/?u=${encodeURIComponent(upstream)}`;
+  // 与开频谱后的真实应用一致：主元素带 crossOrigin=anonymous（CORS 模式的
+  // 自定义协议请求是另一条代码路径，必须一起覆盖）
   const result = await win.webContents.executeJavaScript(`(() => {
     const a = new Audio(${JSON.stringify(mediaUrl)});
+    a.crossOrigin = 'anonymous';
     a.volume = 1;
     return new Promise((resolve) => {
       const done = (outcome) => resolve(outcome);

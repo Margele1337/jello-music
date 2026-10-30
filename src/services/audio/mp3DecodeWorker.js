@@ -23,7 +23,9 @@
 // 解码恒 1x：倍速由可听元素处理（原版无倍速功能），帧时间轴与倍速无关。
 import { createSpectrumFft } from './fft.js';
 import {
+  REF_RMS_PACKED,
   createFlacFrameIndex,
+  createLoudnessNormalizer,
   findNextFlacFrameOffset,
   findNextFrameOffset,
   flacFrameForSample,
@@ -68,6 +70,9 @@ let nextSample = 0;
 // FLAC：无 SEEKTABLE 时精确 seek 用的增量帧索引（从首帧起，样本号绝对）
 let flacIndex = null;
 let flacSampleRate = 44100;
+// 音源响度归一化（慢 RMS → 限幅增益，对齐原版 YouTube 响度量级）：
+// packed 窗参考为交错窗的 2 倍；restart/seek 不重建（保留 rmsAvg，避免幅度跳变）
+let loudnessNormalizer = null;
 
 const postError = (message) => {
   if (stopped) return;
@@ -223,6 +228,9 @@ const onAudioFrame = (audioData) => {
     }
     audioData.close();
 
+    // 响度归一化（FFT 输入前）：任意音源 → 原版 YouTube 等效幅度量级
+    if (loudnessNormalizer) loudnessNormalizer(windowSamples);
+
     fftRun(windowSamples, realOut, imagOut);
     const magnitudes = new Float32Array(BAR_COUNT);
     for (let i = 0; i < BAR_COUNT; i += 1) {
@@ -268,6 +276,10 @@ const startDecode = ({
     // wide = 全帧真立体声交错 2048 点。窗口/FFT 实例按尺寸缓存
     original = preset !== 'wide';
     fftSize = original ? ORIGINAL_FFT_SIZE : FFT_SIZE;
+    // packed 打包窗（aac original）的值约为交错窗 2 倍，参考 RMS 同倍放大
+    loudnessNormalizer = createLoudnessNormalizer(
+      original && normalizeFormat(fmt) === 'aac' ? REF_RMS_PACKED : undefined
+    );
     if (windowSamples.length !== fftSize) {
       windowSamples = new Float32Array(fftSize);
       realOut = new Float32Array(fftSize);
