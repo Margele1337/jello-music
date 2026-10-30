@@ -105,7 +105,13 @@ api/                 KuGouMusicApi git submodule (MIT)
    into one frame value (`L*2 + R/32768`, jaad path), both at 1024 points —
    the same geometry as the tap fallback; `wide`（预设 2）= full-frame true
    stereo at 2048 points. The preset is baked into each song's prepared decode
-   and takes effect on the next song.
+   and takes effect on the next song. Runtime timing (verified against the
+   original): the decode thread paces at real time (SourceDataLine.write
+   blocking) and pushes one FFT per AAC frame (~43/s) into the 18-deep queue;
+   easing and render run per frame with the fps-normalized alpha
+   `min(0.335 × 60/fps, 1)` — there is no tick- or timer-based throttle.
+   `spectrumUpdateMs` is a port-only knob and is bypassed under the `original`
+   preset to stay faithful.
 
 ## API flow
 

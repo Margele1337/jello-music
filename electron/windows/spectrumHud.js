@@ -414,6 +414,8 @@ export const syncSpectrumHudSettings = (settings) => {
   const payload = {
     spectrumScale: settings.spectrumScale,
     spectrumSigmaSmoothing: settings.spectrumSigmaSmoothing,
+    spectrumUpdateMs: settings.spectrumUpdateMs,
+    spectrumPreset: settings.spectrumPreset,
     spectrumInfoScale: settings.spectrumInfoScale,
     spectrumInfoVisible: settings.spectrumInfoVisible,
     spectrumLocked: settings.spectrumLocked,

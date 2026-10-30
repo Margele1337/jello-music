@@ -852,7 +852,7 @@ const settingSections = [
         control: 'slider',
         icon: 'clock',
         label: '变化节奏',
-        description: '目标电平的刷新间隔：越小越跟手，约 500ms 即「一秒变一两次」的慢节奏观感。',
+        description: '仅对预设 2 生效：目标电平按此间隔采纳、条形由缓动滑过去（约 500ms 即「一秒变一两次」）。预设 1 与原版一致按帧更新，不受该项影响。',
         slider: { min: 50, max: 1000, step: 10 },
         format: (value) => `${Math.round(value)}ms`
       },
