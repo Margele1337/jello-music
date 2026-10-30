@@ -801,17 +801,17 @@ const settingSections = [
         control: 'toggle',
         icon: 'waveform',
         label: '桌面音频频谱',
-        description: '独立置顶频谱窗口：114 条频谱、封面低音脉冲与歌曲信息卡。'
+        description: '独立置顶频谱窗口：114 条频谱条形与频谱信息卡（封面、歌名）。'
       },
       {
         key: 'spectrumPreset',
         control: 'seg',
         icon: 'waveform',
         label: '预设样式',
-        description: '预设 1（原版）＝ 自解码整曲、18 帧队列与音频锁相均匀推进、幅度响度归一。预设 2（legacy）＝ 实时采集、每 250ms 台阶式推进、原始幅度、无低音脉冲，观感同 legacy 应用。切到预设 2 立即生效，切回预设 1 下一首生效。',
+        description: '预设 1（legacy，默认）＝ 实时采集、每 250ms 台阶式推进、原始幅度，观感同 legacy 应用（信息卡低音脉冲为附加项）。预设 2（原版）＝ 自解码整曲、18 帧队列与音频锁相均匀推进、幅度响度归一。切到预设 1 立即生效；切到预设 2 下一首生效。',
         options: [
-          { value: 'original', displayText: '预设 1（原版）' },
-          { value: 'legacy', displayText: '预设 2（legacy 复刻）' }
+          { value: 'legacy', displayText: '预设 1（legacy 复刻）' },
+          { value: 'original', displayText: '预设 2（原版）' }
         ]
       },
       {
@@ -824,11 +824,11 @@ const settingSections = [
         format: (value) => `${value.toFixed(2)}x`
       },
       {
-        key: 'spectrumOpacity',
+        key: 'spectrumBarOpacity',
         control: 'slider',
-        icon: 'sliders',
-        label: '频谱透明度',
-        description: '整个频谱窗口（条形、封面与信息卡）的不透明度，100% 即原版。',
+        icon: 'waveform',
+        label: '条形透明度',
+        description: '只作用于竖状条形（含条内封面叠加），频谱信息不受影响。',
         slider: { min: 0.1, max: 1, step: 0.05 },
         format: (value) => `${Math.round(value * 100)}%`
       },
@@ -869,6 +869,31 @@ const settingSections = [
         description: '信息卡倍率，1.00x 即原版固定像素大小（封面 100px）。',
         slider: { min: 0.5, max: 2, step: 0.05 },
         format: (value) => `${value.toFixed(2)}x`
+      },
+      {
+        key: 'spectrumInfoOpacity',
+        control: 'slider',
+        icon: 'image',
+        label: '频谱信息透明度',
+        description: '封面、歌名信息卡与四周柔边的不透明度，100% 即原版。',
+        slider: { min: 0.1, max: 1, step: 0.05 },
+        format: (value) => `${Math.round(value * 100)}%`
+      },
+      {
+        key: 'spectrumMouseFade',
+        control: 'toggle',
+        icon: 'desktop',
+        label: '鼠标靠近透明',
+        description: '光标附近的条形与信息卡以圆形区域渐隐（半径随靠近逐渐扩大），方便看清被频谱挡住的桌面内容。'
+      },
+      {
+        key: 'spectrumMouseFadeRadius',
+        control: 'slider',
+        icon: 'desktop',
+        label: '渐隐范围',
+        description: '鼠标靠近透明的圆形半径，越大让出的视野越多。',
+        slider: { min: 80, max: 600, step: 10 },
+        format: (value) => `${Math.round(value)}px`
       },
       {
         key: 'spectrumLocked',

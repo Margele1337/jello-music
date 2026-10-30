@@ -11,6 +11,10 @@ import {
 let deviceReadyBaseUrl = '';
 let deviceReadyPromise = null;
 
+// API 转发超时：上游接口挂起时（CDN/代理/网络抖动），没有这一层 IPC 会永远
+// pending，渲染层 loadCurrent 永远停在 loading——表现为点歌无响应且无任何提示
+const API_TIMEOUT_MS = 8000;
+
 export const resetDeviceRegistration = () => {
   deviceReadyBaseUrl = '';
 };
@@ -71,8 +75,14 @@ export const proxyApiRequest = async (input) => {
     body = JSON.stringify(request.data || {});
   }
 
-  // net.fetch 走 Chromium 网络栈，才会吃到 session.setProxy 的代理设置
-  const response = await net.fetch(url, { method: request.method, headers, body });
+  // net.fetch 走 Chromium 网络栈，才会吃到 session.setProxy 的代理设置；
+  // signal 同时覆盖响应体读取（response.json()），挂起请求到点即断
+  const response = await net.fetch(url, {
+    method: request.method,
+    headers,
+    body,
+    signal: AbortSignal.timeout(API_TIMEOUT_MS)
+  });
   const setCookies = response.headers.getSetCookie?.() || [];
   if (setCookies.length) storeSetCookies(setCookies);
 

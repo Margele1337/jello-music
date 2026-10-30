@@ -303,10 +303,30 @@ test('HUD 窗口模块不再用固定条高，表面由区域推导', () => {
   assert.ok(source.includes('resolveHudArea'), '应使用共享区域解析');
   assert.ok(source.includes('getForegroundFullscreenState'), '前台全屏应切到显示器区域');
   assert.ok(source.includes('setIgnoreMouseEvents'), '锁/穿透仍走 setIgnoreMouseEvents');
-  // 频谱透明度：窗口创建与设置同步两处都要作用于 BrowserWindow
-  assert.ok(source.includes('setOpacity'), '透明度应通过 setOpacity 作用于窗口');
-  const applyCount = source.match(/setOpacity\(/g)?.length || 0;
-  assert.ok(applyCount >= 2, `窗口创建与设置同步都应应用透明度（当前 ${applyCount} 处）`);
+  // 两级透明度都由渲染层合成：主进程只转发设置，不再走 DWM 整窗 alpha
+  assert.ok(!source.includes('setOpacity'), '整窗透明度改由渲染层合成，主进程不应 setOpacity');
+  assert.ok(source.includes('spectrumInfoOpacity'), '信息卡透明度应随设置转发给 HUD');
+  assert.ok(source.includes('spectrumBarOpacity'), '条形透明度应随设置转发给 HUD');
+  assert.ok(source.includes('spectrumMouseFade'), '鼠标靠近透明开关应随设置转发给 HUD');
+  assert.ok(source.includes('spectrumMouseFadeRadius'), '渐隐圈半径应随设置转发给 HUD');
+});
+
+test('频谱透明度由渲染层按层合成：信息卡 CSS opacity + 条形 canvas globalAlpha', () => {
+  const view = readFileSync(fileURLToPath(new URL('../src/views/SpectrumHudView.vue', import.meta.url)), 'utf8');
+  // 信息卡 opacity 由 draw() 每帧命令式写入（信息透明度 × 鼠标渐隐系数）
+  assert.ok(view.includes('infoEl.style.opacity'), '信息卡透明度应由 draw 每帧写入');
+  assert.ok(view.includes('spectrumBarOpacity'), '应接收条形透明度设置');
+  assert.ok(view.includes('spectrumMouseFade'), '应接收鼠标靠近透明开关');
+  assert.ok(view.includes('spectrumMouseFadeRadius'), '应接收渐隐圈半径设置');
+  assert.ok(view.includes('0.4 * barOpacity'), '条内封面叠加应随条形透明度衰减');
+  // 打开/关闭动画：条形与信息卡共用时间淡入/淡出因子
+  assert.ok(view.includes('openFade'), '打开动画应有整体淡入因子');
+  assert.ok(view.includes('closeFade'), '关闭动画应有整体淡出因子');
+  // 全屏根元素禁止套 CSS opacity：透明窗口的全屏合成层在部分 GPU 下整层不重绘，
+  // 表现为设置透明度后整窗空白、换歌触发重绘才恢复
+  const rootStart = view.indexOf('<div class="spectrum-hud"');
+  const rootTag = view.slice(rootStart, view.indexOf('>', rootStart));
+  assert.ok(!rootTag.includes('opacity'), '全屏根元素不应套 CSS opacity');
 });
 
 test('解锁态指示不铺压暗底色', () => {

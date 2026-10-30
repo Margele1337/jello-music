@@ -137,11 +137,23 @@ export const notifyRisk = (message, now = Date.now()) => {
 
 // ── 运行时请求（不经风控拦截，避免 /sidedt 自身 20028 造成递归） ──
 
+// 渲染层兜底超时：主进程侧 apiProxy 有 15s 的 HTTP 超时，这里再兜 IPC 桥本身
+// 挂死的情况（主进程忙/消息丢失），保证调用方（getSongUrl 等）总会 resolve/reject
+const BRIDGE_TIMEOUT_MS = 12000;
+
 export const sendApiRequest = async (request) => {
   if (typeof window === 'undefined' || !window.jello?.api?.request) {
     throw new Error('API bridge is unavailable');
   }
-  return window.jello.api.request(request);
+  let timeoutId = null;
+  return Promise.race([
+    window.jello.api.request(request),
+    new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('接口请求超时，请检查网络或 API 服务')), BRIDGE_TIMEOUT_MS);
+    })
+  ]).finally(() => {
+    clearTimeout(timeoutId);
+  });
 };
 
 export const fetchVerifyInfo = (eventId) => sendApiRequest({

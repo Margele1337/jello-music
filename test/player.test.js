@@ -145,6 +145,35 @@ test('loadCurrent exposes resolved quality and trial flag from the api result', 
   assert.equal(player.playing, true);
 });
 
+test('loadCurrent notifies when the requested quality is unavailable and auto-downgrades', async () => {
+  // 账号只有 128 档权益 → 请求 320 时自动降级并提示
+  handler = async (request) => {
+    if (request.path === '/privilege/lite') {
+      return { status: 1, data: [{ hash: 'h128', quality: '128', level: 1 }] };
+    }
+    return { status: 1, url: [`https://cdn/${request.params.hash}-${request.params.quality}.mp3`], extName: 'mp3' };
+  };
+  const player = setupPlayer({ quality: '320' });
+  await player.loadCurrent();
+
+  assert.equal(player.resolvedQuality, '128');
+  const downgrade = toasts.find((toast) => toast.includes('暂无高品音源'));
+  assert.ok(downgrade, `应有降级提示，实际 toasts: ${JSON.stringify(toasts)}`);
+  assert.ok(downgrade.includes('已自动改用标准'));
+  assert.equal(player.error, '');
+
+  // 同档位可用时不提示
+  toasts.length = 0;
+  handler = async (request) => {
+    if (request.path === '/privilege/lite') {
+      return { status: 1, data: [{ hash: 'h320', quality: '320', level: 1 }] };
+    }
+    return { status: 1, url: [`https://cdn/${request.params.hash}-${request.params.quality}.mp3`], extName: 'mp3' };
+  };
+  await player.loadCurrent({ resume: false });
+  assert.ok(!toasts.some((toast) => toast.includes('暂无')), `同档位不应有降级提示: ${JSON.stringify(toasts)}`);
+});
+
 test('source error downgrades at most twice then schedules an auto advance', async () => {
   const requested = [];
   stubApi({ onUrl: (params) => requested.push(params.quality) });
@@ -337,6 +366,9 @@ test('queue removal remaps or drops stale shuffle history indices', () => {
 
 test('switching playback mode clears the shuffle history like the legacy app', () => {
   setActivePinia(createPinia());
+  // playNext/playPrevious 会 fire-and-forget 地 loadCurrent：给本测试独立的
+  // handler，避免泄漏请求打到后续测试的 onUrl 记录器（时序随实现细节漂移）
+  stubApi();
   const player = usePlayerStore();
   player.queue = [{ hash: 'a' }, { hash: 'b' }, { hash: 'c' }];
   player.index = 1;
@@ -360,7 +392,9 @@ test('switching playback mode clears the shuffle history like the legacy app', (
 
 test('restorePersistedState repopulates state without autoplay and seeks on hash match', async () => {
   const requested = [];
-  stubApi({ onUrl: (params) => requested.push(params.hash) });
+  // 只记录本测试队列的 hash：前面测试 fire-and-forget 的 loadCurrent 若因
+  // 时序漂移落到本 stub 上，不应污染「恢复不预取」的断言
+  stubApi({ onUrl: (params) => { if (String(params.hash).startsWith('r')) requested.push(params.hash); } });
   storedPlaybackState = {
     queue: [
       { hash: 'r0', name: '歌0', timeLength: 60000 },

@@ -240,7 +240,9 @@ const syncSpectrum = () => {
   }
 };
 
-watch(() => settings.spectrum, syncSpectrum);
+// immediate：保存值为开的用户启动即装配频谱（旧实现漏了启动调用，producer
+// 从未启动——频谱全透明、直到手动关/开一次开关才恢复）
+watch(() => settings.spectrum, syncSpectrum, { immediate: true });
 // 频谱预设只影响之后的自解码准备（下一首生效），即时同步到分析管线即可
 watch(() => settings.spectrumPreset, (preset) => {
   updateSpectrumSettings({ spectrumPreset: preset });

@@ -199,16 +199,10 @@ test('decideSelfDecode only admits mp3/flac + WebCodecs + spectrum enabled', () 
     decideSelfDecode({ ...base, spectrumEnabled: false }),
     { ok: false, reason: 'spectrum-disabled' }
   );
-  // 预设 2（legacy）只走实时 tap，自解码一律不准入（优先于其它判定）
-  assert.deepEqual(
-    decideSelfDecode({ ...base, spectrumEnabled: false, preset: 'legacy' }),
-    { ok: false, reason: 'preset-legacy' }
-  );
-  assert.deepEqual(
-    decideSelfDecode({ ...base, extName: 'ogg', preset: 'legacy' }),
-    { ok: false, reason: 'preset-legacy' }
-  );
-  assert.equal(decideSelfDecode({ ...base, preset: 'original' }).ok, true);
+  // 预设不得掺进准入判定：mp4 候选的放行闸门（probeSelfDecode）复用本判定，
+  // 预设 2（legacy）的「频谱不接管」由 startDecodeAnalysis 的门负责
+  assert.equal(decideSelfDecode({ ...base, preset: 'legacy' }).ok, true);
+  assert.equal(decideSelfDecode({ ...base, preset: 'legacy' }).format, 'mp3');
 });
 
 // ===== 门控/容量推导是格式无关的：FLAC 常规块长 4096 直接代入同一公式 =====

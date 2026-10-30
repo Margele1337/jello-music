@@ -2,7 +2,7 @@
   <div class="spectrum-hud" :class="{ 'hud-editing': !locked }" :style="{ '--info-scale': infoScale }">
     <canvas ref="canvasRef" class="spectrum-canvas"></canvas>
     <!-- 原版信息卡画在 renderSpectrum 内部，暂停时整体不绘制，这里用 playing 同步隐藏 -->
-    <div class="spectrum-info" v-show="infoVisible && playing && (title || cover)">
+    <div class="spectrum-info" ref="infoRef" v-show="infoVisible && playing && (title || cover)">
       <div class="cover-pulse" v-if="cover" ref="coverPulseRef">
         <img class="cover" :src="cover" alt="" />
       </div>
@@ -63,8 +63,14 @@ const infoScale = ref(1);
 const infoVisible = ref(true);
 const locked = ref(true);
 const playing = ref(false);
+// 两级透明度按层合成，禁止套在全屏根元素上（透明窗口的全屏合成层在部分 GPU 下
+// 不重绘，表现为设置后整窗空白、换歌才恢复）：
+// 条形透明度乘进 canvas 的条形层；信息透明度作用于信息卡（CSS）与柔边层（canvas）
+const infoOpacity = ref(1);
+let barOpacity = 1;
 
 const canvasRef = ref(null);
+const infoRef = ref(null);
 const coverPulseRef = ref(null);
 const cover = ref('');
 const title = ref('');
@@ -120,11 +126,34 @@ let lastDrawTime = 0;
 let dtAvgMs = 1000 / 60;   // 平滑 fps 输入的滑动平均（对齐 Minecraft.getFps() 的 1 秒平均）
 let raf = null;
 let pendingSnap = false;
+
+// ===== 鼠标靠近透明：光标附近的条形/信息卡以圆形区域渐隐，半径随进入逐渐扩大 =====
+// 锁定态窗口 setIgnoreMouseEvents(true, {forward:true}) 会把光标移动转发进来，
+// 渲染层只读位置、不拦截鼠标。渐隐按层合成：条形逐条乘距离系数（canvas 每帧
+// 重绘无 stale 层），信息卡走自身 CSS opacity 命令式写入。
+const MOUSE_FADE_INNER_RATIO = 0.4;  // 内圈全透、到外圈线性恢复不透明
+const MOUSE_FADE_EASE_MS = 160;      // 进入/离开时半径的缓动时长
+const MOUSE_FADE_STALL_MS = 10000;   // 光标静止多久后假定已离开（mouseleave 丢失兜底）
+let mouseFadeEnabled = true;
+let mouseFadeRadius = 260;           // 渐隐圈最大半径（CSS 像素，设置可调）
+// 关闭动画：主进程销毁窗口前通知渲染层收尾，期间忽略数据、条形塌缩、卡片淡出
+let closing = false;
+let closeAt = 0;
+// 打开动画：新窗口挂载/关闭动画期重开时反向播放（条形从 0 生长、信息卡淡入）
+let opening = false;
+let openAt = 0;
+let mouseX = -1;
+let mouseY = -1;
+let mouseInside = false;
+let mouseMoveAt = 0;
+let fadeRadius = 0;
+
 let spectrumScale = 1;
 let spectrumSmoothing = SPECTRUM_SMOOTHING;
-// 预设 1（original）按原版逐消息采纳（~43 次/秒）；预设 2（legacy）同样逐消息采纳，
-// 但采用 legacy 的瞬时帧率指数平滑 + 无帧间插值 + 无低音脉冲 + 暂停冻结
-let spectrumPreset = 'original';
+// 预设 1（legacy）按消息逐条采纳，用 legacy 的瞬时帧率指数平滑 + 无帧间插值 +
+// 暂停时条形按平滑式塌缩归零；预设 2（original）按原版逐消息采纳（~43 次/秒）；
+// 低音脉冲两个预设都有
+let spectrumPreset = 'legacy';
 let canvasStyleWidth = 0;
 let canvasStyleHeight = 0;
 let pixelRatio = 1;
@@ -253,13 +282,15 @@ const ensureTintLayer = () => {
   return tintLayer;
 };
 
-const drawTint = (ctx, height, pulse) => {
+const drawTint = (ctx, height, pulse, cardFactor = 1) => {
   if (!infoVisible.value || !cover.value) return;
   const layer = ensureTintLayer();
   if (!layer) return;
   const layout = infoLayout(infoScale.value, height, pixelRatio);
   ctx.save();
-  // 原版整张信息卡（封面 + 柔边）都在同一个 glScalef 里（MusicManager.java:213-219）
+  // 原版整张信息卡（封面 + 柔边）都在同一个 glScalef 里（MusicManager.java:213-219）；
+  // 柔边画在 canvas 上，随信息卡透明度与鼠标渐隐系数一起衰减
+  ctx.globalAlpha = infoOpacity.value * cardFactor;
   ctx.translate(layout.pulsePivot.x, layout.pulsePivot.y);
   ctx.scale(pulse, pulse);
   ctx.translate(-layout.pulsePivot.x, -layout.pulsePivot.y);
@@ -274,10 +305,6 @@ const draw = (now = performance.now()) => {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  // 预设 2（legacy）：暂停冻结画面，保留最后一帧（legacy 暂停时实时 tap 停供帧，
-  // 屏上仍是最后采纳的台阶），不重绘也不清空
-  if (!playing.value && spectrumPreset === 'legacy') return;
-
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
@@ -288,12 +315,41 @@ const draw = (now = performance.now()) => {
   // 做了低通）。逐帧瞬时 dt 会把渲染抖动直接放大进 alpha，这里用 EMA(τ≈1s) 对齐。
   dtAvgMs += (dt - dtAvgMs) * Math.min(dt / 1000, 1);
 
+  // 鼠标靠近透明：渐隐半径向目标缓动（进入逐渐扩大、离开/静止超时逐渐收回）；
+  // 光标静止超时是 mouseleave 在穿透转发下偶发丢失的兜底
+  const mouseInsideNow = mouseInside && now - mouseMoveAt < MOUSE_FADE_STALL_MS;
+  const fadeTarget = mouseFadeEnabled && mouseInsideNow ? mouseFadeRadius : 0;
+  fadeRadius += (fadeTarget - fadeRadius) * Math.min(dt / MOUSE_FADE_EASE_MS, 1);
+  if (fadeRadius < 0.5) fadeRadius = 0;
+  const fadeActive = fadeRadius > 0;
+  // 距离系数：内圈（半径 40%）全透，向外线性恢复到 1；坐标换算到设备像素
+  const mouseAlpha = (centerX, centerY) => {
+    const inner = fadeRadius * pixelRatio * MOUSE_FADE_INNER_RATIO;
+    const outer = fadeRadius * pixelRatio;
+    const dist = Math.hypot(mouseX * pixelRatio - centerX, mouseY * pixelRatio - centerY);
+    return Math.min(1, Math.max(0, (dist - inner) / Math.max(1, outer - inner)));
+  };
+
+  // 打开动画：整体淡入因子（0→1），条形抬升与信息卡淡入同乘；结束即退出打开态
+  let openFade = 1;
+  if (opening) {
+    openFade = Math.min(1, (now - openAt) / 280);
+    if (openFade >= 1) {
+      opening = false;
+      pendingSnap = false;
+    }
+  }
+
   // 原版 onRender2D(EventRender2DCustom) 以 playing 门控整个 renderSpectrum：
-  // 暂停时什么都不画（信息卡也随之消失），不做平滑塌缩
-  if (!playing.value) {
-    levels.fill(0);
-    targets.fill(0);
-    return;
+  // 暂停时什么都不画（信息卡也随之消失）。legacy 暂停则继续绘制，条形按
+  // 平滑式塌缩到 0（目标已在 applyPayload 归零），同样以「消失」收场；
+  // 关闭动画同理继续绘制，条形塌缩、卡片淡出，随后窗口被主进程销毁
+  if (!playing.value && !closing) {
+    if (spectrumPreset !== 'legacy') {
+      levels.fill(0);
+      targets.fill(0);
+      return;
+    }
   }
 
   // 目标帧插值：43Hz 阶梯 → 连续斜坡（详见 adoptLevels 注释）
@@ -315,27 +371,59 @@ const draw = (now = performance.now()) => {
     heights[i] = Math.min(height, Math.max(0, refHeight) * sigmaAmp);
   }
 
-  // 层 1：灰幽灵条（MID_GREY #999999，alpha 0.2 且逐条渐隐，MusicManager.java:178-189）
+  // 条形透明度只作用于条形层（幽灵条 + 实心条同系数）；鼠标渐隐激活时逐条再乘
+  // 距离系数。同一条内先幽灵后实心、条间互不相交，合并循环与分两层绘制等价
   for (let i = 0; i < BAR_COUNT; i += 1) {
     const x = i * barWidth;
     if (x >= width) break;
+    const localAlpha = fadeActive ? mouseAlpha(x + barWidth / 2, height - heights[i] / 2) : 1;
+    if (localAlpha <= 0) continue;
+    ctx.globalAlpha = barOpacity * localAlpha * openFade;
+    // 层 1：灰幽灵条（MID_GREY #999999，alpha 0.2 且逐条渐隐，MusicManager.java:178-189）
     ctx.fillStyle = barStyles[i];
     ctx.fillRect(x, height - heights[i], barWidth, heights[i]);
-  }
-
-  // 层 2：实心主条（LIGHT_GREYISH_BLUE #fefefe 不透明，MusicManager.java:193-197）。
-  // 原版 drawRoundedRect2 的五参重载（RenderUtil.java:606-637）实际画的是直角
-  // POSITION quad，所以 fillRect 即原版形状；负高度在原版被画到屏幕外，等价 clamp 0。
-  ctx.fillStyle = '#fefefe';
-  for (let i = 0; i < BAR_COUNT; i += 1) {
-    const x = i * barWidth;
-    if (x >= width) break;
+    // 层 2：实心主条（LIGHT_GREYISH_BLUE #fefefe 不透明，MusicManager.java:193-197）。
+    // 原版 drawRoundedRect2 的五参重载（RenderUtil.java:606-637）实际画的是直角
+    // POSITION quad，所以 fillRect 即原版形状；负高度在原版被画到屏幕外，等价 clamp 0。
+    ctx.fillStyle = '#fefefe';
     ctx.fillRect(x, height - heights[i], barWidth, heights[i]);
   }
 
   // 层 3：封面 0.4 裁剪叠加（原版 stencil + drawImage 0.4），合成在主条之上
   const overlay = blurredCoverStrip || blurredCover;
-  if (overlay) {
+  if (overlay && fadeActive) {
+    // 渐隐激活：逐条裁剪绘制，封面叠加随所在条的距离系数一起渐隐。
+    // 源矩形必须取 overlay 上与该条对应的水平/垂直切片（整幅压缩进单条会让
+    // 每根条都变成一幅压扁的完整封面，颜色逐条错乱），与整幅路径同几何
+    for (let i = 0; i < BAR_COUNT; i += 1) {
+      const x = i * barWidth;
+      if (x >= width) break;
+      const localAlpha = mouseAlpha(x + barWidth / 2, height - heights[i] / 2);
+      if (localAlpha <= 0 || heights[i] <= 0) continue;
+      const top = height - heights[i];
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, top, barWidth, heights[i]);
+      ctx.clip();
+      ctx.globalAlpha = 0.4 * barOpacity * localAlpha;
+      const sx = (overlay.width * x) / width;
+      const sw = Math.min(overlay.width - sx, (overlay.width * barWidth) / width);
+      const sy = (overlay.height * top) / height;
+      const sh = Math.max(1, (overlay.height * heights[i]) / height);
+      ctx.drawImage(
+        overlay,
+        sx,
+        Math.max(0, Math.min(overlay.height - sh, sy)),
+        sw,
+        sh,
+        x,
+        top,
+        barWidth,
+        heights[i]
+      );
+      ctx.restore();
+    }
+  } else if (overlay) {
     // 整屏表面下只在实际有条的区域合成，避免每帧把整屏拉伸一遍
     let minTop = height;
     for (let i = 0; i < BAR_COUNT; i += 1) {
@@ -350,7 +438,7 @@ const draw = (now = performance.now()) => {
         ctx.rect(x, height - heights[i], barWidth, heights[i]);
       }
       ctx.clip();
-      ctx.globalAlpha = 0.4;
+      ctx.globalAlpha = 0.4 * barOpacity;
       const destHeight = height - minTop;
       const sourceHeight = Math.max(1, (overlay.height * destHeight) / height);
       ctx.drawImage(
@@ -371,32 +459,44 @@ const draw = (now = performance.now()) => {
 
   // 低音脉冲：直接写元素 style，避免每帧触发 Vue 重渲染；
   // 枢轴 (60, h-55) 即封面自身中心再下移 5%（transform-origin: 50% 55%）。
-  // 预设 2（legacy）没有低音脉冲（legacy HUD 封面恒定），保持 1 即静止
-  const pulse = spectrumPreset === 'legacy' ? 1 : computePulseScale(levels);
+  // legacy 预设也启用（用户要求的信息卡随鼓点缩放），幅度量纲与原版一致可直接复用
+  const pulse = computePulseScale(levels);
   const pulseEl = coverPulseRef.value;
-  if (pulseEl) {
+  if (pulseEl && !closing && !opening) {
     const transform = `scale(${pulse.toFixed(4)})`;
     if (pulseEl.style.transform !== transform) pulseEl.style.transform = transform;
   }
 
-  drawTint(ctx, height, pulse);
+  // 信息卡随光标距离渐隐：按卡片中心求系数，与「频谱信息透明度」相乘后每帧
+  // 直接写 style（避免 Vue 每帧重渲染）；关闭/打开动画期间再乘时间淡出/淡入因子
+  const cardLayout = infoLayout(infoScale.value, height, pixelRatio);
+  const cardFactor = fadeActive
+    ? mouseAlpha(
+        cardLayout.cover.x + cardLayout.cover.size / 2,
+        cardLayout.cover.y + cardLayout.cover.size / 2
+      )
+    : 1;
+  const closeFade = closing ? Math.max(0, 1 - (now - closeAt) / 260) : 1;
+  const infoEl = infoRef.value;
+  if (infoEl) infoEl.style.opacity = String(infoOpacity.value * cardFactor * closeFade * openFade);
+
+  drawTint(ctx, height, pulse, cardFactor * closeFade * openFade);
 };
 
 const applyPayload = (data) => {
-  if (!data) return;
+  if (!data || closing) return;
 
   const nowPlaying = data.playing === true;
   const wasPlaying = playing.value;
   playing.value = nowPlaying;
   if (!nowPlaying) {
-    // 预设 2（legacy）：暂停冻结画面——legacy 实时 tap 停供帧，最后一帧留在屏上
-    if (spectrumPreset !== 'legacy') {
-      levels.fill(0);
-      targets.fill(0);
-      prevFrame = null;
-      nextFrame = null;
-      if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
-    }
+    // 暂停：条形归零——原版立即清空；legacy 目标归零后由 draw() 按平滑式
+    // 塌缩（条形快速滑落消失），信息卡随 playing 隐藏
+    targets.fill(0);
+    prevFrame = null;
+    nextFrame = null;
+    if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
+    if (spectrumPreset !== 'legacy') levels.fill(0);
   } else {
     if (!wasPlaying) pendingSnap = true;
 
@@ -410,7 +510,8 @@ const applyPayload = (data) => {
       for (let i = 0; i < count; i += 1) incoming[i] = Number(data.levels[i]) || 0;
       adoptLevels(incoming, now);
     }
-    if (data.reset || pendingSnap) {
+    // 打开动画期间不吸附：条形从 0 按平滑式抬升，而不是瞬间跳到目标
+    if ((data.reset || pendingSnap) && !opening) {
       prevFrame = nextFrame;              // 立刻到位，不做跨歌/恢复渐变
       interpolateTargets(performance.now());
       levels.set(targets);
@@ -431,11 +532,24 @@ const applyPayload = (data) => {
 
 let unsubscribe = null;
 let unsubscribeSettings = null;
+let unsubscribeClose = null;
+let unsubscribeReopen = null;
 
 const applySettings = (settings = {}) => {
   if (Number.isFinite(settings.scale)) displayScale = clamp(settings.scale, 0.5, 4);
   if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
+  // 两级透明度都夹在 [0.1, 1]，与 shared/settings.js sanitize 同区间
+  if (Number.isFinite(settings.spectrumInfoOpacity)) {
+    infoOpacity.value = clamp(Number(settings.spectrumInfoOpacity), 0.1, 1);
+  }
+  if (Number.isFinite(settings.spectrumBarOpacity)) {
+    barOpacity = clamp(Number(settings.spectrumBarOpacity), 0.1, 1);
+  }
+  if (settings.spectrumMouseFade != null) mouseFadeEnabled = settings.spectrumMouseFade === true;
+  if (Number.isFinite(settings.spectrumMouseFadeRadius)) {
+    mouseFadeRadius = clamp(Number(settings.spectrumMouseFadeRadius), 80, 600);
+  }
   if (settings.spectrumPreset === 'original' || settings.spectrumPreset === 'legacy') {
     spectrumPreset = settings.spectrumPreset;
   }
@@ -489,6 +603,35 @@ const onDragEnd = () => {
   dragging = false;
 };
 
+// 鼠标靠近透明：只记录位置，绝不拦截/消费事件（锁定态本就穿透）
+const onMouseFadeMove = (event) => {
+  mouseX = event.clientX;
+  mouseY = event.clientY;
+  mouseInside = true;
+  mouseMoveAt = performance.now();
+};
+
+const onMouseFadeLeave = () => {
+  mouseInside = false;
+};
+
+// 主进程通知：频谱开关关闭 → 播放塌缩/淡出动画，动画结束窗口才被销毁。
+// 动画期内忽略后续数据（stopSpectrum 的收尾零帧会抢在动画前把条形拍平）
+const onSpectrumClose = () => {
+  closing = true;
+  closeAt = performance.now();
+  targets.fill(0);
+  prevFrame = null;
+  nextFrame = null;
+};
+
+const onSpectrumReopen = () => {
+  // 关闭动画期重开：退出关闭态并反向播放（条形从 0 生长、信息卡淡入）
+  closing = false;
+  opening = true;
+  openAt = performance.now();
+};
+
 onMounted(() => {
   document.body.style.backgroundColor = 'transparent';
   document.body.style.margin = '0';
@@ -499,9 +642,19 @@ onMounted(() => {
   document.addEventListener('mousedown', onDragStart);
   document.addEventListener('mousemove', onDragMove);
   document.addEventListener('mouseup', onDragEnd);
+  // 穿透转发模式下 mousemove 仍会送达（锁定态也可跟踪光标）；mouseleave/blur
+  // 负责让渐隐圈收回。另有光标静止超时的兜底（见 MOUSE_FADE_STALL_MS）
+  document.addEventListener('mousemove', onMouseFadeMove);
+  document.addEventListener('mouseleave', onMouseFadeLeave);
+  window.addEventListener('blur', onMouseFadeLeave);
 
   unsubscribe = window.jelloSpectrum?.onData?.(applyPayload) || null;
   unsubscribeSettings = window.jelloSpectrum?.onSettings?.(applySettings) || null;
+  unsubscribeClose = window.jelloSpectrum?.onClose?.(onSpectrumClose) || null;
+  unsubscribeReopen = window.jelloSpectrum?.onReopen?.(onSpectrumReopen) || null;
+  // 新窗口从零生长进场（条形按平滑式抬升 + 整体淡入），与关闭动画对称
+  opening = true;
+  openAt = performance.now();
   window.jelloSpectrum?.ready?.();
   raf = requestAnimationFrame(draw);
 });
@@ -511,6 +664,10 @@ onBeforeUnmount(() => {
   unsubscribe = null;
   unsubscribeSettings?.();
   unsubscribeSettings = null;
+  unsubscribeClose?.();
+  unsubscribeClose = null;
+  unsubscribeReopen?.();
+  unsubscribeReopen = null;
   if (raf) cancelAnimationFrame(raf);
   raf = null;
   window.removeEventListener('resize', resizeCanvas);
@@ -518,6 +675,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDragStart);
   document.removeEventListener('mousemove', onDragMove);
   document.removeEventListener('mouseup', onDragEnd);
+  document.removeEventListener('mousemove', onMouseFadeMove);
+  document.removeEventListener('mouseleave', onMouseFadeLeave);
+  window.removeEventListener('blur', onMouseFadeLeave);
 });
 </script>
 

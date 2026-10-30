@@ -11,6 +11,17 @@ contextBridge.exposeInMainWorld('jelloSpectrum', {
     ipcRenderer.on('spectrum:settings', handler);
     return () => ipcRenderer.removeListener('spectrum:settings', handler);
   },
+  // 关闭动画：主进程销毁窗口前通知渲染层播塌缩/淡出；动画期重开发 reopen
+  onClose: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('spectrum:close', handler);
+    return () => ipcRenderer.removeListener('spectrum:close', handler);
+  },
+  onReopen: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('spectrum:reopen', handler);
+    return () => ipcRenderer.removeListener('spectrum:reopen', handler);
+  },
   setLocked: (value) => ipcRenderer.send('spectrum:lock-toggle', value === true),
   sendBounds: (bounds) => ipcRenderer.send('spectrum:bounds', bounds),
   ready: () => ipcRenderer.send('spectrum:hud-ready')

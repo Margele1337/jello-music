@@ -49,14 +49,6 @@ const getBoundsStore = () => {
 
 const clampScale = (value) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
 
-// HUD 窗口整体不透明度下限：调到接近 0 会找不到窗口，兜底 10%
-const MIN_OPACITY = 0.1;
-const clampOpacity = (value) => {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 1;
-  return Math.min(1, Math.max(MIN_OPACITY, n));
-};
-
 const getGeometryScale = (display) => {
   const factor = display.scaleFactor > 0 ? display.scaleFactor : 1;
   const pixelHeight = display.size.height * factor;
@@ -172,7 +164,11 @@ const isAllowedUrl = (url) => (
 const geometry = () => screen.getPrimaryDisplay().workArea;
 
 const initialHudBounds = (store, area, dipScale) => {
+  // 与 getHudTarget 同几何：锁定态整块区域，解锁态贴底矮条。窗口必须
+  // 「出生即最终形态」——否则创建（整屏）与首次 applyHudTarget 之间的
+  // setBounds 会成为一次可见的缩放/位移跳变（观感即「从空中放大到下方」）
   const size = hudSurfaceSize(area);
+  if (!hudLocked) size.height = unlockedStripHeight(area);
   const savedSize = store.get('spectrumWindowSize');
   const savedPosition = store.get('spectrumWindowPosition');
   const storedDipScale = store.get('spectrumGeometryDipScale');
@@ -205,6 +201,10 @@ export const showSpectrumHud = () => {
     hudWindow.showInactive();
     return hudWindow;
   }
+
+  // 创建窗口前先落定锁定状态：initialHudBounds / 首次 applyHudTarget 都依赖它，
+  // 顺序错了窗口会以错误几何显示、再跳到目标位置
+  hudLocked = getSettings().spectrumLocked === true;
 
   const store = getBoundsStore();
   const display = screen.getPrimaryDisplay();
@@ -247,7 +247,6 @@ export const showSpectrumHud = () => {
 
   hudWindow.setAlwaysOnTop(true, 'screen-saver');
   hudWindow.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
-  hudWindow.setOpacity(clampOpacity(getSettings().spectrumOpacity));
   applySpectrumHudMouseEvents(getSettings().spectrumLocked === true);
 
   const persistBounds = () => {
@@ -326,6 +325,10 @@ export const showSpectrumHud = () => {
     const spectrumSettings = {
       spectrumScale: settings.spectrumScale,
       spectrumSigmaSmoothing: settings.spectrumSigmaSmoothing,
+      spectrumBarOpacity: settings.spectrumBarOpacity,
+      spectrumInfoOpacity: settings.spectrumInfoOpacity,
+      spectrumMouseFade: settings.spectrumMouseFade,
+      spectrumMouseFadeRadius: settings.spectrumMouseFadeRadius,
       spectrumInfoScale: settings.spectrumInfoScale,
       spectrumInfoVisible: settings.spectrumInfoVisible,
       spectrumLocked: settings.spectrumLocked,
@@ -379,6 +382,10 @@ export const showSpectrumHud = () => {
 };
 
 export const destroySpectrumHud = () => {
+  if (closeTimer) {
+    clearTimeout(closeTimer);
+    closeTimer = null;
+  }
   if (hudWindow && !hudWindow.isDestroyed()) hudWindow.destroy();
   hudWindow = null;
   lastData = null;
@@ -398,9 +405,51 @@ export const destroySpectrumHud = () => {
   spectrumDisplayListenersBound = false;
 };
 
+// 关闭动画时长：渲染层先播条形塌缩/信息卡淡出，动画结束后隐藏窗口；
+// 重开时直接 showInactive + reopen——窗口与页面保持存活，重建带来的
+// 加载期丢帧（sendSpectrumData 对 isLoading 的丢弃）与整窗闪现都不存在
+const CLOSE_ANIMATION_MS = 380;
+let closeTimer = null;
+
+// 动画播完只隐藏：隐藏的窗口保留渲染层状态（targets/levels/opening），
+// 重开即反向动画；销毁只发生在应用退出
+const hideSpectrumHud = () => {
+  try {
+    hudWindow?.hide();
+  } catch {
+    /* ignore */
+  }
+};
+
 export const syncSpectrumHud = (enabled) => {
-  if (enabled) showSpectrumHud();
-  else destroySpectrumHud();
+  if (enabled) {
+    if (closeTimer) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+    if (hudWindow && !hudWindow.isDestroyed()) {
+      hudWindow.showInactive();
+      try {
+        hudWindow.webContents.send('spectrum:reopen');
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    showSpectrumHud();
+    return;
+  }
+  if (!hudWindow || hudWindow.isDestroyed()) return;
+  try {
+    hudWindow.webContents.send('spectrum:close');
+  } catch {
+    /* ignore */
+  }
+  if (closeTimer) clearTimeout(closeTimer);
+  closeTimer = setTimeout(() => {
+    closeTimer = null;
+    hideSpectrumHud();
+  }, CLOSE_ANIMATION_MS);
 };
 
 // 锁定 = 鼠标完全穿透（forward 让 mousemove 仍转发，方便渲染层感知）；解锁 = 可拖动/缩放。
@@ -423,6 +472,12 @@ export const syncSpectrumHudSettings = (settings) => {
   const payload = {
     spectrumScale: settings.spectrumScale,
     spectrumSigmaSmoothing: settings.spectrumSigmaSmoothing,
+    // 两级透明度都由渲染层合成：条形 canvas globalAlpha + 信息卡 CSS opacity
+    spectrumBarOpacity: settings.spectrumBarOpacity,
+    spectrumInfoOpacity: settings.spectrumInfoOpacity,
+    // 鼠标靠近透明（渲染层按光标位置做圆形渐隐）+ 渐隐圈半径
+    spectrumMouseFade: settings.spectrumMouseFade,
+    spectrumMouseFadeRadius: settings.spectrumMouseFadeRadius,
     spectrumPreset: settings.spectrumPreset,
     spectrumInfoScale: settings.spectrumInfoScale,
     spectrumInfoVisible: settings.spectrumInfoVisible,
@@ -431,8 +486,6 @@ export const syncSpectrumHudSettings = (settings) => {
   };
   lastSettings = payload;
   if (!hudWindow || hudWindow.isDestroyed()) return;
-  // 透明度是主进程窗口属性，直接作用于 BrowserWindow，渲染层无需感知
-  hudWindow.setOpacity(clampOpacity(settings.spectrumOpacity));
   applySpectrumHudMouseEvents(settings.spectrumLocked);
   if (hudWindow.webContents.isLoading()) return;
   hudWindow.webContents.send('spectrum:settings', payload);

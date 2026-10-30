@@ -100,6 +100,7 @@ let enabled = false;
 let decodePreset = 'original';
 let sourceBound = false;
 let audioListeners = [];
+let tapAudio = null;                              // 预读事件监听挂在哪个元素上（stop 时摘除用）
 let getSong = null;
 let isPlaying = null;
 let getVolume = null;
@@ -519,13 +520,15 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
   const decision = decideSelfDecode({
     extName,
     hasAudioDecoder: typeof globalThis.AudioDecoder === 'function',
-    spectrumEnabled: enabled,
-    preset: decodePreset
+    spectrumEnabled: enabled
   });
   if (!decision.ok || !url) return { src: url, decode: null };
   const reused = takePrepared(url);
   if (reused?.decode) return reused;      // mp4 候选探测已备好同一份字节
   const format = decision.format;
+  // 预设 1（legacy）频谱不接管自解码：mp3/flac 的整曲预取纯属浪费（还会与主
+  // 元素/预读抢带宽，拖慢起播），直接远程流 + tap；mp4 仍需探测（可听路径闸门）
+  if (decodePreset === 'legacy' && format !== 'aac') return { src: url, decode: null };
   // 取字节预算：blob 路径要等整首下完才能出声，弱网下会拖慢播放开始。
   // 超预算即中止并静默回退远程 URL + tap 链路，播放可靠性优先于频谱同构。
   const controller = new AbortController();
@@ -983,6 +986,10 @@ export const startSpectrum = async (audio, handlers = {}) => {
 
   resetQueue();
   metaKey = '';
+  // 重开频谱必须复位 tap 路由：上次 stopSpectrum 清了预读 src，但路由增益可能
+  // 停在「预读优先」（mainTapGain=0），而 'play' 事件不会再触发、syncLookahead
+  // 又因 src 为空提前返回——不主动复位的话主元素永远喂不进 tap，竖条全零
+  updateTapRouting();
   sendSpectrum(rawLevels, true);
 
   if (!idleTimer) {
@@ -994,8 +1001,17 @@ export const startSpectrum = async (audio, handlers = {}) => {
   }
 
   // 预读同步：监听主播放器事件，驱动预读播放器跟随
+  tapAudio = audio || null;
   if (audio && audioListeners.length === 0) {
-    const onPlay = () => { setLookaheadSource(audio.src); syncLookahead(audio.currentTime, true, 1, true); };
+    const onPlay = () => {
+      // immediate 装配发生在启动期（无用户手势）：AudioContext 可能停在
+      // suspended，播放开始时必须恢复，否则 tap 采不到音频、频谱无条形
+      if (context && context.state === 'suspended') {
+        context.resume().catch(() => { /* ignore */ });
+      }
+      setLookaheadSource(audio.src);
+      syncLookahead(audio.currentTime, true, 1, true);
+    };
     const onPause = () => syncLookahead(audio.currentTime, false, 1);
     const onSeek = () => syncLookahead(audio.currentTime, currentPlaying(), 1, true);
     const onRate = () => syncLookahead(audio.currentTime, currentPlaying(), audio.playbackRate, true);
@@ -1048,7 +1064,13 @@ export const stopSpectrum = (send) => {
   lookaheadSyncTimer = null;
   resetQueue();
   rawLevels.fill(0);
+  // 真正摘掉主元素上的监听：startSpectrum 按 audioListeners.length===0 重挂，
+  // 只清数组不摘除会在反复开关后叠加重复监听
+  for (const { event, handler } of audioListeners) {
+    try { tapAudio?.removeEventListener(event, handler); } catch { /* ignore */ }
+  }
   audioListeners = [];
+  tapAudio = null;
   // 终止自解码 Worker 并清缓冲；blob 若仍被元素引用则延后到下次换歌回收
   stopDecodeAnalysis();
   try {
@@ -1060,6 +1082,8 @@ export const stopSpectrum = (send) => {
   } catch {
     /* ignore */
   }
+  // 清了预读 src 后把 tap 路由复位到主元素，避免下次重开时增益停在「预读优先」
+  updateTapRouting();
   try {
     (send || sendFn)?.({ levels: Array.from(rawLevels), playing: false, reset: true });
   } catch {

@@ -54,13 +54,35 @@ test('sanitize rejects unknown quality and data source values', () => {
   assert.deepEqual(sanitizeSettings({ spectrumPreset: 'legacy' }), { spectrumPreset: 'legacy' });
   // 历史存档里的 wide（旧预设 2）迁移到 legacy
   assert.deepEqual(sanitizeSettings({ spectrumPreset: 'wide' }), { spectrumPreset: 'legacy' });
-  assert.equal(SETTING_DEFAULTS.spectrumPreset, 'original');
-  // 频谱窗口透明度：夹在 [0.1, 1]，非法值丢弃
-  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 0.4 }), { spectrumOpacity: 0.4 });
-  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 5 }), { spectrumOpacity: 1 });
-  assert.deepEqual(sanitizeSettings({ spectrumOpacity: -1 }), { spectrumOpacity: 0.1 });
-  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 'x' }), {});
-  assert.equal(SETTING_DEFAULTS.spectrumOpacity, 1);
+  // 预设 1 现为 legacy（默认），预设 2 为 original
+  assert.equal(SETTING_DEFAULTS.spectrumPreset, 'legacy');
+  // 歌曲信息透明度：夹在 [0.1, 1]，非法值丢弃
+  assert.deepEqual(sanitizeSettings({ spectrumInfoOpacity: 0.4 }), { spectrumInfoOpacity: 0.4 });
+  assert.deepEqual(sanitizeSettings({ spectrumInfoOpacity: 5 }), { spectrumInfoOpacity: 1 });
+  assert.deepEqual(sanitizeSettings({ spectrumInfoOpacity: -1 }), { spectrumInfoOpacity: 0.1 });
+  assert.deepEqual(sanitizeSettings({ spectrumInfoOpacity: 'x' }), {});
+  assert.equal(SETTING_DEFAULTS.spectrumInfoOpacity, 1);
+  // 旧「整窗透明度」键迁移为信息卡透明度；新旧同给时新键优先
+  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 0.4 }), { spectrumInfoOpacity: 0.4 });
+  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 5 }), { spectrumInfoOpacity: 1 });
+  assert.deepEqual(
+    sanitizeSettings({ spectrumOpacity: 0.4, spectrumInfoOpacity: 0.8 }),
+    { spectrumInfoOpacity: 0.8 }
+  );
+  // 条形层透明度：同区间
+  assert.deepEqual(sanitizeSettings({ spectrumBarOpacity: 0.6 }), { spectrumBarOpacity: 0.6 });
+  assert.deepEqual(sanitizeSettings({ spectrumBarOpacity: 9 }), { spectrumBarOpacity: 1 });
+  assert.deepEqual(sanitizeSettings({ spectrumBarOpacity: 0 }), { spectrumBarOpacity: 0.1 });
+  // 鼠标靠近透明：布尔白名单，非布尔丢弃
+  assert.deepEqual(sanitizeSettings({ spectrumMouseFade: false }), { spectrumMouseFade: false });
+  assert.deepEqual(sanitizeSettings({ spectrumMouseFade: 'yes' }), {});
+  assert.equal(SETTING_DEFAULTS.spectrumMouseFade, true);
+  // 渐隐圈半径：夹在 [80, 600] 并取整
+  assert.deepEqual(sanitizeSettings({ spectrumMouseFadeRadius: 320 }), { spectrumMouseFadeRadius: 320 });
+  assert.deepEqual(sanitizeSettings({ spectrumMouseFadeRadius: 10 }), { spectrumMouseFadeRadius: 80 });
+  assert.deepEqual(sanitizeSettings({ spectrumMouseFadeRadius: 9999 }), { spectrumMouseFadeRadius: 600 });
+  assert.deepEqual(sanitizeSettings({ spectrumMouseFadeRadius: 'x' }), {});
+  assert.equal(SETTING_DEFAULTS.spectrumMouseFadeRadius, 260);
 });
 
 test('quality ladder covers all seven tiers from low to high', () => {

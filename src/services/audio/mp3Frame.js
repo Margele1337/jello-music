@@ -796,9 +796,11 @@ export const normalizeSelfDecodeFormat = (extName) => (
   SELF_DECODE_FORMATS.get(String(extName || '').toLowerCase()) || null
 );
 
-export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled, preset = 'original' }) => {
-  // 预设 2（legacy）复刻只走实时 tap，不启用自解码（与 WebCodecs 不可用同语义）
-  if (preset === 'legacy') return { ok: false, reason: 'preset-legacy' };
+export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled }) => {
+  // 注意：这里只回答「字节/解码器是否可用」，不得掺杂频谱预设——mp4 候选的
+  // 放行闸门（probeSelfDecode）复用本判定，预设掺进来会把预设 2 下所有
+  // m4a/aac 音源误杀成无法播放。预设 2 的「频谱不接管」由 startDecodeAnalysis
+  // 的 legacy 门单独负责，可听路径与预设 1 保持一致。
   if (!spectrumEnabled) return { ok: false, reason: 'spectrum-disabled' };
   const format = normalizeSelfDecodeFormat(extName);
   if (!format) return { ok: false, reason: 'ext-unsupported' };

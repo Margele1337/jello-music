@@ -112,8 +112,15 @@ export const SETTING_DEFAULTS = Object.freeze({
   desktopLyricsFont: '',
   spectrum: false,
   spectrumScale: 1,
-  // 整个频谱 HUD 窗口的不透明度（BrowserWindow.setOpacity），1 = 原版全不透明
-  spectrumOpacity: 1,
+  // 只作用于频谱条形层（幽灵条/实心条/条内封面叠加）的不透明度
+  spectrumBarOpacity: 1,
+  // 频谱信息卡（封面、歌名与四周柔边）的不透明度，1 = 原版
+  spectrumInfoOpacity: 1,
+  // 鼠标靠近透明：光标附近的条形/信息卡以圆形区域渐隐（半径随进入逐渐扩大），
+  // 用来看清被频谱挡住的桌面内容
+  spectrumMouseFade: true,
+  // 渐隐圈最大半径（CSS 像素）
+  spectrumMouseFadeRadius: 260,
   // 1.0 = 原版固定像素信息卡（封面 100×100、字号 18/20），纯倍率不叠加分辨率缩放
   spectrumInfoScale: 1,
   spectrumInfoVisible: true,
@@ -121,12 +128,13 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumAvDelayMs: 590,
   // HUD 目标电平的刷新间隔：50ms ≈ 跟手；约 500ms ≈ 「一秒变一两次」的慢节奏
   spectrumUpdateMs: 500,
-  // 频谱预设：original（预设 1，默认）= 原版 sigmarebase——自解码精确时序 + 帧首
-  // 1024 个采样时刻打包窗 1024 点 FFT；
-  // legacy（预设 2）= legacy 复刻——实时 tap（禁用自解码）、250ms 攒批推进 4 帧队首、
-  // FFT 输入不做响度归一、预读领先取设置原值、HUD 用 legacy 平滑式且无低音脉冲。
-  // 预设 1 的自解码窗几何下一首生效；切换预设 2 立即停用自解码回到 tap。
-  spectrumPreset: 'original',
+  // 频谱预设：legacy（预设 1，默认）= legacy 复刻——实时 tap（自解码分析不接管）、
+  // 250ms 攒批推进 4 帧队首、FFT 输入不做响度归一、预读领先取设置原值、
+  // HUD 用 legacy 平滑式（信息卡低音脉冲两个预设都有）；
+  // original（预设 2）= 原版 sigmarebase——自解码精确时序 + 帧首 1024 个采样时刻
+  // 打包窗 1024 点 FFT。
+  // 切到 legacy 立即生效（停用自解码回到 tap）；切到 original 下一首生效。
+  spectrumPreset: 'legacy',
   spectrumLocked: true,
   autoStart: false,
   preventAppSuspension: false,
@@ -162,7 +170,8 @@ export const sanitizeSettings = (patch) => {
     }
 
     if (key === 'minimizeToTray' || key === 'desktopLyrics' || key === 'spectrum'
-      || key === 'spectrumInfoVisible' || key === 'spectrumLocked' || key === 'hotkeyIntroSeen'
+      || key === 'spectrumInfoVisible' || key === 'spectrumLocked' || key === 'spectrumMouseFade'
+      || key === 'hotkeyIntroSeen'
       || key === 'loudnessNormalization' || key === 'autoStart' || key === 'preventAppSuspension'
       || key === 'proxyEnabled' || key === 'gpuAcceleration') {
       if (typeof value === 'boolean') next[key] = value;
@@ -197,8 +206,22 @@ export const sanitizeSettings = (patch) => {
       continue;
     }
 
-    if (key === 'spectrumOpacity') {
-      // HUD 窗口整体不透明度；下限 0.1 防止用户调到几乎不可见后找不到窗口
+    if (key === 'spectrumInfoOpacity') {
+      // 歌曲信息卡不透明度；下限 0.1 防止调到几乎不可见
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(0.1, Math.min(1, n));
+      continue;
+    }
+
+    if (key === 'spectrumMouseFadeRadius') {
+      // 渐隐圈半径：过小失去避让意义，过大接近整窗透明
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(80, Math.min(600, Math.round(n)));
+      continue;
+    }
+
+    if (key === 'spectrumBarOpacity') {
+      // 条形层不透明度，与整窗透明度相乘；下限同上
       const n = Number(value);
       if (Number.isFinite(n)) next[key] = Math.max(0.1, Math.min(1, n));
       continue;
@@ -249,5 +272,13 @@ export const sanitizeSettings = (patch) => {
 
     if (typeof value === 'string') next[key] = value;
   }
+  // 旧「整窗透明度」键迁移为信息卡透明度（透明度概念已拆分为条形/信息两级）。
+  // 已从 defaults 移除的键进不了上面的循环，只能在此后处理；新键优先
+  if (next.spectrumInfoOpacity === undefined
+    && Object.prototype.hasOwnProperty.call(patch, 'spectrumOpacity')) {
+    const n = Number(patch.spectrumOpacity);
+    if (Number.isFinite(n)) next.spectrumInfoOpacity = Math.max(0.1, Math.min(1, n));
+  }
+
   return next;
 };

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { nextLowerQuality, qualityLabel as qualityLabelText } from '../../shared/settings.js';
+import { nextLowerQuality, qualityLabel as qualityLabelText, QUALITY_VALUES } from '../../shared/settings.js';
 import { useSettingsStore } from './settings.js';
 import { getSongUrl } from '../services/api/library.js';
 import {
@@ -282,6 +282,18 @@ export const usePlayerStore = defineStore('player', {
         this.qualityLabel = result.qualityLabel || '';
         this.qualityOptions = Array.isArray(result.qualityOptions) ? result.qualityOptions : [];
 
+        // 主动降级提示：取址侧沿阶梯只组账号可用的档位（privilege level===0 的
+        // 档位已丢弃），实际档位低于请求档位即「这首歌/这个账号没有该音质」。
+        // 同曲音质重试的请求档位本身已降，不会重复触发本提示；试听片段单独说明
+        const requestedQuality = qualityOverride || settings.quality || '320';
+        const actualIndex = QUALITY_VALUES.indexOf(this.resolvedQuality);
+        const requestedIndex = QUALITY_VALUES.indexOf(requestedQuality);
+        if (actualIndex >= 0 && requestedIndex > actualIndex) {
+          notifyUser(`「${song.name || '当前歌曲'}」暂无${qualityLabelText(requestedQuality) || requestedQuality}音源，已自动改用${qualityLabelText(this.resolvedQuality) || this.resolvedQuality}${this.trial ? '（试听片段）' : ''}`);
+        } else if (this.trial) {
+          notifyUser(`「${song.name || '当前歌曲'}」仅提供试听片段`);
+        }
+
         // 响度规格化/自定义输出设备需要 Web Audio 音频图（MediaElementSource 只能绑定一次）
         if (settings.loudnessNormalization || settings.audioOutputDevice !== 'default') {
           void ensureAudioGraph(element);
@@ -328,7 +340,9 @@ export const usePlayerStore = defineStore('player', {
               // 网速抽签。窗口外一律本首坚持 tap，保证同一首歌内路径恒定。
               const TAKEOVER_GRACE_SECONDS = 5;
               if (media.decode && element.currentTime <= TAKEOVER_GRACE_SECONDS) {
-                startDecodeAnalysis(element, media.decode);
+                // 预设 2（legacy）下频谱不接管（startDecodeAnalysis 返回 false），
+                // blob 无人引用须就地回收，否则每首歌泄漏一个整曲 blob
+                if (!startDecodeAnalysis(element, media.decode)) revokeBlob();
               } else {
                 revokeBlob();
                 stopDecodeAnalysis();
