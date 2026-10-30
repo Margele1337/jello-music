@@ -51,8 +51,16 @@ test('sanitize rejects unknown quality and data source values', () => {
   });
   assert.deepEqual(sanitizeSettings({ quality: 'high' }), { quality: 'high' });
   assert.deepEqual(sanitizeSettings({ spectrumPreset: 'original' }), { spectrumPreset: 'original' });
-  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'wide' }), { spectrumPreset: 'wide' });
+  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'legacy' }), { spectrumPreset: 'legacy' });
+  // 历史存档里的 wide（旧预设 2）迁移到 legacy
+  assert.deepEqual(sanitizeSettings({ spectrumPreset: 'wide' }), { spectrumPreset: 'legacy' });
   assert.equal(SETTING_DEFAULTS.spectrumPreset, 'original');
+  // 频谱窗口透明度：夹在 [0.1, 1]，非法值丢弃
+  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 0.4 }), { spectrumOpacity: 0.4 });
+  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 5 }), { spectrumOpacity: 1 });
+  assert.deepEqual(sanitizeSettings({ spectrumOpacity: -1 }), { spectrumOpacity: 0.1 });
+  assert.deepEqual(sanitizeSettings({ spectrumOpacity: 'x' }), {});
+  assert.equal(SETTING_DEFAULTS.spectrumOpacity, 1);
 });
 
 test('quality ladder covers all seven tiers from low to high', () => {

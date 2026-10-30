@@ -18,10 +18,12 @@ export const getSettings = () => {
   // settings.json 里遗留的 shortcuts 键随全局快捷键功能一并废弃，读出时丢弃
   const { shortcuts: legacyShortcuts, ...rest } = store?.store || {};
   void legacyShortcuts;
-  // 预设值改名遗留迁移：modern/classic → original/wide（未发布期间改的名，
-  // 存量值读出时归一，避免渲染层拿到白名单外的值）
+  // 预设值改名遗留迁移：modern/classic → original/wide，wide 再统一到 legacy
+  // （预设 2 现为 legacy 复刻；存量值读出时归一，避免渲染层拿到白名单外的值）
   if (rest.spectrumPreset === 'modern' || rest.spectrumPreset === 'classic') {
-    rest.spectrumPreset = rest.spectrumPreset === 'modern' ? 'original' : 'wide';
+    rest.spectrumPreset = rest.spectrumPreset === 'modern' ? 'original' : 'legacy';
+  } else if (rest.spectrumPreset === 'wide') {
+    rest.spectrumPreset = 'legacy';
   }
   return {
     ...SETTING_DEFAULTS,

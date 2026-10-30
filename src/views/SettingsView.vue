@@ -800,17 +800,18 @@ const settingSections = [
         key: 'spectrum',
         control: 'toggle',
         icon: 'waveform',
-        label: '桌面音频频谱'
+        label: '桌面音频频谱',
+        description: '独立置顶频谱窗口：114 条频谱、封面低音脉冲与歌曲信息卡。'
       },
       {
         key: 'spectrumPreset',
         control: 'seg',
         icon: 'waveform',
         label: '预设样式',
-        description: '预设 1 = 原版 sigmarebase：所有格式统一取帧首 1024 个采样时刻，按原版打包语义做 1024 点 FFT（与 tap 回退同几何）；预设 2 = 全帧真立体声 2048 点。切换后下一首生效。',
+        description: '预设 1（原版）＝ 自解码整曲、18 帧队列与音频锁相均匀推进、幅度响度归一。预设 2（legacy）＝ 实时采集、每 250ms 台阶式推进、原始幅度、无低音脉冲，观感同 legacy 应用。切到预设 2 立即生效，切回预设 1 下一首生效。',
         options: [
           { value: 'original', displayText: '预设 1（原版）' },
-          { value: 'wide', displayText: '预设 2（全帧立体声）' }
+          { value: 'legacy', displayText: '预设 2（legacy 复刻）' }
         ]
       },
       {
@@ -818,8 +819,47 @@ const settingSections = [
         control: 'slider',
         icon: 'chart',
         label: '频谱幅度',
+        description: '条形高度整体倍率，1.00x 即原版映射（√幅度 ÷ 12 − 5）。',
         slider: { min: 0.5, max: 3, step: 0.05 },
         format: (value) => `${value.toFixed(2)}x`
+      },
+      {
+        key: 'spectrumOpacity',
+        control: 'slider',
+        icon: 'sliders',
+        label: '频谱透明度',
+        description: '整个频谱窗口（条形、封面与信息卡）的不透明度，100% 即原版。',
+        slider: { min: 0.1, max: 1, step: 0.05 },
+        format: (value) => `${Math.round(value * 100)}%`
+      },
+      {
+        key: 'spectrumSigmaSmoothing',
+        control: 'slider',
+        icon: 'sliders',
+        label: '平滑系数',
+        description: () => (settings.spectrumPreset === 'legacy'
+          ? 'legacy 式：alpha = 1 − exp(−帧间隔/τ)，τ = 1/(系数×60)；0.335 即 legacy 原值。'
+          : '原版公式 alpha = 系数 × 60/渲染帧率，0.335 即原版值。'),
+        slider: { min: 0.05, max: 1, step: 0.005 },
+        format: (value) => value.toFixed(3)
+      },
+      {
+        key: 'spectrumAvDelayMs',
+        control: 'slider',
+        icon: 'clock',
+        label: '音画差补偿',
+        description: () => (settings.spectrumPreset === 'legacy'
+          ? '该值即预读播放器的领先量（默认 590 = legacy 原值）；调大频谱更提前，调小延后。'
+          : '默认 590 即实机标定的原版相位（实测：频谱约提前可听 57ms）；调大让频谱更提前，调小让频谱延后。'),
+        slider: { min: 0, max: 2000, step: 10 },
+        format: (value) => `${Math.round(value)}ms`
+      },
+      {
+        key: 'spectrumInfoVisible',
+        control: 'toggle',
+        icon: 'info',
+        label: '频谱信息显示',
+        description: '封面、歌名信息卡与四周柔边；关闭后仅保留频谱条形。'
       },
       {
         key: 'spectrumInfoScale',
@@ -829,39 +869,6 @@ const settingSections = [
         description: '信息卡倍率，1.00x 即原版固定像素大小（封面 100px）。',
         slider: { min: 0.5, max: 2, step: 0.05 },
         format: (value) => `${value.toFixed(2)}x`
-      },
-      {
-        key: 'spectrumSigmaSmoothing',
-        control: 'slider',
-        icon: 'sliders',
-        label: '平滑系数',
-        description: '原版公式 alpha = 系数 × 60/渲染帧率，0.335 即原版值。',
-        slider: { min: 0.05, max: 1, step: 0.005 },
-        format: (value) => value.toFixed(3)
-      },
-      {
-        key: 'spectrumAvDelayMs',
-        control: 'slider',
-        icon: 'clock',
-        label: '音画差补偿',
-        description: '默认值 590 即实机标定的原版相位（实测：频谱约提前可听 57ms）；调大让频谱更提前，调小让频谱延后。',
-        slider: { min: 0, max: 2000, step: 10 },
-        format: (value) => `${Math.round(value)}ms`
-      },
-      {
-        key: 'spectrumUpdateMs',
-        control: 'slider',
-        icon: 'clock',
-        label: '变化节奏',
-        description: '仅对预设 2 生效：目标电平按此间隔采纳、条形由缓动滑过去（约 500ms 即「一秒变一两次」）。预设 1 与原版一致按帧更新，不受该项影响。',
-        slider: { min: 50, max: 1000, step: 10 },
-        format: (value) => `${Math.round(value)}ms`
-      },
-      {
-        key: 'spectrumInfoVisible',
-        control: 'toggle',
-        icon: 'info',
-        label: '频谱信息显示'
       },
       {
         key: 'spectrumLocked',

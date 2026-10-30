@@ -721,6 +721,57 @@ export class SigmaDisplayQueue {
   }
 }
 
+// 预设 2（legacy）的机械时序：每攒满 0.25s 音频时长的帧一次性冲入显示队列，
+// 队列只保 4 帧、渲染读队首不弹出——画面呈「停 ~250ms → 整体前移 ~9 帧」的
+// 台阶节奏。初始态按「开局预热爆发」装填：首帧到达即形成第一批。
+// 纯状态机（不碰计时器），供 spectrum.js tap 链路按帧驱动。
+export const SIGMA_LEGACY_BATCH_SECONDS = 0.25;
+export const SIGMA_LEGACY_BATCH_MAX = 12;
+export const SIGMA_LEGACY_FRAME_SECONDS = 1152 / 44100;
+export const SIGMA_LEGACY_QUEUE_MAX = 4;
+
+export const createSigmaBurst = ({
+  batchSeconds = SIGMA_LEGACY_BATCH_SECONDS,
+  batchMax = SIGMA_LEGACY_BATCH_MAX,
+  queueMax = SIGMA_LEGACY_QUEUE_MAX,
+  frameSeconds = SIGMA_LEGACY_FRAME_SECONDS
+} = {}) => {
+  const queue = [];
+  const pending = [];
+  let accumulator = batchSeconds;
+
+  return {
+    reset() {
+      queue.length = 0;
+      pending.length = 0;
+      accumulator = batchSeconds;
+    },
+
+    // 推入一帧电平；返回显示队列队首（队列为空返回 null）
+    push(frame) {
+      pending.push(frame);
+      accumulator += frameSeconds;
+      if (accumulator >= batchSeconds || pending.length >= batchMax) {
+        for (const item of pending) {
+          queue.push(item);
+          while (queue.length > queueMax) queue.shift();
+        }
+        pending.length = 0;
+        accumulator = Math.max(0, accumulator - batchSeconds);
+      }
+      return queue.length ? queue[0] : null;
+    },
+
+    peek() {
+      return queue.length ? queue[0] : null;
+    },
+
+    get size() {
+      return queue.length;
+    }
+  };
+};
+
 // line buffer 帧数上限（≈4 秒），超出即通知 Worker 暂停拉取（背压）
 export const lineBufferCapFrames = (sampleRate, samplesPerFrame = 1152) => (
   Math.max(1, Math.ceil((LINE_BUFFER_SECONDS * sampleRate) / samplesPerFrame))
@@ -745,7 +796,9 @@ export const normalizeSelfDecodeFormat = (extName) => (
   SELF_DECODE_FORMATS.get(String(extName || '').toLowerCase()) || null
 );
 
-export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled }) => {
+export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled, preset = 'original' }) => {
+  // 预设 2（legacy）复刻只走实时 tap，不启用自解码（与 WebCodecs 不可用同语义）
+  if (preset === 'legacy') return { ok: false, reason: 'preset-legacy' };
   if (!spectrumEnabled) return { ok: false, reason: 'spectrum-disabled' };
   const format = normalizeSelfDecodeFormat(extName);
   if (!format) return { ok: false, reason: 'ext-unsupported' };

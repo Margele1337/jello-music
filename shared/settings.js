@@ -23,7 +23,7 @@ export const nextLowerQuality = (quality) => {
 
 export const DATA_SOURCE_VALUES = Object.freeze(['concept', 'official']);
 export const PLAYBACK_RATES = Object.freeze([0.5, 0.75, 1, 1.25, 1.5, 2]);
-export const SPECTRUM_PRESET_VALUES = Object.freeze(['original', 'wide']);
+export const SPECTRUM_PRESET_VALUES = Object.freeze(['original', 'legacy']);
 
 export const API_BASE_URL_MODES = Object.freeze(['default', 'custom']);
 
@@ -112,6 +112,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   desktopLyricsFont: '',
   spectrum: false,
   spectrumScale: 1,
+  // 整个频谱 HUD 窗口的不透明度（BrowserWindow.setOpacity），1 = 原版全不透明
+  spectrumOpacity: 1,
   // 1.0 = 原版固定像素信息卡（封面 100×100、字号 18/20），纯倍率不叠加分辨率缩放
   spectrumInfoScale: 1,
   spectrumInfoVisible: true,
@@ -119,10 +121,11 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumAvDelayMs: 590,
   // HUD 目标电平的刷新间隔：50ms ≈ 跟手；约 500ms ≈ 「一秒变一两次」的慢节奏
   spectrumUpdateMs: 500,
-  // 频谱预设：original（预设 1，默认）= 原版 sigmarebase 窗几何——
-  // 所有格式统一取帧首 1024 个采样时刻，按打包语义（L*2 + R/32768）做 1024 点 FFT；
-  // wide（预设 2）= 全帧真立体声交错、2048 点 FFT。
-  // 自解码预设仅影响之后的 prepareSelfDecode，下一首生效；tap 回退始终用 original。
+  // 频谱预设：original（预设 1，默认）= 原版 sigmarebase——自解码精确时序 + 帧首
+  // 1024 个采样时刻打包窗 1024 点 FFT；
+  // legacy（预设 2）= legacy 复刻——实时 tap（禁用自解码）、250ms 攒批推进 4 帧队首、
+  // FFT 输入不做响度归一、预读领先取设置原值、HUD 用 legacy 平滑式且无低音脉冲。
+  // 预设 1 的自解码窗几何下一首生效；切换预设 2 立即停用自解码回到 tap。
   spectrumPreset: 'original',
   spectrumLocked: true,
   autoStart: false,
@@ -194,6 +197,13 @@ export const sanitizeSettings = (patch) => {
       continue;
     }
 
+    if (key === 'spectrumOpacity') {
+      // HUD 窗口整体不透明度；下限 0.1 防止用户调到几乎不可见后找不到窗口
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(0.1, Math.min(1, n));
+      continue;
+    }
+
     if (key === 'spectrumSigmaSmoothing') {
       // 直接替换原版 MusicManager.java:149 的常量 0.335 作为每帧逼近乘数
       const n = Number(value);
@@ -224,7 +234,9 @@ export const sanitizeSettings = (patch) => {
     }
 
     if (key === 'spectrumPreset') {
-      if (SPECTRUM_PRESET_VALUES.includes(value)) next.spectrumPreset = value;
+      // 历史存档里的 wide（旧预设 2）迁移到 legacy；'wide' 不再是可取值
+      const presetValue = value === 'wide' ? 'legacy' : value;
+      if (SPECTRUM_PRESET_VALUES.includes(presetValue)) next.spectrumPreset = presetValue;
       continue;
     }
     if (key === 'audioOutputDevice') {

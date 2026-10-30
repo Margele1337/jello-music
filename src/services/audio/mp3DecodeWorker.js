@@ -9,8 +9,9 @@
 // original：所有格式统一取帧首 1024 个采样时刻，按原版 convertToPCMFloatArray
 // 的 L,R 打包语义组成 1024 点窗。原版 AAC 一帧恰好 1024 采样/声道，窗覆盖整帧；
 // mp3/FLAC 也采用相同时间宽度，不再只取 512 个立体声采样时刻（半个时间窗）。
-// wide：2048 点真立体声交错窗。Int16 量级是 HUD 公式 sqrt(x)/12 − 5
-// （上限 2.256e7 / 低音参考 1000/4750）的前提。
+// wide：2048 点真立体声交错窗——旧「预设 2」的几何，设置项已改为 legacy 复刻
+// 后不再被送达（decideSelfDecode 直接拒绝 legacy 自解码），代码保留备用。
+// Int16 量级是 HUD 公式 sqrt(x)/12 − 5（上限 2.256e7 / 低音参考 1000/4750）的前提。
 //
 // 三种格式的帧来源各不相同：
 // - mp3：帧头自带 frameSize，逐字节同步（mp3Frame.js parseMp3FrameHeader）
@@ -34,7 +35,7 @@ import {
   parseMp3FrameHeader
 } from './mp3Frame.js';
 
-const FFT_SIZE = 2048;          // 预设 2（wide）：全帧真立体声交错
+const FFT_SIZE = 2048;          // wide（旧预设 2，不再由设置送达）：全帧真立体声交错
 const ORIGINAL_FFT_SIZE = 1024; // 预设 1（original）：全格式统一为 1024 个打包 L,R 对
 const BAR_COUNT = 114;
 const MAX_DECODE_QUEUE = 16;   // AudioDecoder 入队上限（帧级背压）
@@ -260,8 +261,8 @@ const startDecode = ({
   try {
     if (typeof AudioDecoder !== 'function') throw new Error('WebCodecs AudioDecoder unavailable');
     // 预设决定窗几何：original（默认）= 全格式统一取 1024 个采样时刻，
-    // 每帧值 = 打包 L,R 对（L*2 + R/32768）；wide = 真立体声交错 2048 点。
-    // 窗口/FFT 实例按尺寸缓存。
+    // 每帧值 = 打包 L,R 对（L*2 + R/32768）；wide = 真立体声交错 2048 点
+    // （旧预设 2 值，现设置不再可能送达，保留仅作兼容）。窗口/FFT 实例按尺寸缓存。
     original = preset !== 'wide';
     fftSize = original ? ORIGINAL_FFT_SIZE : FFT_SIZE;
     // original 一律是 packed 窗（值约为交错窗 2 倍），参考 RMS 同倍放大

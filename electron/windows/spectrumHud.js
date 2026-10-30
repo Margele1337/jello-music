@@ -49,6 +49,14 @@ const getBoundsStore = () => {
 
 const clampScale = (value) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
 
+// HUD 窗口整体不透明度下限：调到接近 0 会找不到窗口，兜底 10%
+const MIN_OPACITY = 0.1;
+const clampOpacity = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(1, Math.max(MIN_OPACITY, n));
+};
+
 const getGeometryScale = (display) => {
   const factor = display.scaleFactor > 0 ? display.scaleFactor : 1;
   const pixelHeight = display.size.height * factor;
@@ -239,6 +247,7 @@ export const showSpectrumHud = () => {
 
   hudWindow.setAlwaysOnTop(true, 'screen-saver');
   hudWindow.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
+  hudWindow.setOpacity(clampOpacity(getSettings().spectrumOpacity));
   applySpectrumHudMouseEvents(getSettings().spectrumLocked === true);
 
   const persistBounds = () => {
@@ -414,7 +423,6 @@ export const syncSpectrumHudSettings = (settings) => {
   const payload = {
     spectrumScale: settings.spectrumScale,
     spectrumSigmaSmoothing: settings.spectrumSigmaSmoothing,
-    spectrumUpdateMs: settings.spectrumUpdateMs,
     spectrumPreset: settings.spectrumPreset,
     spectrumInfoScale: settings.spectrumInfoScale,
     spectrumInfoVisible: settings.spectrumInfoVisible,
@@ -423,6 +431,8 @@ export const syncSpectrumHudSettings = (settings) => {
   };
   lastSettings = payload;
   if (!hudWindow || hudWindow.isDestroyed()) return;
+  // 透明度是主进程窗口属性，直接作用于 BrowserWindow，渲染层无需感知
+  hudWindow.setOpacity(clampOpacity(settings.spectrumOpacity));
   applySpectrumHudMouseEvents(settings.spectrumLocked);
   if (hudWindow.webContents.isLoading()) return;
   hudWindow.webContents.send('spectrum:settings', payload);

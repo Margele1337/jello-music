@@ -39,6 +39,7 @@ import {
   INFO_BASE,
   clampInfoScale,
   infoLayout,
+  legacySmoothingAlpha,
   smoothingAlpha,
   stepAmplitude,
   tintPixelAlpha
@@ -91,6 +92,11 @@ const adoptLevels = (arr, now) => {
 };
 const interpolateTargets = (now) => {
   if (!nextFrame) return;
+  // 预设 2（legacy）：legacy 没有帧间插值，最新一条消息直接成为目标
+  if (spectrumPreset === 'legacy') {
+    targets.set(nextFrame.levels);
+    return;
+  }
   const prev = prevFrame || nextFrame;
   const span = Math.max(4, nextFrame.time - prev.time);
   const t = Math.min(1, Math.max(0, (now - nextFrame.time) / span));
@@ -116,11 +122,9 @@ let raf = null;
 let pendingSnap = false;
 let spectrumScale = 1;
 let spectrumSmoothing = SPECTRUM_SMOOTHING;
-// 目标电平刷新间隔：节流 IPC 电平→缓动目标的更新率（500ms ≈ 一秒两变的慢节奏）。
-// 预设 1（original）与原版一致按帧更新（~43 次/秒），不受该项节流
-let spectrumUpdateMs = 500;
+// 预设 1（original）按原版逐消息采纳（~43 次/秒）；预设 2（legacy）同样逐消息采纳，
+// 但采用 legacy 的瞬时帧率指数平滑 + 无帧间插值 + 无低音脉冲 + 暂停冻结
 let spectrumPreset = 'original';
-let lastTargetTime = 0;
 let canvasStyleWidth = 0;
 let canvasStyleHeight = 0;
 let pixelRatio = 1;
@@ -270,6 +274,10 @@ const draw = (now = performance.now()) => {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
+  // 预设 2（legacy）：暂停冻结画面，保留最后一帧（legacy 暂停时实时 tap 停供帧，
+  // 屏上仍是最后采纳的台阶），不重绘也不清空
+  if (!playing.value && spectrumPreset === 'legacy') return;
+
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
@@ -291,8 +299,11 @@ const draw = (now = performance.now()) => {
   // 目标帧插值：43Hz 阶梯 → 连续斜坡（详见 adoptLevels 注释）
   interpolateTargets(now);
 
-  // Java 原式（MusicManager.java:144-149）：alpha = min(0.335 × 60/实测帧率, 1)。
-  const alpha = smoothingAlpha(spectrumSmoothing, dtAvgMs);
+  // 预设 1：Java 原式（MusicManager.java:144-149）alpha = min(0.335 × 60/实测帧率, 1)。
+  // 预设 2（legacy）：按逐帧瞬时 dt 的指数逼近 alpha = 1 − exp(−dt/τ)
+  const alpha = spectrumPreset === 'legacy'
+    ? legacySmoothingAlpha(spectrumSmoothing, dt)
+    : smoothingAlpha(spectrumSmoothing, dtAvgMs);
   for (let i = 0; i < BAR_COUNT; i += 1) {
     levels[i] = stepAmplitude(levels[i], targets[i], alpha);
   }
@@ -359,8 +370,9 @@ const draw = (now = performance.now()) => {
   }
 
   // 低音脉冲：直接写元素 style，避免每帧触发 Vue 重渲染；
-  // 枢轴 (60, h-55) 即封面自身中心再下移 5%（transform-origin: 50% 55%）
-  const pulse = computePulseScale(levels);
+  // 枢轴 (60, h-55) 即封面自身中心再下移 5%（transform-origin: 50% 55%）。
+  // 预设 2（legacy）没有低音脉冲（legacy HUD 封面恒定），保持 1 即静止
+  const pulse = spectrumPreset === 'legacy' ? 1 : computePulseScale(levels);
   const pulseEl = coverPulseRef.value;
   if (pulseEl) {
     const transform = `scale(${pulse.toFixed(4)})`;
@@ -377,27 +389,26 @@ const applyPayload = (data) => {
   const wasPlaying = playing.value;
   playing.value = nowPlaying;
   if (!nowPlaying) {
-    levels.fill(0);
-    targets.fill(0);
-    prevFrame = null;
-    nextFrame = null;
-    if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
+    // 预设 2（legacy）：暂停冻结画面——legacy 实时 tap 停供帧，最后一帧留在屏上
+    if (spectrumPreset !== 'legacy') {
+      levels.fill(0);
+      targets.fill(0);
+      prevFrame = null;
+      nextFrame = null;
+      if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
+    }
   } else {
     if (!wasPlaying) pendingSnap = true;
 
     if (Array.isArray(data.levels) && data.levels.length) {
-      // 目标刷新节流：预设 2 按 spectrumUpdateMs 采纳（条形之间由缓动滑过去）；
-      // 预设 1 与原版一致：每条电平消息都采纳（原版即每解码帧 ~43 次/秒更新）
-      const interval = spectrumPreset === 'original' ? 0 : spectrumUpdateMs;
+      // 两个预设都逐条采纳电平消息：预设 1 即原版每解码帧 ~43 次/秒；
+      // 预设 2（legacy）生产端每块发队首，台阶节奏由 250ms 攒批决定
       const now = performance.now();
-      if (now - lastTargetTime >= interval) {
-        lastTargetTime = now;
-        // 插值缓冲：prev/next 成对推进，draw() 按经过时间在两帧间线性插值
-        const count = Math.min(BAR_COUNT, data.levels.length);
-        const incoming = new Float32Array(BAR_COUNT);
-        for (let i = 0; i < count; i += 1) incoming[i] = Number(data.levels[i]) || 0;
-        adoptLevels(incoming, now);
-      }
+      // 插值缓冲：prev/next 成对推进，draw() 按经过时间在两帧间线性插值
+      const count = Math.min(BAR_COUNT, data.levels.length);
+      const incoming = new Float32Array(BAR_COUNT);
+      for (let i = 0; i < count; i += 1) incoming[i] = Number(data.levels[i]) || 0;
+      adoptLevels(incoming, now);
     }
     if (data.reset || pendingSnap) {
       prevFrame = nextFrame;              // 立刻到位，不做跨歌/恢复渐变
@@ -425,8 +436,7 @@ const applySettings = (settings = {}) => {
   if (Number.isFinite(settings.scale)) displayScale = clamp(settings.scale, 0.5, 4);
   if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
-  if (Number.isFinite(settings.spectrumUpdateMs)) spectrumUpdateMs = settings.spectrumUpdateMs;
-  if (settings.spectrumPreset === 'original' || settings.spectrumPreset === 'wide') {
+  if (settings.spectrumPreset === 'original' || settings.spectrumPreset === 'legacy') {
     spectrumPreset = settings.spectrumPreset;
   }
   if (Number.isFinite(settings.spectrumInfoScale)) infoScale.value = clampInfoScale(settings.spectrumInfoScale);

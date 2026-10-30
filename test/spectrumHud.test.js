@@ -19,6 +19,7 @@ import {
   hudPositionFromOffset,
   hudSurfaceSize,
   infoLayout,
+  legacySmoothingAlpha,
   resolveHudArea,
   scaleHudOffset,
   smoothingAlpha,
@@ -58,6 +59,20 @@ test('alpha 上限 1，异常输入返回 0', () => {
   assert.equal(smoothingAlpha(0.335, -16), 0);
   assert.equal(smoothingAlpha(0.335, Number.NaN), 0);
   assert.equal(smoothingAlpha(0, 1000 / 60), 0);
+});
+
+test('legacySmoothingAlpha（预设 2）：1 − exp(−dt/τ)，τ = 1/(系数×60) 秒', () => {
+  const tau = 1000 / (0.335 * 60); // ≈49.75ms
+  assert.ok(Math.abs(legacySmoothingAlpha(0.335, 1000 / 60) - (1 - Math.exp(-(1000 / 60) / tau))) < 1e-12);
+  // 60fps 下比原版线性式略小（≈0.289 vs 0.335）——两种预设的缓动差别是刻意保留的
+  assert.ok(legacySmoothingAlpha(0.335, 1000 / 60) < smoothingAlpha(0.335, 1000 / 60));
+  // 对 dt 单调递增、上限 1
+  assert.ok(legacySmoothingAlpha(0.335, 33) > legacySmoothingAlpha(0.335, 16));
+  assert.equal(legacySmoothingAlpha(0.335, 1e6), 1);
+  // 异常输入约定与 smoothingAlpha 一致
+  assert.equal(legacySmoothingAlpha(0.335, 0), 0);
+  assert.equal(legacySmoothingAlpha(0, 16), 0);
+  assert.equal(legacySmoothingAlpha(0.335, Number.NaN), 0);
 });
 
 test('stepAmplitude 与 Java 更新式逐位一致：a - (a - target) * alpha', () => {
@@ -288,6 +303,10 @@ test('HUD 窗口模块不再用固定条高，表面由区域推导', () => {
   assert.ok(source.includes('resolveHudArea'), '应使用共享区域解析');
   assert.ok(source.includes('getForegroundFullscreenState'), '前台全屏应切到显示器区域');
   assert.ok(source.includes('setIgnoreMouseEvents'), '锁/穿透仍走 setIgnoreMouseEvents');
+  // 频谱透明度：窗口创建与设置同步两处都要作用于 BrowserWindow
+  assert.ok(source.includes('setOpacity'), '透明度应通过 setOpacity 作用于窗口');
+  const applyCount = source.match(/setOpacity\(/g)?.length || 0;
+  assert.ok(applyCount >= 2, `窗口创建与设置同步都应应用透明度（当前 ${applyCount} 处）`);
 });
 
 test('解锁态指示不铺压暗底色', () => {

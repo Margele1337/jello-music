@@ -20,6 +20,18 @@ export const smoothingAlpha = (coefficient, dtMs) => {
   return Math.min(coefficientValue * (60 / measuredFps), 1);
 };
 
+// 预设 2（legacy）平滑式：legacy HUD 按逐帧瞬时 dt 做指数逼近，
+// alpha = 1 − exp(−dt/τ)，τ = 1/(系数×60) 秒（0.335 → τ≈49.8ms）。
+// 与原版线性式在 60fps 下略有差别（≈0.29 vs 0.335 每帧），刻意保留两种预设的差异。
+export const legacySmoothingAlpha = (coefficient, dtMs) => {
+  const coefficientValue = Number(coefficient);
+  const dt = Number(dtMs);
+  if (!Number.isFinite(coefficientValue) || coefficientValue <= 0) return 0;
+  if (!Number.isFinite(dt) || dt <= 0) return 0;
+  const tauMs = 1000 / (coefficientValue * 60);
+  return Math.min(1, 1 - Math.exp(-dt / tauMs));
+};
+
 // MusicManager.java:149 的更新式：a += (target - a) * alpha，并夹到 [0, 2.256e7]
 export const stepAmplitude = (current, target, alpha) => {
   const base = Number.isFinite(current) ? current : 0;

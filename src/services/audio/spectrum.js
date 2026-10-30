@@ -8,8 +8,9 @@
 //    接管只换频谱来源，不动可听元素（startDecodeAnalysis 会锚定当前进度）。
 //    mp4 候选例外：闸门预探测成功的 blob 直接作为可听路径（立即使用）。
 //    original 预设的窗几何与原版一致：所有格式统一取帧首 1024 个采样时刻，
-//    按 convertToPCMFloatArray 的 L,R 打包语义做 1024 点 FFT；wide 为 2048 点
-//    真立体声交错窗。flac 需要 config.description 携带 'fLaC'+元数据块前缀
+//    按 convertToPCMFloatArray 的 L,R 打包语义做 1024 点 FFT。预设 2（legacy）
+//    整条自解码链路不准入（decideSelfDecode 直接拒绝），频谱由 tap+预读驱动，
+//    并用 legacy 的攒批机械时序（~250ms 一批推进 4 帧队首）。flac 需要 config.description 携带 'fLaC'+元数据块前缀
 //    （Chromium 从 STREAMINFO 初始化解码器）；aac 需要 mp4Demux.js 从 moov 里
 //    取出的 AudioSpecificConfig（esds→DecoderSpecificInfo）+ 逐样本字节表。
 //    主线程 line buffer（≈4s，超出 hold Worker = SourceDataLine.write 阻塞背压的
@@ -36,6 +37,7 @@ import {
   REF_RMS_PACKED,
   SigmaDisplayQueue,
   createLoudnessNormalizer,
+  createSigmaBurst,
   decideSelfDecode,
   deriveGateFrames,
   findFirstFlacFrame,
@@ -75,6 +77,8 @@ const samples = new Float32Array(FFT_SIZE);
 const realOut = new Float32Array(FFT_SIZE);
 const imagOut = new Float32Array(FFT_SIZE);
 const sigmaQueue = [];
+// 预设 2（legacy）的攒批显示队列模型（纯状态机，见 mp3Frame.js createSigmaBurst）
+const sigmaBurst = createSigmaBurst();
 // tap 链路 FFT 输入的响度归一化（与自解码 Worker 共用算法，对齐原版响度量级）。
 // 必须每首歌重建：内部慢 RMS 估计（EMA k=0.02，τ≈1.2s）跨歌保留会让同一首歌
 // 的增益轨迹取决于之前播过什么——表现为「同一首歌再播频谱形态不一样」。
@@ -91,7 +95,8 @@ let lookaheadSourceNode = null;
 let lookaheadTapGainNode = null;
 let starting = null;
 let enabled = false;
-// 频谱预设（original/wide）：prepareSelfDecode 时烘进 decode 对象，下一首生效
+// 频谱预设（original/legacy）：original 的窗几何在 prepareSelfDecode 时烘进
+// decode 对象下一首生效；切到 legacy 立即停用自解码并改变 tap 链路的队列模型
 let decodePreset = 'original';
 let sourceBound = false;
 let audioListeners = [];
@@ -134,6 +139,7 @@ const currentPlaying = () => !!isPlaying?.();
 
 const resetQueue = () => {
   sigmaQueue.length = 0;
+  sigmaBurst.reset();
   // 归一化慢估计一并归零：换歌/停止后不允许把上一首的 RMS 记忆带进下一首
   tapLoudnessNormalizer = createLoudnessNormalizer(REF_RMS_PACKED);
 };
@@ -183,8 +189,9 @@ const handleBlock = (block) => {
   }
 
   for (let i = 0; i < FFT_SIZE; i += 1) samples[i] = block[i];
-  // 响度归一化（FFT 输入前，与自解码链路同算法）：任意音源 → 原版等效幅度量级
-  tapLoudnessNormalizer(samples);
+  // 响度归一化（FFT 输入前，与自解码链路同算法）：任意音源 → 原版等效幅度量级。
+  // 预设 2（legacy）跳过：legacy 直接用原始 Int16 量纲的样本喂 FFT。
+  if (decodePreset !== 'legacy') tapLoudnessNormalizer(samples);
   spectrumFft(samples, realOut, imagOut);
   for (let i = 0; i < BAR_COUNT; i += 1) {
     const re = realOut[i];
@@ -192,8 +199,15 @@ const handleBlock = (block) => {
     rawLevels[i] = Math.sqrt(re * re + im * im);
   }
 
-  // 每帧直接入队并发送队首（~43Hz，与自解码链路同节拍）。旧的 0.25s 攒批
-  // 会让队首每次突进 ~6 帧——运动变成 4Hz 顿挫，是 tap 链路「乱跳」的来源之一。
+  if (decodePreset === 'legacy') {
+    // 预设 2：legacy 的攒批机械时序——每 ~250ms 把攒够的帧一次性冲进 4 深
+    // 显示队列，队首台阶式前移（这是 legacy 观感的核心，故意不复刻均匀推进）
+    const queued = sigmaBurst.push(Float32Array.from(rawLevels));
+    sendSpectrum(queued || rawLevels);
+    return;
+  }
+
+  // 预设 1：每帧直接入队并发送队首（~43Hz，与自解码链路同节拍）
   sigmaQueue.push(Float32Array.from(rawLevels));
   if (sigmaQueue.length > QUEUE_MAX) sigmaQueue.shift();
 
@@ -233,9 +247,11 @@ export const syncLookahead = (currentTime, playing, rate = 1, force = false) => 
   if (!lookaheadAudio || !lookaheadAudio.src) return;
   // 音频图未就绪（没有 MediaElementSource）时不能播放预读，否则会真的出声
   if (!lookaheadSourceNode) return;
-  const trimSeconds = (
-    SIGMA_TAP_LEAD_MS + avDelayMs - AV_DELAY_DEFAULT_MS + TAP_QUEUE_DELAY_MS
-  ) / 1000;
+  // 预设 2（legacy）：预读提前量 = 用户设置的原值（legacy 语义，590 = 原样），
+  // 不叠加原版净领先/队列补偿/实机残差
+  const trimSeconds = decodePreset === 'legacy'
+    ? avDelayMs / 1000
+    : (SIGMA_TAP_LEAD_MS + avDelayMs - AV_DELAY_DEFAULT_MS + TAP_QUEUE_DELAY_MS) / 1000;
   const expected = Math.max(0, (Number(currentTime) || 0) + trimSeconds);
   if (force || Math.abs(lookaheadAudio.currentTime - expected) > 0.08) {
     try {
@@ -361,15 +377,12 @@ const handleDecodeMessage = (event) => {
   }
 };
 
-// 运行时解码失败：播放继续走 blob（元素原生解码同一份 mp3 字节不受影响），
-// 频谱就地降级到 tap+预读链路，不重载、不提示（避免可听卡顿）
-const handleDecodeFailure = (message) => {
-  if (!decodeActive) return;
-  console.warn('[spectrum] 自解码失败，降级到 tap 链路:', message || 'unknown');
+// 就地从自解码退回 tap+预读链路（运行时解码失败与切预设 2 共用）：
+// 播放继续走原 src（元素原生解码不受影响），不重载、不提示（避免可听卡顿）
+const fallbackToTap = () => {
   const element = decodeElement;
   teardownDecodeWorker();
   decodeActive = false;
-  // 就地启用 tap 链路：预读跟随当前 blob src，增益路由复原
   if (element) {
     setLookaheadSource(element.src);
     syncLookahead(element.currentTime, currentPlaying(), element.playbackRate || 1, true);
@@ -377,6 +390,12 @@ const handleDecodeFailure = (message) => {
   updateTapRouting();
   // 立刻补一帧 tap 数据前的空档：清空显示队列避免残留自解码帧
   displayQueue.clear();
+};
+
+const handleDecodeFailure = (message) => {
+  if (!decodeActive) return;
+  console.warn('[spectrum] 自解码失败，降级到 tap 链路:', message || 'unknown');
+  fallbackToTap();
 };
 
 const teardownDecodeWorker = () => {
@@ -500,7 +519,8 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
   const decision = decideSelfDecode({
     extName,
     hasAudioDecoder: typeof globalThis.AudioDecoder === 'function',
-    spectrumEnabled: enabled
+    spectrumEnabled: enabled,
+    preset: decodePreset
   });
   if (!decision.ok || !url) return { src: url, decode: null };
   const reused = takePrepared(url);
@@ -618,7 +638,8 @@ export const prepareSelfDecode = async ({ url, extName, budgetMs = 2500 }) => {
 // 启动自解码分析（player.js 在 element.src 设为 blob 后调用）
 export const startDecodeAnalysis = (element, decode) => {
   stopDecodeAnalysis();   // 清上一首 + 回收旧 blob
-  if (!enabled || !element || !decode?.buffer) return false;
+  // 预设 2（legacy）：即使在 original 期间探测暂存过 decode，也拒绝接管
+  if (!enabled || !element || !decode?.buffer || decodePreset === 'legacy') return false;
   let worker;
   try {
     worker = new Worker(new URL('./mp3DecodeWorker.js', import.meta.url), { type: 'module' });
@@ -758,6 +779,7 @@ const currentDecodeLevels = () => displayQueue.peek();
 
 const currentDisplayLevels = () => {
   if (decodeActive) return currentDecodeLevels() || decodeZeroLevels;
+  if (decodePreset === 'legacy') return sigmaBurst.peek() || rawLevels;
   return sigmaQueue.length ? sigmaQueue[0] : rawLevels;
 };
 
@@ -862,7 +884,11 @@ const ensureGraph = async (audio) => {
     // 浏览器里的等价路径是「元素原生解码 → 混音率输出」，全程只重采样一次；
     // 之前强制 44.1k 让 Chromium 在可听路径上多做一次全曲重采样，原版没有这步。
     // 频谱的严格同构由自解码链路保证（Worker 恒用曲目原生采样率）。
-    localContext = new AudioContextClass();
+    // 预设 2（legacy）偏好 44.1kHz（legacy 恒该率，谱线间隔 43.0Hz/条）；
+    // 采样率绑定音频图后不可变更，该偏好仅在切换预设后新建的图上成立
+    localContext = decodePreset === 'legacy'
+      ? new AudioContextClass({ sampleRate: 44100 })
+      : new AudioContextClass();
     const workletUrl = new URL('spectrum-tap.js', window.location.href).href;
     await localContext.audioWorklet.addModule(workletUrl);
 
@@ -1044,8 +1070,13 @@ export const stopSpectrum = (send) => {
 export const updateSpectrumSettings = (settings = {}) => {
   if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
   if (SPECTRUM_PRESET_VALUES.includes(settings.spectrumPreset)) {
-    // 只影响之后的 prepareSelfDecode（预设烘进每首歌的 decode 对象），当前歌不变
+    const previousPreset = decodePreset;
     decodePreset = settings.spectrumPreset;
+    // 切到预设 2：立即停用正在进行的自解码，回到 tap 链路（legacy 是实时语义，
+    // 不能等下一首）；切回预设 1 不动当前歌，下一首起自解码重新准入
+    if (decodePreset === 'legacy' && previousPreset !== 'legacy' && decodeActive) {
+      fallbackToTap();
+    }
   }
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
   if (Number.isFinite(settings.spectrumAvDelayMs)) {
