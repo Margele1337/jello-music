@@ -109,16 +109,17 @@ test('findFirstMp3Frame rejects a fake sync whose next frame position is garbage
 // ===== 门控常量（B 推导）与净领先 =====
 
 test('deriveGateFrames reproduces the measured sigma visual lead at every sample rate', () => {
-  // 本机实测 SourceDataLine.open() 默认行缓冲 500ms（88200B @44.1kHz st/16bit）
-  assert.equal(SIGMA_LINE_BUFFER_MS, 500);
+  // 实机标定（SigmaPlaybackProbe 本机实测）：名义缓冲 500ms，JDK/DirectSound 稳态
+  // 占用中位 ~452ms，扣除 Chromium 输出延迟 42ms 后等效行缓冲 410ms
+  assert.equal(SIGMA_LINE_BUFFER_MS, 410);
   assert.equal(SIGMA_AAC_FRAME_SAMPLES, 1024);
-  // 净领先 = 500 − 17×(1024/sr)×1000：44.1kHz ≈ +105.26ms（领先可听鼓点）
-  assert.ok(Math.abs(sigmaNetLeadMs(44100) - 105.26) < 0.01);
-  assert.equal(deriveGateFrames(44100, 1152), 21);
-  assert.equal(deriveGateFrames(44100, 1024), 22);   // 原版 AAC 帧几何
-  assert.equal(deriveGateFrames(48000, 1152), 23);
-  assert.equal(deriveGateFrames(32000, 1152), 16);   // 低采样率下领先变负（滞后）
-  assert.equal(deriveGateFrames(22050, 576), 6);
+  // 净领先 = 410 − 17×(1024/sr)×1000：44.1kHz ≈ +15.3ms（currentTime 域）
+  assert.ok(Math.abs(sigmaNetLeadMs(44100) - 15.26) < 0.01);
+  assert.equal(deriveGateFrames(44100, 1152), 18);
+  assert.equal(deriveGateFrames(44100, 1024), 18);   // 原版 AAC 帧几何
+  assert.equal(deriveGateFrames(48000, 1152), 19);
+  assert.equal(deriveGateFrames(32000, 1152), 13);   // 低采样率下领先变负（滞后）
+  assert.equal(deriveGateFrames(22050, 576), 2);
 
   // 队列满 18 时读 0 号位比门控前沿落后 17 帧：净领先 = (B-17) 帧 ≈ sigmaNetLeadMs
   const frameMs = (1152 / 44100) * 1000;
@@ -204,7 +205,7 @@ test('decideSelfDecode only admits mp3/flac + WebCodecs + spectrum enabled', () 
 
 test('gate/capacity derivation is format-agnostic with FLAC blocksize 4096', () => {
   // 净领先推导与帧时长无关：任何格式下 (B-17) 帧 ≈ sigmaNetLeadMs(采样率)
-  assert.equal(deriveGateFrames(44100, 4096), 18);
+  assert.equal(deriveGateFrames(44100, 4096), 17);
   assert.equal(lineBufferCapFrames(44100, 4096), 44);   // ceil(4*44100/4096) ≈ 4s
   const fd = 4096 / 44100;
   const netLeadMs = (deriveGateFrames(44100, 4096) - (SIGMA_QUEUE_MAX - 1)) * fd * 1000;

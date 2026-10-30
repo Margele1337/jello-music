@@ -6,18 +6,20 @@
 //   visualizerData.add；size > 18 时 remove(0)。
 // - 渲染循环（~:133-146）：每帧读 visualizerData.get(0)（不弹出）并向其平滑。
 // SourceDataLine.write() 的阻塞使解码器恒定领先可听位置一个行缓冲，
-// 叠加 18 深队列读 0 号位。净视觉领先按机械时序推导（2026-10-30 本机实测）：
-// MusicManager 用 SourceDataLine.open() 的**默认**缓冲，本机 AudioSystem 实测
-// L = 500ms（88200B @44.1kHz 立体声 16bit；48kHz 同为 500ms，与采样率无关）。
-// 帧 k 入队时其音频位于行缓冲尾部（可听滞后 L）；get(0) 显示 17 帧前入队的帧，
-// 故净领先 = L − 17×原版帧时长。原版唯一自解码格式是 jaad AAC（1024 采样/声道）：
-// 44.1kHz 下净领先 = 500 − 394.7 = +105.3ms（频谱略提前于可听鼓点，与 A/B 观感一致）。
-// 旧常量 421.7 无出处、0 是矫枉过正，均废弃。
+// 叠加 18 深队列读 0 号位。净视觉领先按实机标定（2026-10-30 本机实测，
+// SigmaPlaybackProbe 与 Jello 诊断链路同放 120BPM 测试音频、21 个鼓点逐点测量）：
+// - SourceDataLine.open() 名义默认缓冲 500ms（88200B @44.1kHz 立体声 16bit），
+//   但 JDK/DirectSound 稳态占用中位 ≈ 452ms（390~480 振荡），原版领先（Java
+//   播放位置域）= 452 − 17×(1024/44100)×1000 ≈ +57ms（中位，±50ms 锯齿振荡）
+// - Chromium 媒体输出延迟（AudioContext.outputLatency 实测）≈ 42ms，Jello 的
+//   可听参考已含它，故等效行缓冲 = 452 − 42 ≈ 410ms
+// - 44.1kHz 下净领先（currentTime 域）= 410 − 394.7 ≈ +15ms
+// 旧常量 421.7（无出处）、500（名义值）、0（矫枉过正）均废弃。
 
 export const SIGMA_QUEUE_MAX = 18;           // visualizerData 上限（>18 remove(0)）
-export const SIGMA_LINE_BUFFER_MS = 500;     // 实测 SourceDataLine.open() 默认缓冲
+export const SIGMA_LINE_BUFFER_MS = 410;     // 实机等效行缓冲（实测占用 452 − Chromium 输出延迟 42）
 export const SIGMA_AAC_FRAME_SAMPLES = 1024; // jaad AAC 每帧采样/声道（原版唯一自解码格式）
-// 原版净视觉领先（ms）= 行缓冲 − (队列深度−1) × 原版 AAC 帧时长
+// 原版净视觉领先（currentTime 域，ms）= 等效行缓冲 − (队列深度−1) × 原版 AAC 帧时长
 export const sigmaNetLeadMs = (sampleRate) => (
   SIGMA_LINE_BUFFER_MS
   - ((SIGMA_QUEUE_MAX - 1) * SIGMA_AAC_FRAME_SAMPLES * 1000) / sampleRate
@@ -671,8 +673,8 @@ export const flacFrameForSample = (bytes, index, streaminfo, targetSample) => {
 
 // 门控帧数 B：frameTime <= currentTime + B*frameDuration 时放入显示队列。
 // B = round(净领先 / frameDuration) + 17：队列满 18 时读 0 号位比门控前沿
-// 落后 17 帧，净领先 = (B-17) 帧 ≈ sigmaNetLeadMs(采样率)
-//（44.1kHz 下 ≈ +105.3ms，mp3/1152 → B = 21，aac/1024 → B = 22）。
+// 落后 17 帧，净领先 = (B-17) 帧 ≈ sigmaNetLeadMs(采样率)（实机标定 44.1kHz
+// ≈ +15ms：mp3/1152 → B = 18，aac/1024 → B = 18，flac/4096 → B = 17）。
 // 用户微调（spectrumAvDelayMs）直接加到门控前沿上，正值 = 频谱更提前。
 export const deriveGateFrames = (sampleRate, samplesPerFrame = 1152) => {
   const frameDurationMs = (samplesPerFrame / sampleRate) * 1000;

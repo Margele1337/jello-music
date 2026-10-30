@@ -39,6 +39,11 @@ export const validateMediaTarget = (raw) => {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('unsupported media protocol');
   }
+  // JELLO_DIAG 诊断模式放行本机测试音频（频谱实机标定用，正常构建不进入此分支）
+  if (typeof process !== 'undefined' && process.env?.JELLO_DIAG === '1'
+    && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')) {
+    return url;
+  }
   if (!isMediaHostAllowed(url.host)) throw new Error('media host is not allowlisted');
   return url;
 };

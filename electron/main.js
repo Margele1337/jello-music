@@ -424,6 +424,15 @@ app.whenReady().then(async () => {
   registerMediaKeys({ sendCommand: sendPlayerCommand });
 
   app.on('activate', showMainWindow);
+  // 频谱相位实机标定诊断（JELLO_DIAG=1 时启动：频谱帧/播放位置打点 + 本机控制端口）
+  if (process.env.JELLO_DIAG === '1') {
+    try {
+      const { initDiagServer } = await import('./services/diagServer.js');
+      initDiagServer();
+    } catch (error) {
+      console.error('[diag] 初始化失败:', error?.message || error);
+    }
+  }
 }).catch((error) => {
   // 启动链中任一步抛错都会跳过 createWindow，留下无窗口、无托盘却仍占着
   // 单实例锁的僵尸进程（之后再启动会静默退出）。显式报错并用 app.exit 跳过
