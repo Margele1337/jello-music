@@ -844,7 +844,7 @@ const settingSections = [
         control: 'slider',
         icon: 'clock',
         label: '音画差补偿',
-        description: '590ms 为对齐零点；调大让频谱提前，调小让频谱延后。',
+        description: '默认值 590 即原版相位（实测行缓冲推导：频谱约提前可听 105ms）；调大让频谱更提前，调小让频谱延后。',
         slider: { min: 0, max: 2000, step: 10 },
         format: (value) => `${Math.round(value)}ms`
       },

@@ -14,7 +14,8 @@
 //    取出的 AudioSpecificConfig（esds→DecoderSpecificInfo）+ 逐样本字节表。
 //    主线程 line buffer（≈4s，超出 hold Worker = SourceDataLine.write 阻塞背压的
 //    类比物）+ 门控（frameTime <= element.currentTime + B*frameDuration，
-//    B = round(净领先/frameDuration)+17，默认净领先 0、B=17）把帧放入 18 深显示队列
+//    B = round(净领先/frameDuration)+17，净领先 = 实测行缓冲推导值 sigmaNetLeadMs，
+//    44.1kHz 下 ≈ +105ms、B=21）把帧放入 18 深显示队列
 //    （add；>18 shift），渲染读 queue[0] 不弹出（MusicManager:134）。
 //    相位由 currentTime 派生，seek/暂停自校正；门控/队列/Int16 标度全部格式无关。
 //    seek 重锚用精确映射：mp3 走 Xing/VBRI 的 TOC、flac 走 SEEKTABLE（无表时
@@ -22,8 +23,8 @@
 //    全部取不到才回退首帧/平均码率线性估算。
 //    playbackRate 由可听元素处理；解码链路恒 1x（原版无倍速功能）。
 // 2) tap 回退链路：AudioWorklet 每攒满一个 MP3 帧等效时长的块，回传与 original
-//    相同的 1024 个打包 L,R 采样时刻并做 1024 点 FFT；预读元素补偿 4 深队列后
-//    播放同一 URL 喂频谱，并周期性校正两个音频元素的时钟漂移。
+//    相同的 1024 个打包 L,R 采样时刻并做 1024 点 FFT；预读元素叠加原版净领先
+//    （≈105ms）+ 4 深队列补偿后播放同一 URL 喂频谱，并周期性校正时钟漂移。
 //    非 mp3/flac/aac / fetch 失败 / WebCodecs 不可用 / 解析或解码器错误时走这条。
 //
 // 采样率策略（对齐原版）：Java 侧 SourceDataLine 按**曲目自身采样率**开行缓冲，
@@ -45,6 +46,7 @@ import {
   mp3TimeToByteOffset,
   parseMp3VbrHeader,
   releaseGatedFrames,
+  sigmaNetLeadMs,
   validateFlacSeekTable
 } from './mp3Frame.js';
 import {
@@ -59,8 +61,11 @@ const FFT_SIZE = 1024;
 const QUEUE_MAX = 4;
 const AV_DELAY_DEFAULT_MS = 590;
 // tap 的 4 深队列读 0 号位会额外滞后 3 帧；默认预读量先补偿这部分，
-// 使 590ms 的历史默认值与自解码链路一样表示「零用户微调、频谱对齐鼓点」。
+// 使 590ms 的历史默认值与自解码链路一样表示「零用户微调」。
 const TAP_QUEUE_DELAY_MS = ((QUEUE_MAX - 1) * 1152 * 1000) / 44100;
+// 原版净领先（44.1kHz 折算 ≈ +105.3ms，见 mp3Frame.js sigmaNetLeadMs 推导）：
+// tap 链路在预读位置上叠加同一常量，使回退链路与自解码链路默认相位一致。
+const SIGMA_TAP_LEAD_MS = sigmaNetLeadMs(44100);
 
 const spectrumFft = createSpectrumFft(FFT_SIZE);
 const rawLevels = new Float32Array(BAR_COUNT);
@@ -111,7 +116,7 @@ let lineBuffer = [];                              // 主线程 line buffer（Sou
 let displayQueue = new SigmaDisplayQueue();       // 18 深显示队列（visualizerData）
 const decodeZeroLevels = new Float32Array(BAR_COUNT);
 let decodeAccumTime = 0;                          // 下一解码帧的歌曲绝对时间（秒）
-let decodeGateFrames = 17;                        // 默认净领先 0：B = 17
+let decodeGateFrames = 21;                        // 44.1kHz/1152 默认 B（净领先 ≈ +105ms）
 let decodeFrameDuration = 1152 / 44100;
 let decodeCapFrames = 154;                        // line buffer 上限 ≈4s
 // seek 重锚的映射资料：格式、原生采样率、每帧样本数、首帧字节偏移、文件字节数、
@@ -217,15 +222,18 @@ const setLookaheadSource = (url) => {
   updateTapRouting();
 };
 
-// 与主播放器同步：预读位置 = 主位置 + 4 深队列补偿 + 用户微调；播放/暂停/倍速跟随。
-// 默认 590ms 对应零用户微调，补偿后净相位与自解码链路一致（约对齐可听鼓点）。
+// 与主播放器同步：预读位置 = 主位置 + 原版净领先 + 4 深队列补偿 + 用户微调；
+// 播放/暂停/倍速跟随。默认 590ms 对应零用户微调，两条链路默认相位一致
+//（频谱约提前可听位置 105ms，与原版 SourceDataLine 行缓冲推导对齐）。
 // force=true 强制重新定位；自解码链路激活时预读元素闲置（频谱由 Worker 驱动）。
 export const syncLookahead = (currentTime, playing, rate = 1, force = false) => {
   if (decodeActive) return;
   if (!lookaheadAudio || !lookaheadAudio.src) return;
   // 音频图未就绪（没有 MediaElementSource）时不能播放预读，否则会真的出声
   if (!lookaheadSourceNode) return;
-  const trimSeconds = (avDelayMs - AV_DELAY_DEFAULT_MS + TAP_QUEUE_DELAY_MS) / 1000;
+  const trimSeconds = (
+    SIGMA_TAP_LEAD_MS + avDelayMs - AV_DELAY_DEFAULT_MS + TAP_QUEUE_DELAY_MS
+  ) / 1000;
   const expected = Math.max(0, (Number(currentTime) || 0) + trimSeconds);
   if (force || Math.abs(lookaheadAudio.currentTime - expected) > 0.08) {
     try {
@@ -250,10 +258,11 @@ export { setLookaheadSource };
 // ===== mp3 自解码频谱链路（WebCodecs AudioDecoder，无需任何 npm 依赖）=====
 // 对齐所有者 sigmarebase MusicManager：解码领先可听位置一个 line buffer（≈4s，
 // 代替 SourceDataLine.write() 的阻塞背压），叠加 18 深显示队列读 0 号位不弹出。
-// 同曲 A/B 标定后默认净视觉领先为 0；任何一步失败都静默回退到 tap+预读链路。
+// 净视觉领先按机械时序推导：原版行缓冲实测 500ms − 队列 17 帧 × AAC 帧时长
+//（sigmaNetLeadMs，44.1kHz ≈ +105.3ms）；任何一步失败都静默回退到 tap+预读链路。
 
 // spectrumAvDelayMs 在自解码链路里是「用户微调」：默认 590 对应 0 微调，
-// 净领先 = (B-17) 帧 + (avDelayMs-590)ms；默认 B=17，因此净领先为用户微调本身。
+// 净领先 = (B-17) 帧 + (avDelayMs-590)ms ≈ +105ms（44.1kHz 默认）。
 const decodeTrimSeconds = () => (avDelayMs - AV_DELAY_DEFAULT_MS) / 1000;
 
 // 兜底的字节偏移估算：mp3 按首帧码率（CBR 近似）、flac 按全文件平均码率线性推。
@@ -1039,9 +1048,9 @@ export const updateSpectrumSettings = (settings = {}) => {
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
   if (Number.isFinite(settings.spectrumAvDelayMs)) {
     // 音画差补偿（0..2000ms，默认 590 = 零用户微调）：
-    // - tap 回退链路 = 用户微调 + 4 深队列的 3 帧延迟补偿；
+    // - tap 回退链路 = 原版净领先（≈105ms）+ 用户微调 + 4 深队列的 3 帧补偿；
     // - 自解码链路 = 直接加到门控前沿，正值提前、负值延后。
-    // 两条链路默认都以可听鼓点为相位零点（见 syncLookahead/decodeTrimSeconds）。
+    // 两条链路默认都与原版的 105ms 净视觉领先对齐（见 sigmaNetLeadMs 推导）。
     avDelayMs = Math.max(0, Math.min(2000, settings.spectrumAvDelayMs));
   }
 };
