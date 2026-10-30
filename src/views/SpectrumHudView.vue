@@ -93,6 +93,9 @@ let raf = null;
 let pendingSnap = false;
 let spectrumScale = 1;
 let spectrumSmoothing = SPECTRUM_SMOOTHING;
+// 目标电平刷新间隔：节流 IPC 电平→缓动目标的更新率（500ms ≈ 一秒两变的慢节奏）
+let spectrumUpdateMs = 500;
+let lastTargetTime = 0;
 let canvasStyleWidth = 0;
 let canvasStyleHeight = 0;
 let pixelRatio = 1;
@@ -340,8 +343,14 @@ const applyPayload = (data) => {
     if (!wasPlaying) pendingSnap = true;
 
     if (Array.isArray(data.levels) && data.levels.length) {
-      const count = Math.min(BAR_COUNT, data.levels.length);
-      for (let i = 0; i < count; i += 1) targets[i] = Number(data.levels[i]) || 0;
+      // 目标刷新节流：缓动目标只按 spectrumUpdateMs 速率更新，
+      // 条形之间由缓动滑过去——复现「一秒变一两次」的慢节奏观感
+      const now = performance.now();
+      if (now - lastTargetTime >= spectrumUpdateMs) {
+        lastTargetTime = now;
+        const count = Math.min(BAR_COUNT, data.levels.length);
+        for (let i = 0; i < count; i += 1) targets[i] = Number(data.levels[i]) || 0;
+      }
     }
     if (data.reset || pendingSnap) {
       levels.set(targets);
@@ -367,6 +376,7 @@ const applySettings = (settings = {}) => {
   if (Number.isFinite(settings.scale)) displayScale = clamp(settings.scale, 0.5, 4);
   if (Number.isFinite(settings.spectrumScale)) spectrumScale = settings.spectrumScale;
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
+  if (Number.isFinite(settings.spectrumUpdateMs)) spectrumUpdateMs = settings.spectrumUpdateMs;
   if (Number.isFinite(settings.spectrumInfoScale)) infoScale.value = clampInfoScale(settings.spectrumInfoScale);
   if (settings.spectrumInfoVisible != null) infoVisible.value = settings.spectrumInfoVisible === true;
   if (settings.spectrumLocked != null) locked.value = settings.spectrumLocked === true;

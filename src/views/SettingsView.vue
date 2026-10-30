@@ -848,6 +848,15 @@ const settingSections = [
         format: (value) => `${Math.round(value)}ms`
       },
       {
+        key: 'spectrumUpdateMs',
+        control: 'slider',
+        icon: 'clock',
+        label: '变化节奏',
+        description: '目标电平的刷新间隔：越小越跟手，约 500ms 即「一秒变一两次」的慢节奏观感。',
+        slider: { min: 50, max: 1000, step: 10 },
+        format: (value) => `${Math.round(value)}ms`
+      },
+      {
         key: 'spectrumInfoVisible',
         control: 'toggle',
         icon: 'info',

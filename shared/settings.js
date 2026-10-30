@@ -117,6 +117,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumInfoVisible: true,
   spectrumSigmaSmoothing: 0.335,
   spectrumAvDelayMs: 590,
+  // HUD 目标电平的刷新间隔：50ms ≈ 跟手；约 500ms ≈ 「一秒变一两次」的慢节奏
+  spectrumUpdateMs: 500,
   // 频谱预设：original（预设 1，默认）= 原版 sigmarebase 分格式语义——
   // mp3/flac 取帧首 1024 个交错采样、aac 按打包语义（每帧值 L*2 + R/32768），
   // 均 1024 点 FFT；wide（预设 2）= 全帧真立体声交错、2048 点 FFT。
@@ -202,6 +204,12 @@ export const sanitizeSettings = (patch) => {
     if (key === 'spectrumAvDelayMs') {
       const n = Number(value);
       if (Number.isFinite(n)) next[key] = Math.max(0, Math.min(2000, Math.round(n)));
+      continue;
+    }
+
+    if (key === 'spectrumUpdateMs') {
+      const n = Number(value);
+      if (Number.isFinite(n)) next[key] = Math.max(50, Math.min(2000, Math.round(n)));
       continue;
     }
 
