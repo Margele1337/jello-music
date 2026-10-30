@@ -735,17 +735,20 @@ export const mixFrameIntoWindow = ({ readPlane, frameSamples, channels, windowSa
 };
 
 // ===== 预设 1（original）· aac 分支：原版 convertToPCMFloatArray 打包语义 =====
-// 原版 jaad/AAC 路径把 L,R 两个 s16 按 32 位拼合后 /32768，等效
-// L*2 + R/32768（R 混入量极小；原版负样本的符号进位污染 ≤2，对 1e6 量级
-// 幅度不可见，这里按净语义实现）。每个帧值对应一个 L,R 对，窗口 = 前
-// pairsNeeded 个帧值，尾部补零。值域 ±65534，不做 Int16 削波。
+// 原版 jaad/AAC 路径把 L,R 两个 **s16 整数**按 32 位拼合后 /32768，等效
+// s16L*2 + s16R/32768（R 混入量极小；原版负样本的符号进位污染 ≤2，对 1e6
+// 量级幅度不可见，这里按净语义实现）。WebCodecs 的 AudioData 给的是 [-1,1]
+// float，换算回 s16 量纲即 value = L*65536 + R（= s16L*2 + s16R/32768 的
+// float 等价式）。每个帧值对应一个 L,R 对，窗口 = 前 pairsNeeded 个帧值，
+// 尾部补零。值域 ±65536，不做削波——HUD 的 sqrt(x)/12−5 依赖这个 Int16
+// 量级，少乘 32768 会让幅度掉到 ~1e3、条形恒为负高（贴地不动）。
 // mp3/flac 不走这条（原版 JLayer 路径是帧首 1024 交错采样，用 mixFrameIntoWindow）。
 export const mixFrameIntoWindowPacked = ({ readPlane, frameSamples, channels, windowSamples, pairsNeeded }) => {
   const plane0 = readPlane(0);
   const plane1 = channels > 1 ? readPlane(1) : null;
   const take = Math.min(frameSamples, pairsNeeded);
   for (let i = 0; i < take; i += 1) {
-    windowSamples[i] = plane0[i] * 2 + (plane1 ? plane1[i] / 32768 : 0);
+    windowSamples[i] = plane0[i] * 65536 + (plane1 ? plane1[i] : 0);
   }
   for (let i = take; i < windowSamples.length; i += 1) windowSamples[i] = 0;
   return take;

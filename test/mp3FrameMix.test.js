@@ -94,11 +94,11 @@ test('original aac packs frames as L*2 + R/32768 with no Int16 clamp', () => {
   });
 
   assert.equal(take, 4);
-  assert.equal(windowSamples[0], 1 * 2 + 0.25 / 32768);
-  assert.equal(windowSamples[1], -1 * 2 + -0.25 / 32768);
-  // 不做 [-1,1] 削波：原版打包值域到 ±65534，3.0 的 R 侧样本照实进窗
-  assert.equal(windowSamples[2], 0.5 * 2 + 3 / 32768);
-  assert.equal(windowSamples[3], 0 * 2 + -3 / 32768);   // R 只按 1/32768 混入
+  assert.equal(windowSamples[0], 1 * 65536 + 0.25);
+  assert.equal(windowSamples[1], -1 * 65536 + -0.25);
+  // 不做 [-1,1] 削波：s16 量纲下打包值域 ±65536，R 以 1 的幅度并入
+  assert.equal(windowSamples[2], 0.5 * 65536 + 3);
+  assert.equal(windowSamples[3], 0 * 65536 + -3);
   // 尾部补零到窗长
   assert.equal(windowSamples[4], 0);
   assert.equal(windowSamples[1023], 0);
@@ -123,7 +123,7 @@ test('original packed truncates to pairsNeeded and reads only plane 0 for mono',
 
   assert.equal(take, 512);
   assert.deepEqual(calls, [0, 1]);
-  assert.equal(windowSamples[511], 1 * 2 + 0.5 / 32768);
+  assert.equal(windowSamples[511], 1 * 65536 + 0.5);
   assert.equal(windowSamples[512], 0);   // 截断段不进窗
 
   const monoWindow = new Float32Array(1024);
@@ -134,5 +134,5 @@ test('original packed truncates to pairsNeeded and reads only plane 0 for mono',
     windowSamples: monoWindow,
     pairsNeeded: 512
   });
-  assert.equal(monoWindow[0], 2);        // mono 按 L*2，无 R 混入
+  assert.equal(monoWindow[0], 65536);     // mono 按 s16L*2 量纲，无 R 混入
 });
