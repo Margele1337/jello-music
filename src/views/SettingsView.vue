@@ -807,7 +807,7 @@ const settingSections = [
         control: 'seg',
         icon: 'waveform',
         label: '预设样式',
-        description: '预设 1 = 原版 sigmarebase：mp3/flac 取帧首 1024 个交错采样、aac 按打包语义，均 1024 点 FFT（与 tap 回退同几何）；预设 2 = 全帧真立体声 2048 点。切换后下一首生效。',
+        description: '预设 1 = 原版 sigmarebase：所有格式统一取帧首 1024 个采样时刻，按原版打包语义做 1024 点 FFT（与 tap 回退同几何）；预设 2 = 全帧真立体声 2048 点。切换后下一首生效。',
         options: [
           { value: 'original', displayText: '预设 1（原版）' },
           { value: 'wide', displayText: '预设 2（全帧立体声）' }
@@ -844,6 +844,7 @@ const settingSections = [
         control: 'slider',
         icon: 'clock',
         label: '音画差补偿',
+        description: '590ms 为对齐零点；调大让频谱提前，调小让频谱延后。',
         slider: { min: 0, max: 2000, step: 10 },
         format: (value) => `${Math.round(value)}ms`
       },

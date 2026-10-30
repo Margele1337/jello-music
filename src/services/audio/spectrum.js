@@ -7,24 +7,23 @@
 //    原生采样率 PCM，逐帧做 2048 点 FFT，幅度按 Int16 量级传回主线程——分析
 //    接管只换频谱来源，不动可听元素（startDecodeAnalysis 会锚定当前进度）。
 //    mp4 候选例外：闸门预探测成功的 blob 直接作为可听路径（立即使用）。
-//    窗几何与原版的对应关系：aac 帧 = 1024 采样/声道 → 2048 交错采样**正好**
-//    是原版 jaad 整帧 FFT 的窗口（不截断）；mp3 帧 2304、FLAC 常规块 8192
-//    交错采样则截断到 2048 保持 2 的幂窗（2 的幂 FFT 是既有决定）。
-//    flac 需要 config.description 携带 'fLaC'+元数据块前缀（Chromium 从
-//    STREAMINFO 初始化解码器）；aac 需要 mp4Demux.js 从 moov 里取出的
-//    AudioSpecificConfig（esds→DecoderSpecificInfo）+ 逐样本字节表。
+//    original 预设的窗几何与原版一致：所有格式统一取帧首 1024 个采样时刻，
+//    按 convertToPCMFloatArray 的 L,R 打包语义做 1024 点 FFT；wide 为 2048 点
+//    真立体声交错窗。flac 需要 config.description 携带 'fLaC'+元数据块前缀
+//    （Chromium 从 STREAMINFO 初始化解码器）；aac 需要 mp4Demux.js 从 moov 里
+//    取出的 AudioSpecificConfig（esds→DecoderSpecificInfo）+ 逐样本字节表。
 //    主线程 line buffer（≈4s，超出 hold Worker = SourceDataLine.write 阻塞背压的
 //    类比物）+ 门控（frameTime <= element.currentTime + B*frameDuration，
-//    B = round(421.7ms/frameDuration)+17，44.1kHz mp3 下 33）把帧放入 18 深显示队列
-//    （add；>18 shift），渲染读 queue[0] 不弹出（MusicManager:134）——
-//    净视觉领先 (B-17) 帧 ≈ 421.7ms，且由 currentTime 派生，seek/暂停自校正。
-//    门控/队列/领先推导/Int16 标度全部格式无关（帧时长=每帧样本数/原生采样率）。
+//    B = round(净领先/frameDuration)+17，默认净领先 0、B=17）把帧放入 18 深显示队列
+//    （add；>18 shift），渲染读 queue[0] 不弹出（MusicManager:134）。
+//    相位由 currentTime 派生，seek/暂停自校正；门控/队列/Int16 标度全部格式无关。
 //    seek 重锚用精确映射：mp3 走 Xing/VBRI 的 TOC、flac 走 SEEKTABLE（无表时
 //    让 Worker 增量扫帧到目标样本所在帧）、aac 走 stts/stsz/stsc 展开的样本表；
 //    全部取不到才回退首帧/平均码率线性估算。
 //    playbackRate 由可听元素处理；解码链路恒 1x（原版无倍速功能）。
-// 2) tap 回退链路（保持原样）：AudioWorklet 每攒满一个 MP3 帧回调 1024 个交错
-//    Int16 采样，对帧首做 1024 点 FFT；预读元素领先 avDelayMs 播放同一 URL 喂频谱。
+// 2) tap 回退链路：AudioWorklet 每攒满一个 MP3 帧等效时长的块，回传与 original
+//    相同的 1024 个打包 L,R 采样时刻并做 1024 点 FFT；预读元素补偿 4 深队列后
+//    播放同一 URL 喂频谱，并周期性校正两个音频元素的时钟漂移。
 //    非 mp3/flac/aac / fetch 失败 / WebCodecs 不可用 / 解析或解码器错误时走这条。
 //
 // 采样率策略（对齐原版）：Java 侧 SourceDataLine 按**曲目自身采样率**开行缓冲，
@@ -33,6 +32,7 @@
 // 曲目原生采样率，是严格同构的那一条。tap 回退链路的窗宽随设备率变化，见 ensureGraph。
 import { createSpectrumFft } from './fft.js';
 import {
+  REF_RMS_PACKED,
   SigmaDisplayQueue,
   createLoudnessNormalizer,
   decideSelfDecode,
@@ -58,6 +58,9 @@ const BAR_COUNT = 114;
 const FFT_SIZE = 1024;
 const QUEUE_MAX = 4;
 const AV_DELAY_DEFAULT_MS = 590;
+// tap 的 4 深队列读 0 号位会额外滞后 3 帧；默认预读量先补偿这部分，
+// 使 590ms 的历史默认值与自解码链路一样表示「零用户微调、频谱对齐鼓点」。
+const TAP_QUEUE_DELAY_MS = ((QUEUE_MAX - 1) * 1152 * 1000) / 44100;
 
 const spectrumFft = createSpectrumFft(FFT_SIZE);
 const rawLevels = new Float32Array(BAR_COUNT);
@@ -68,7 +71,7 @@ const sigmaQueue = [];
 // tap 链路 FFT 输入的响度归一化（与自解码 Worker 共用算法，对齐原版响度量级）。
 // 必须每首歌重建：内部慢 RMS 估计（EMA k=0.02，τ≈1.2s）跨歌保留会让同一首歌
 // 的增益轨迹取决于之前播过什么——表现为「同一首歌再播频谱形态不一样」。
-let tapLoudnessNormalizer = createLoudnessNormalizer();
+let tapLoudnessNormalizer = createLoudnessNormalizer(REF_RMS_PACKED);
 
 let context = null;
 let sourceNode = null;
@@ -91,6 +94,7 @@ let getVolume = null;
 let getMuted = null;
 let sendFn = null;
 let idleTimer = null;
+let lookaheadSyncTimer = null;
 let lastBlockAt = 0;
 let metaKey = '';
 let avDelayMs = AV_DELAY_DEFAULT_MS;
@@ -107,7 +111,7 @@ let lineBuffer = [];                              // 主线程 line buffer（Sou
 let displayQueue = new SigmaDisplayQueue();       // 18 深显示队列（visualizerData）
 const decodeZeroLevels = new Float32Array(BAR_COUNT);
 let decodeAccumTime = 0;                          // 下一解码帧的歌曲绝对时间（秒）
-let decodeGateFrames = 33;                        // B = round(421.7ms/帧时长)+17（44.1kHz 下 33）
+let decodeGateFrames = 17;                        // 默认净领先 0：B = 17
 let decodeFrameDuration = 1152 / 44100;
 let decodeCapFrames = 154;                        // line buffer 上限 ≈4s
 // seek 重锚的映射资料：格式、原生采样率、每帧样本数、首帧字节偏移、文件字节数、
@@ -124,7 +128,7 @@ const currentPlaying = () => !!isPlaying?.();
 const resetQueue = () => {
   sigmaQueue.length = 0;
   // 归一化慢估计一并归零：换歌/停止后不允许把上一首的 RMS 记忆带进下一首
-  tapLoudnessNormalizer = createLoudnessNormalizer();
+  tapLoudnessNormalizer = createLoudnessNormalizer(REF_RMS_PACKED);
 };
 
 // forceMeta：重推封面/歌名（HUD 窗口迟开/重开时补发元数据），不带 reset；
@@ -213,14 +217,16 @@ const setLookaheadSource = (url) => {
   updateTapRouting();
 };
 
-// 与主播放器同步：位置领先 avDelayMs，播放/暂停/倍速跟随；force=true 强制重新定位。
-// 自解码链路激活时预读元素闲置（频谱由 Worker 解码驱动）。
+// 与主播放器同步：预读位置 = 主位置 + 4 深队列补偿 + 用户微调；播放/暂停/倍速跟随。
+// 默认 590ms 对应零用户微调，补偿后净相位与自解码链路一致（约对齐可听鼓点）。
+// force=true 强制重新定位；自解码链路激活时预读元素闲置（频谱由 Worker 驱动）。
 export const syncLookahead = (currentTime, playing, rate = 1, force = false) => {
   if (decodeActive) return;
   if (!lookaheadAudio || !lookaheadAudio.src) return;
   // 音频图未就绪（没有 MediaElementSource）时不能播放预读，否则会真的出声
   if (!lookaheadSourceNode) return;
-  const expected = Math.max(0, (Number(currentTime) || 0) + avDelayMs / 1000);
+  const trimSeconds = (avDelayMs - AV_DELAY_DEFAULT_MS + TAP_QUEUE_DELAY_MS) / 1000;
+  const expected = Math.max(0, (Number(currentTime) || 0) + trimSeconds);
   if (force || Math.abs(lookaheadAudio.currentTime - expected) > 0.08) {
     try {
       lookaheadAudio.currentTime = expected;
@@ -243,11 +249,11 @@ export { setLookaheadSource };
 
 // ===== mp3 自解码频谱链路（WebCodecs AudioDecoder，无需任何 npm 依赖）=====
 // 对齐所有者 sigmarebase MusicManager：解码领先可听位置一个 line buffer（≈4s，
-// 代替 SourceDataLine.write() 的阻塞背压），叠加 18 深显示队列读 0 号位不弹出，
-// 复刻实测 421.7ms 净视觉领先。任何一步失败都静默回退到 tap+预读链路。
+// 代替 SourceDataLine.write() 的阻塞背压），叠加 18 深显示队列读 0 号位不弹出。
+// 同曲 A/B 标定后默认净视觉领先为 0；任何一步失败都静默回退到 tap+预读链路。
 
 // spectrumAvDelayMs 在自解码链路里是「用户微调」：默认 590 对应 0 微调，
-// 净领先 = 421.7ms(B-17 帧) + (avDelayMs-590)ms
+// 净领先 = (B-17) 帧 + (avDelayMs-590)ms；默认 B=17，因此净领先为用户微调本身。
 const decodeTrimSeconds = () => (avDelayMs - AV_DELAY_DEFAULT_MS) / 1000;
 
 // 兜底的字节偏移估算：mp3 按首帧码率（CBR 近似）、flac 按全文件平均码率线性推。
@@ -850,11 +856,10 @@ const ensureGraph = async (audio) => {
     await localContext.audioWorklet.addModule(workletUrl);
 
     // tap 回退链路：按设备率折算「一个 MP3 帧」的采样数，块边界仍对齐帧边界
-    //（frameSize / context.sampleRate ≡ 1152 / 44100）。
-    // 但 1024 点窗覆盖的时长 = 512 帧 / 设备率，其**谱线间隔随设备率变化**：
-    // 44.1kHz 下 43.0Hz/条，48kHz 下 46.9Hz/条（96kHz 下 93.8Hz）——同一根柱子
-    // 对应的频段比原版偏高。tap 是设备率的降级链路，只在自解码不可用时兜底；
-    // 想要严格同构（含 AAC 整帧几何）就走自解码链路，那里不受设备率影响。
+    //（frameSize / context.sampleRate ≡ 1152 / 44100）。original 窗统一取 1024 个
+    // 采样时刻，但**谱线间隔随设备率变化**：44.1kHz 下 43.0Hz/条，48kHz 下
+    // 46.9Hz/条——同一根柱子对应的频段略有偏移。严格同构由原生采样率的
+    // 自解码链路保证；tap 只在自解码不可用时兜底。
     const frameSize = Math.max(1, Math.round((1152 * localContext.sampleRate) / 44100));
     localSource = localContext.createMediaElementSource(audio);
     sourceBound = true;
@@ -966,6 +971,14 @@ export const startSpectrum = async (audio, handlers = {}) => {
       return { event, handler };
     });
   }
+  // 两个 HTMLAudioElement 使用各自时钟，事件时一次同步不足以避免长期漂移。
+  // 每 250ms 检查一次；syncLookahead 内部只有误差 >80ms 才 seek，避免无谓扰动。
+  if (audio && !lookaheadSyncTimer) {
+    lookaheadSyncTimer = setInterval(() => {
+      if (!enabled || decodeActive) return;
+      syncLookahead(audio.currentTime, currentPlaying(), audio.playbackRate || 1);
+    }, 250);
+  }
   return true;
 };
 
@@ -994,6 +1007,8 @@ export const stopSpectrum = (send) => {
   enabled = false;
   if (idleTimer) clearInterval(idleTimer);
   idleTimer = null;
+  if (lookaheadSyncTimer) clearInterval(lookaheadSyncTimer);
+  lookaheadSyncTimer = null;
   resetQueue();
   rawLevels.fill(0);
   audioListeners = [];
@@ -1023,10 +1038,10 @@ export const updateSpectrumSettings = (settings = {}) => {
   }
   if (Number.isFinite(settings.spectrumSigmaSmoothing)) spectrumSmoothing = settings.spectrumSigmaSmoothing;
   if (Number.isFinite(settings.spectrumAvDelayMs)) {
-    // 音画差补偿（0..2000ms，默认 590）：
-    // - tap 回退链路 = 预读元素的领先量（旧语义不变）；
-    // - mp3 自解码链路 = 在 421.7ms 净领先（B-17 帧）之上的用户微调，
-    //   默认值 590 折算为 0 微调（见 decodeTrimSeconds）。
+    // 音画差补偿（0..2000ms，默认 590 = 零用户微调）：
+    // - tap 回退链路 = 用户微调 + 4 深队列的 3 帧延迟补偿；
+    // - 自解码链路 = 直接加到门控前沿，正值提前、负值延后。
+    // 两条链路默认都以可听鼓点为相位零点（见 syncLookahead/decodeTrimSeconds）。
     avDelayMs = Math.max(0, Math.min(2000, settings.spectrumAvDelayMs));
   }
 };

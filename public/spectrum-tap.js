@@ -1,9 +1,9 @@
-// sigmarebase MusicManager.pushVisualizer 的采集端复刻（AudioWorklet 版）：
-// JLayer 每解码一个 MP3 帧（1152 采样/声道）调用一次 pushVisualizer，
-// 取 pcm 前 1024 个交错采样（L0,R0,L1,R1... = 前 512 对）做 1024 点 FFT。
-// 这里按同样的粒度攒块并回传：未加音量（pre-volume），Int16 量纲与 JLayer 的 short 一致。
-const EMIT_SAMPLES = 1024;
-const EMIT_PAIRS = EMIT_SAMPLES / 2;
+// sigmarebase MusicManager 频谱采集端复刻（AudioWorklet 版）：
+// 每攒满一个 44.1kHz MP3 帧等效时长的块，取帧首 1024 个采样时刻，
+// 按原版 convertToPCMFloatArray 语义把 L,R 打包成一个 Float32 值
+// （L*65536 + R = s16L*2 + s16R/32768），供主线程做 1024 点 FFT。
+// 与自解码 Worker 的 original 预设保持完全相同的窗几何；采集点在音量节点之前。
+const EMIT_PAIRS = 1024;
 
 class SpectrumTapProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -15,22 +15,12 @@ class SpectrumTapProcessor extends AudioWorkletProcessor {
     this.fill = 0;
   }
 
-  flushMono() {
-    const out = new Int16Array(EMIT_SAMPLES);
-    for (let i = 0; i < EMIT_SAMPLES; i++) {
-      const v = Math.round(this.left[i] * 32768);
-      out[i] = v < -32768 ? -32768 : v > 32767 ? 32767 : v;
-    }
-    this.port.postMessage(out, [out.buffer]);
-  }
-
-  flushStereo() {
-    const out = new Int16Array(EMIT_SAMPLES);
-    for (let i = 0; i < EMIT_PAIRS; i++) {
-      const l = Math.round(this.left[i] * 32768);
-      const r = Math.round(this.right[i] * 32768);
-      out[i * 2] = l < -32768 ? -32768 : l > 32767 ? 32767 : l;
-      out[i * 2 + 1] = r < -32768 ? -32768 : r > 32767 ? 32767 : r;
+  flush(stereo) {
+    // Float32 才能保留原版打包后的 ±65536 量纲；Int16 会削波且无法表达该值域。
+    const out = new Float32Array(EMIT_PAIRS);
+    const take = Math.min(this.frameSize, EMIT_PAIRS);
+    for (let i = 0; i < take; i++) {
+      out[i] = this.left[i] * 65536 + (stereo ? this.right[i] : 0);
     }
     this.port.postMessage(out, [out.buffer]);
   }
@@ -52,8 +42,7 @@ class SpectrumTapProcessor extends AudioWorkletProcessor {
       offset += take;
 
       if (this.fill === this.frameSize) {
-        if (stereo) this.flushStereo();
-        else this.flushMono();
+        this.flush(stereo);
         this.fill = 0;
       }
     }

@@ -5,13 +5,12 @@
 // 主线程发 hold/resume 消息代替 write() 的阻塞。
 //
 // 每帧流程：EncodedAudioChunk(一个编解码帧) → AudioDecoder → AudioData(f32)
-// → 取帧首 2048 个交错采样并缩放到 Int16 量级 → 2048 点 FFT →
-// sqrt(re²+im²) 前半幅度取前 114 个 → postMessage 给主线程做门控。
-// 原版对 AAC 整帧（1024×2ch = 2048 交错采样）做 FFT：AAC 路径帧样本数正好
-// 是 1024/声道，2048 点窗**不截断**，与原版的 FFT 几何完全一致；
-// mp3 帧 1152×2ch = 2304 交错采样、FLAC 常规块 4096/ch = 8192 交错采样，
-// 都截断到 2048 保持同样的 2 的幂窗几何（2 的幂 FFT 是既有决定，不换 Bluestein）。
-// Int16 量级是 HUD 公式 sqrt(x)/12 − 5（上限 2.256e7 / 低音参考 1000/4750）的前提。
+// → 按预设填窗 → FFT → sqrt(re²+im²) 前半幅度取前 114 个 → postMessage 给主线程门控。
+// original：所有格式统一取帧首 1024 个采样时刻，按原版 convertToPCMFloatArray
+// 的 L,R 打包语义组成 1024 点窗。原版 AAC 一帧恰好 1024 采样/声道，窗覆盖整帧；
+// mp3/FLAC 也采用相同时间宽度，不再只取 512 个立体声采样时刻（半个时间窗）。
+// wide：2048 点真立体声交错窗。Int16 量级是 HUD 公式 sqrt(x)/12 − 5
+// （上限 2.256e7 / 低音参考 1000/4750）的前提。
 //
 // 三种格式的帧来源各不相同：
 // - mp3：帧头自带 frameSize，逐字节同步（mp3Frame.js parseMp3FrameHeader）
@@ -36,8 +35,7 @@ import {
 } from './mp3Frame.js';
 
 const FFT_SIZE = 2048;          // 预设 2（wide）：全帧真立体声交错
-const ORIGINAL_FFT_SIZE = 1024; // 预设 1（original）：原版 1024 点（mp3/flac 帧首
-                                // 1024 交错采样；aac 每帧值 = 打包 L,R 对）
+const ORIGINAL_FFT_SIZE = 1024; // 预设 1（original）：全格式统一为 1024 个打包 L,R 对
 const BAR_COUNT = 114;
 const MAX_DECODE_QUEUE = 16;   // AudioDecoder 入队上限（帧级背压）
 const INT16_SCALE = 32768;     // 与 tap 链路 spectrum-tap.js 的 Int16 量纲一致
@@ -195,26 +193,16 @@ const onAudioFrame = (audioData) => {
       return planeScratch;
     };
     if (original) {
-      // 预设 1（原版）：aac 每帧值 = 打包 L,R 对（值域 ±65534，不削波），
-      // mp3/flac 帧首 1024 个交错 Int16 采样——对齐原版 jaad/JLayer 两条路径
-      if (format === 'aac') {
-        mixFrameIntoWindowPacked({
-          readPlane,
-          frameSamples,
-          channels,
-          windowSamples,
-          pairsNeeded: fftSize
-        });
-      } else {
-        mixFrameIntoWindow({
-          readPlane,
-          frameSamples,
-          channels,
-          windowSamples,
-          pairsNeeded: fftSize / 2,
-          int16Scale: INT16_SCALE
-        });
-      }
+      // 预设 1（原版）：所有格式统一为帧首 1024 个采样时刻的打包 L,R 对。
+      // 旧 mp3/flac 分支只取 512 个采样时刻，时间窗减半且帧覆盖有洞，导致
+      // 同曲频谱包络比原版更快、更碎。
+      mixFrameIntoWindowPacked({
+        readPlane,
+        frameSamples,
+        channels,
+        windowSamples,
+        pairsNeeded: fftSize
+      });
     } else {
       // 预设 2：全帧真立体声交错，Int16 量级与 tap 链路一致
       mixFrameIntoWindow({
@@ -271,15 +259,13 @@ const startDecode = ({
 }) => {
   try {
     if (typeof AudioDecoder !== 'function') throw new Error('WebCodecs AudioDecoder unavailable');
-    // 预设决定窗几何：original（默认）= 原版分格式语义——mp3/flac 取帧首
-    // 1024 个交错采样、aac 每帧值 = 打包 L,R 对（L*2 + R/32768），均 1024 点；
-    // wide = 全帧真立体声交错 2048 点。窗口/FFT 实例按尺寸缓存
+    // 预设决定窗几何：original（默认）= 全格式统一取 1024 个采样时刻，
+    // 每帧值 = 打包 L,R 对（L*2 + R/32768）；wide = 真立体声交错 2048 点。
+    // 窗口/FFT 实例按尺寸缓存。
     original = preset !== 'wide';
     fftSize = original ? ORIGINAL_FFT_SIZE : FFT_SIZE;
-    // packed 打包窗（aac original）的值约为交错窗 2 倍，参考 RMS 同倍放大
-    loudnessNormalizer = createLoudnessNormalizer(
-      original && normalizeFormat(fmt) === 'aac' ? REF_RMS_PACKED : undefined
-    );
+    // original 一律是 packed 窗（值约为交错窗 2 倍），参考 RMS 同倍放大
+    loudnessNormalizer = createLoudnessNormalizer(original ? REF_RMS_PACKED : undefined);
     if (windowSamples.length !== fftSize) {
       windowSamples = new Float32Array(fftSize);
       realOut = new Float32Array(fftSize);

@@ -106,16 +106,17 @@ test('findFirstMp3Frame rejects a fake sync whose next frame position is garbage
 
 // ===== 门控常量（B 推导）与净领先 =====
 
-test('deriveGateFrames yields B=33 at 44.1kHz and the 421.7ms net lead', () => {
-  assert.equal(deriveGateFrames(44100, 1152), 33);
-  assert.equal(deriveGateFrames(48000, 1152), 35);
-  assert.equal(deriveGateFrames(32000, 1152), 29);
-  assert.equal(deriveGateFrames(22050, 576), 33);
+test('deriveGateFrames uses B=17 for zero net lead at every sample rate', () => {
+  assert.equal(SIGMA_NET_LEAD_MS, 0);
+  assert.equal(deriveGateFrames(44100, 1152), 17);
+  assert.equal(deriveGateFrames(48000, 1152), 17);
+  assert.equal(deriveGateFrames(32000, 1152), 17);
+  assert.equal(deriveGateFrames(22050, 576), 17);
 
-  // 净领先 = (B-17) 帧 ≈ 421.7ms（误差 < 半帧的取整残差）
+  // 队列满 18 时读 0 号位比门控前沿落后 17 帧，B=17 即净领先 0
   const frameMs = (1152 / 44100) * 1000;
   const netLead = (deriveGateFrames(44100, 1152) - (SIGMA_QUEUE_MAX - 1)) * frameMs;
-  assert.ok(Math.abs(netLead - SIGMA_NET_LEAD_MS) < frameMs, `net lead ${netLead}`);
+  assert.equal(netLead, 0);
 });
 
 test('lineBufferCapFrames bounds the main-thread line buffer to about 4 seconds', () => {
@@ -195,12 +196,12 @@ test('decideSelfDecode only admits mp3/flac + WebCodecs + spectrum enabled', () 
 // ===== 门控/容量推导是格式无关的：FLAC 常规块长 4096 直接代入同一公式 =====
 
 test('gate/capacity derivation is format-agnostic with FLAC blocksize 4096', () => {
-  // B = round(421.7 / 92.879ms) + 17 = 5 + 17 = 22；净领先 = 5 帧 ≈ 464ms（<1 帧量化残差）
-  assert.equal(deriveGateFrames(44100, 4096), 22);
+  // 默认净领先为 0，任何帧时长下 B 都等于队列深度 - 1
+  assert.equal(deriveGateFrames(44100, 4096), 17);
   assert.equal(lineBufferCapFrames(44100, 4096), 44);   // ceil(4*44100/4096) ≈ 4s
   const fd = 4096 / 44100;
   const netLeadMs = (deriveGateFrames(44100, 4096) - (SIGMA_QUEUE_MAX - 1)) * fd * 1000;
-  assert.ok(Math.abs(netLeadMs - SIGMA_NET_LEAD_MS) < fd * 1000, `flac net lead ${netLeadMs}`);
+  assert.equal(netLeadMs, 0);
 });
 
 // ===== getSongUrl 透出 extName + prepareSelfDecode 静默回退 =====

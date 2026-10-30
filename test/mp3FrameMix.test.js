@@ -76,10 +76,10 @@ function clampMid(value) {
   return value < -1 ? -1 : value > 1 ? 1 : value;
 }
 
-// ===== 预设 1（original）· aac 打包语义 =====
+// ===== 预设 1（original）· 全格式统一的打包语义 =====
 const { mixFrameIntoWindowPacked } = await import('../src/services/audio/mp3Frame.js');
 
-test('original aac packs frames as L*2 + R/32768 with no Int16 clamp', () => {
+test('original packs frames as L*2 + R/32768 with no Int16 clamp', () => {
   const plane0 = Float32Array.from([1, -1, 0.5, 0]);      // L（s16 量级 ±32767 缩放前）
   const plane1 = Float32Array.from([0.25, -0.25, 3, -3]); // R
   const windowSamples = new Float32Array(1024);
@@ -135,4 +135,49 @@ test('original packed truncates to pairsNeeded and reads only plane 0 for mono',
     pairsNeeded: 512
   });
   assert.equal(monoWindow[0], 65536);     // mono 按 s16L*2 量纲，无 R 混入
+});
+
+test('original mp3 window covers 1024 sample times instead of only 512 stereo pairs', () => {
+  const plane0 = Float32Array.from({ length: 1152 }, (_, i) => i / 1152);
+  const plane1 = Float32Array.from({ length: 1152 }, () => 0.25);
+  const windowSamples = new Float32Array(1024);
+  windowSamples.fill(9);
+
+  const take = mixFrameIntoWindowPacked({
+    readPlane: (planeIndex) => (planeIndex === 0 ? plane0 : plane1),
+    frameSamples: 1152,
+    channels: 2,
+    windowSamples,
+    pairsNeeded: 1024
+  });
+
+  assert.equal(take, 1024);
+  // Float32 在 ~6e4 量级的分辨率约 0.004，容差需覆盖一次舍入
+  assert.ok(Math.abs(windowSamples[512] - ((512 / 1152) * 65536 + 0.25)) < 0.01);
+  assert.ok(Math.abs(windowSamples[1023] - ((1023 / 1152) * 65536 + 0.25)) < 0.01);
+  assert.ok(windowSamples.every((value) => value !== 9), '整个 1024 点窗都被当前帧覆盖');
+});
+
+test('original packed preserves L when readPlane reuses one scratch buffer', () => {
+  const planes = [
+    Float32Array.from([0.5, -0.25, 0.125, 1]),
+    Float32Array.from([0.25, 0.75, -0.5, -1])
+  ];
+  const scratch = new Float32Array(4);
+  const windowSamples = new Float32Array(4);
+
+  mixFrameIntoWindowPacked({
+    readPlane: (planeIndex) => {
+      scratch.set(planes[planeIndex]);
+      return scratch;
+    },
+    frameSamples: 4,
+    channels: 2,
+    windowSamples,
+    pairsNeeded: 4
+  });
+
+  for (let i = 0; i < 4; i += 1) {
+    assert.equal(windowSamples[i], planes[0][i] * 65536 + planes[1][i]);
+  }
 });

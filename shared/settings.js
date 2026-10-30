@@ -119,10 +119,10 @@ export const SETTING_DEFAULTS = Object.freeze({
   spectrumAvDelayMs: 590,
   // HUD 目标电平的刷新间隔：50ms ≈ 跟手；约 500ms ≈ 「一秒变一两次」的慢节奏
   spectrumUpdateMs: 500,
-  // 频谱预设：original（预设 1，默认）= 原版 sigmarebase 分格式语义——
-  // mp3/flac 取帧首 1024 个交错采样、aac 按打包语义（每帧值 L*2 + R/32768），
-  // 均 1024 点 FFT；wide（预设 2）= 全帧真立体声交错、2048 点 FFT。
-  // 仅影响自解码分析管线，下一首生效
+  // 频谱预设：original（预设 1，默认）= 原版 sigmarebase 窗几何——
+  // 所有格式统一取帧首 1024 个采样时刻，按打包语义（L*2 + R/32768）做 1024 点 FFT；
+  // wide（预设 2）= 全帧真立体声交错、2048 点 FFT。
+  // 自解码预设仅影响之后的 prepareSelfDecode，下一首生效；tap 回退始终用 original。
   spectrumPreset: 'original',
   spectrumLocked: true,
   autoStart: false,

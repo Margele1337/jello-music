@@ -6,10 +6,12 @@
 //   visualizerData.add；size > 18 时 remove(0)。
 // - 渲染循环（~:133-146）：每帧读 visualizerData.get(0)（不弹出）并向其平滑。
 // SourceDataLine.write() 的阻塞使解码器恒定领先可听位置一个行缓冲，
-// 叠加 18 深队列读 0 号位，实测净视觉领先 421.7ms——本模块的 B 门控复刻该领先量。
+// 叠加 18 深队列读 0 号位。净视觉领先量 2026-10-30 按所有者 A/B 实测重标定为 0：
+// 同一首歌原版频谱与鼓点对得上（原版行缓冲 ≈ 18 帧被队列深度抵消）。
+// 旧常量 421.7 从未做过数值验证，按它标定会让频谱相位整体偏移。
 
 export const SIGMA_QUEUE_MAX = 18;        // visualizerData 上限（>18 remove(0)）
-export const SIGMA_NET_LEAD_MS = 421.7;   // 原版实测净视觉领先
+export const SIGMA_NET_LEAD_MS = 0;       // 净视觉领先（所有者 A/B 实测：原版 ≈ 对齐鼓点）
 export const LINE_BUFFER_SECONDS = 4;     // 主线程 line buffer 上限（SourceDataLine 的类比物）
 export const MP3_BAR_COUNT = 114;         // calculateAmplitudes 前半幅度取前 114 个
 
@@ -658,8 +660,9 @@ export const flacFrameForSample = (bytes, index, streaminfo, targetSample) => {
 };
 
 // 门控帧数 B：frameTime <= currentTime + B*frameDuration 时放入显示队列。
-// B = round(421.7ms / frameDuration) + 17：队列满 18 时读 0 号位比门控前沿
-// 落后 17 帧，净领先 = (B-17) 帧 ≈ 421.7ms（44.1kHz 下 B = 33）。
+// B = round(净领先 / frameDuration) + 17：队列满 18 时读 0 号位比门控前沿
+// 落后 17 帧，净领先 = (B-17) 帧 ≈ 0（对齐鼓点；44.1kHz mp3 下 B = 17）。
+// 用户微调（spectrumAvDelayMs）直接加到门控前沿上，正值 = 频谱更提前。
 export const deriveGateFrames = (sampleRate, samplesPerFrame = 1152) => {
   const frameDurationMs = (samplesPerFrame / sampleRate) * 1000;
   return Math.round(SIGMA_NET_LEAD_MS / frameDurationMs) + SIGMA_QUEUE_MAX - 1;
@@ -743,7 +746,7 @@ export const decideSelfDecode = ({ extName, hasAudioDecoder, spectrumEnabled }) 
 // 音源的窗 RMS 慢速归一到原版等效量纲，消除乘性常数差异。
 //
 // 参考值推导：-14 LUFS ≈ RMS 0.099（[-1,1] 浮点量纲）→ Int16 量纲 ×32768 ≈ 3244。
-// packed 打包窗（aac original，值 ≈ 2L）的 RMS 约为交错窗的 2 倍 → 参考 ×2。
+// packed 打包窗（original 全格式，值 ≈ 2L）的 RMS 约为交错窗的 2 倍 → 参考 ×2。
 // 用法：每帧填窗后、FFT 前调用 normalize(windowSamples)。内部维护慢速 RMS 估计
 // （EMA k=0.02/帧，43Hz 下 τ≈1.2s），增益限幅 [0.25, 4] 防止静音轨放大底噪；
 // 静音窗（RMS<1e-3）不更新估计也不增益，保持 0 输出。
@@ -791,7 +794,7 @@ export const mixFrameIntoWindow = ({ readPlane, frameSamples, channels, windowSa
   return take;
 };
 
-// ===== 预设 1（original）· aac 分支：原版 convertToPCMFloatArray 打包语义 =====
+// ===== 预设 1（original）· 全格式共用：原版 convertToPCMFloatArray 打包语义 =====
 // 原版 jaad/AAC 路径把 L,R 两个 **s16 整数**按 32 位拼合后 /32768，等效
 // s16L*2 + s16R/32768（R 混入量极小；原版负样本的符号进位污染 ≤2，对 1e6
 // 量级幅度不可见，这里按净语义实现）。WebCodecs 的 AudioData 给的是 [-1,1]
@@ -799,13 +802,20 @@ export const mixFrameIntoWindow = ({ readPlane, frameSamples, channels, windowSa
 // float 等价式）。每个帧值对应一个 L,R 对，窗口 = 前 pairsNeeded 个帧值，
 // 尾部补零。值域 ±65536，不做削波——HUD 的 sqrt(x)/12−5 依赖这个 Int16
 // 量级，少乘 32768 会让幅度掉到 ~1e3、条形恒为负高（贴地不动）。
-// mp3/flac 不走这条（原版 JLayer 路径是帧首 1024 交错采样，用 mixFrameIntoWindow）。
+// mp3/flac 同样走这条（2026-10-30 重标定）：一个窗 = 1024 个采样时刻
+// ≈ 23.2ms@44.1k，与原版整帧窗的时长、43Hz 谱线间隔、前 114 条覆盖
+// （0-4.9kHz）全部一致。旧的「帧首 1024 交错采样」窗只覆盖 512 个采样
+// 时刻（11.6ms，44% 帧覆盖），帧间幅度抖动大且覆盖有洞——同一首歌条形
+// 运动比原版明显更快更碎（原版是整帧平均出的慢节拍包络）。
 export const mixFrameIntoWindowPacked = ({ readPlane, frameSamples, channels, windowSamples, pairsNeeded }) => {
-  const plane0 = readPlane(0);
-  const plane1 = channels > 1 ? readPlane(1) : null;
   const take = Math.min(frameSamples, pairsNeeded);
-  for (let i = 0; i < take; i += 1) {
-    windowSamples[i] = plane0[i] * 65536 + (plane1 ? plane1[i] : 0);
+  // 必须先把 L 写入目标再读 R：Worker 的 readPlane 复用同一块 scratch，
+  // 若先保存 plane0/plane1 两个引用再计算，plane0 会被第二次 copyTo 覆盖成 R。
+  const plane0 = readPlane(0);
+  for (let i = 0; i < take; i += 1) windowSamples[i] = plane0[i] * 65536;
+  if (channels > 1) {
+    const plane1 = readPlane(1);
+    for (let i = 0; i < take; i += 1) windowSamples[i] += plane1[i];
   }
   for (let i = take; i < windowSamples.length; i += 1) windowSamples[i] = 0;
   return take;
