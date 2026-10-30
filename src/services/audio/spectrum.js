@@ -772,6 +772,20 @@ export const setAudioOutputDevice = async (audio, deviceId) => {
 // 独立启用音频图（响度规格化/输出设备切换不需要开频谱）
 export const ensureAudioGraph = async (audio) => ensureGraph(audio);
 
+// 播放诊断快照：音频图是否绑定、context 状态、各级增益与预读元素状态
+export const getAudioGraphDiagnostics = () => ({
+  bound: sourceBound,
+  context: context ? context.state : 'none',
+  volumeGain: volumeGainNode ? volumeGainNode.gain.value : null,
+  loudnessGain: loudnessGainNode ? loudnessGainNode.gain.value : null,
+  mainTapGain: mainTapGainNode ? mainTapGainNode.gain.value : null,
+  lookaheadGain: lookaheadTapGainNode ? lookaheadTapGainNode.gain.value : null,
+  lookahead: lookaheadAudio
+    ? `${lookaheadAudio.readyState}/${lookaheadAudio.paused ? 'paused' : 'playing'}`
+    : 'none',
+  decode: decodeActive
+});
+
 const ensureGraph = async (audio) => {
   if (!audio || typeof window === 'undefined') return false;
   if (context) {

@@ -7,6 +7,7 @@ import {
   applyOutputVolume,
   consumePreparedMedia,
   ensureAudioGraph,
+  getAudioGraphDiagnostics,
   prepareSelfDecode,
   setAudioOutputDevice,
   setLoudnessEnabled,
@@ -147,6 +148,7 @@ const ensureAudio = (store) => {
   });
   audio.addEventListener('error', () => {
     if (!boundStore || !audio?.src) return;
+    console.warn('[player] 元素错误:', audio.error?.code, audio.error?.message || '');
     boundStore.playing = false;
     boundStore.handleSourceError();
   });
@@ -333,6 +335,22 @@ export const usePlayerStore = defineStore('player', {
           }, { once: true });
         }
         if (resume) await element.play();
+
+        // 起播诊断（2.5s 后采样一次）：区分「在播但无声」与「根本没播起来」，
+        // 附带音频图状态（context/各级增益/预读/接管）
+        const diagToken = token;
+        setTimeout(() => {
+          if (diagToken !== loadToken) return;
+          console.info('[player] 起播诊断:', JSON.stringify({
+            time: Number((element.currentTime || 0).toFixed(2)),
+            duration: Number.isFinite(element.duration) ? Math.round(element.duration) : null,
+            paused: element.paused,
+            readyState: element.readyState,
+            networkState: element.networkState,
+            error: element.error ? `${element.error.code}:${element.error.message || ''}` : null,
+            graph: getAudioGraphDiagnostics()
+          }));
+        }, 2500);
 
         // 播放成功即视为恢复：复位连续失败计数；
         // 降级计数按「同一首歌累计」，仅在换歌成功后归零（同曲最多降级 2 次）
