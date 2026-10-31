@@ -111,7 +111,7 @@ export const SETTING_DEFAULTS = Object.freeze({
   desktopLyrics: false,
   desktopLyricsFont: '',
   spectrum: false,
-  spectrumScale: 1,
+  spectrumScale: 0.7,
   // 只作用于频谱条形层（幽灵条/实心条/条内封面叠加）的不透明度，默认 10%
   spectrumBarOpacity: 0.1,
   // 频谱信息卡（封面、歌名与四周柔边）的不透明度，1 = 原版
