@@ -300,6 +300,11 @@ const ensureTintLayer = () => {
 
 const drawTint = (ctx, height, pulse, cardFactor = 1) => {
   if (!infoVisible.value || !cover.value) return;
+  // 原版 renderSpectrum 以 playing 门控整张信息卡（含柔边）：暂停时整体不绘制。
+  // DOM 卡由 v-show 同步隐藏，画布上的柔边层也必须同样门控——否则暂停后封面
+  // 与文字消失，只剩一圈变暗柔边悬在原位（观感即信息位置残留一个透明框）。
+  // 关闭动画例外：收尾靠 closeFade 时间淡出，柔边必须跟卡片一起淡出
+  if (!playing.value && !closing) return;
   const layer = ensureTintLayer();
   if (!layer) return;
   const layout = infoLayout(infoScale.value, height, pixelRatio);
