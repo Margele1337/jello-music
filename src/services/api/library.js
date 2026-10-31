@@ -108,9 +108,7 @@ export const getDailyRecommend = async () => {
 };
 
 // 猜你喜欢（主页「私人专属好歌推荐」/top/card?card_id=1）。
-// radio 式单卡推荐：每次调用按账号/设备轮换出新推荐（timestamp 绕过
-// KuGouMusicApi 的同 URL 缓存）；登录态常回 1 首，未登录可能回整表，
-// 调用方按「取第一首」消费。电台历史与队列累积在 SigmaMusicPlayer 侧。
+// timestamp 绕过 KuGouMusicApi 的同 URL 缓存，保证每次都重新推荐。
 export const getGuessYouLike = async () => {
   const payload = await apiRequest({
     method: 'GET',

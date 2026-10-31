@@ -22,9 +22,6 @@ let boundStore = null;
 let loadToken = 0;
 let persistTimer = null;
 let autoAdvanceTimer = null;
-// 电台续播钩子：队列播到最后一首仍要「下一首」时，由注册方（猜你喜欢电台）
-// 异步拉一首新的并 playRadioSong，返回 false 则回退到原有的重播/循环逻辑
-let radioProvider = null;
 // 降级重取期间屏蔽旧的 audio error 事件，避免降级循环自我触发
 let recovering = false;
 // 播放状态持久化：播放中每 5 秒落盘一次 + 暂停/换歌/退出时立即落盘
@@ -541,29 +538,6 @@ export const usePlayerStore = defineStore('player', {
       void this.loadCurrent();
     },
 
-    // 猜你喜欢电台：把新推荐追加到队列末尾并立即播放。推荐已在队列中时
-    // 直接跳到那一首（不产生重复项）；已积累的推荐历史就是后续自动接续
-    // 的队列，随机模式下同样记入历史栈供回溯
-    playRadioSong(song) {
-      if (!song?.hash) return;
-      clearAutoAdvance();
-      this.failStreak = 0;
-      const existing = this.queue.findIndex((item) => item.hash === song.hash);
-      if (existing >= 0) {
-        this.index = existing;
-      } else {
-        this.queue.push(song);
-        this.index = this.queue.length - 1;
-      }
-      if (this.mode === 0) this.noteShufflePlay(this.index);
-      void this.loadCurrent();
-    },
-
-    // 注册/注销电台续播钩子（见 playNext）；传入非函数即注销
-    setRadioProvider(provider) {
-      radioProvider = typeof provider === 'function' ? provider : null;
-    },
-
     removeFromQueue(index) {
       if (index < 0 || index >= this.queue.length) return;
       this.queue.splice(index, 1);
@@ -661,16 +635,8 @@ export const usePlayerStore = defineStore('player', {
       ensureAudio(this).pause();
     },
 
-    playNext(options = {}) {
+    playNext() {
       if (!this.queue.length) return;
-      // 电台续播：当前已是队列最后一首（含单曲队列）时向电台要新的；
-      // 电台没供给（拉取失败/全是已入列的重复）才回退到原有重播/循环
-      if (!options.skipRadio && this.index >= this.queue.length - 1 && radioProvider) {
-        void Promise.resolve(radioProvider()).then((handled) => {
-          if (!handled) this.playNext({ skipRadio: true });
-        });
-        return;
-      }
       if (this.queue.length === 1) {
         void this.loadCurrent();
         return;

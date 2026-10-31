@@ -83,7 +83,6 @@
     <SigmaSearchBox
       ref="searchBoxRef"
       :player="player"
-      :live-songs="radioView ? player?.queue : null"
       @open-playlist="onOpenSearchPlaylist"
       @search="onSearchStarted"
     />
@@ -350,18 +349,12 @@ const openCollect = () => {
   collectModalRef.value?.open?.();
 };
 
-// 电台视图：右栏卡片区实时镜像播放队列（每播/每追加一首都出现并保留，
-// 第一首 1 个、第二首 2 个……）。搜歌/开歌单/每日推荐时让位回各自视图
-const radioView = ref(false);
-
 const onOpenSearchPlaylist = (playlist = {}) => {
   if (!playlist.id) return;
-  radioView.value = false;
   temporaryPlaylist.value = { ...playlist, name: playlist.name || '歌单' };
 };
 
 const onSearchStarted = () => {
-  radioView.value = false;
   temporaryPlaylist.value = null;
 };
 
@@ -381,7 +374,6 @@ const onPlaylistSelect = (item) => {
     return;
   }
   if (item.type === 'daily') {
-    radioView.value = false;
     searchBoxRef.value?.loadDailyRecommend?.();
     return;
   }
@@ -390,46 +382,24 @@ const onPlaylistSelect = (item) => {
     return;
   }
   if (item.id) {
-    radioView.value = false;
     searchBoxRef.value?.showPlaylist?.(item);
   }
 };
 
-// 拉一首电台推荐：优先返回不在队列里的新歌（最多重试 3 次绕开重复），
-// 全是重复时返回最后一次拉到的，由调用方决定「跳转重播」还是「放弃续播」
-const pullRadioSong = async () => {
-  const queue = props.player?.queue || [];
-  let last = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const pulled = (await getGuessYouLike())[0] || null;
-    if (!pulled) return null;
-    if (!queue.some((item) => item.hash === pulled.hash)) return pulled;
-    last = pulled;
-  }
-  return last;
-};
-
-// 电台续播供给：队列播到最后一首仍要「下一首」时由 player 回调。只在
-// 电台视图仍是当前右栏内容时注入；拉到的全是队列里已有的就返回 false，
-// 让 player 回退到原有的重播/循环逻辑
-const provideRadioNext = async () => {
-  if (!radioView.value) return false;
-  const song = await pullRadioSong();
-  if (!song || props.player?.queue?.some((item) => item.hash === song.hash)) return false;
-  props.player?.playRadioSong?.(song);
-  return true;
-};
-
-// 猜你喜欢电台：每次点击拉一首新推荐立即播放并追加进队列；右栏在电台
-// 视图下实时镜像队列——第一首 1 个、第二首 2 个（第一首+第二首）……逐首
-// 累积保留，歌曲播完按队列自动接续，点任意卡片就在这份列表内播放
+// 猜你喜欢：点击直接播放推荐列表，右侧保持为空。
+// 推荐顺序稳定，打乱后从随机一首开始，每次点击都有变化。
 const playGuessYouLike = async () => {
+  searchBoxRef.value?.clear?.();
   temporaryPlaylist.value = null;
   try {
-    const song = await pullRadioSong();
-    if (!song) return;
-    props.player?.playRadioSong?.(song);
-    radioView.value = true;
+    const songs = await getGuessYouLike();
+    if (!songs.length) return;
+    const shuffled = [...songs];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    props.player?.playSongList?.(shuffled, shuffled[0].hash);
   } catch (error) {
     window.dispatchEvent(new CustomEvent('jello:toast', {
       detail: error?.message || '猜你喜欢加载失败'
@@ -577,8 +547,6 @@ onMounted(() => {
   tickTimer = setInterval(syncPlaybackState, 250);
   updateDockedState();
   dockedTimer = setInterval(updateDockedState, 200);
-  // 电台续播：队列播到最后一首仍要「下一首」时向电台拉新歌
-  props.player?.setRadioProvider?.(provideRadioNext);
   unsubscribeDock = window.jello?.windowControl?.onDockChanged?.((value) => {
     // value=true → 吸附收起，undockRequested=false；value=false → 主进程开始滑出，
     // undockRequested 置 true —— 点击瞬间就开始 150ms 变亮（原版「醒来」效果）。
@@ -603,7 +571,6 @@ onBeforeUnmount(() => {
   dockedTimer = null;
   stopWindowAnimation();
   endDrag();
-  props.player?.setRadioProvider?.(null);
   unsubscribeDock?.();
   unsubscribeOverhang?.();
   unsubscribeAnimateTo?.();
