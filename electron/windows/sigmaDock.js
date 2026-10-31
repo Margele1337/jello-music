@@ -432,15 +432,22 @@ const nudgeStep = () => {
   const fx = nudge.phase === 'out' ? NUDGE_OUT_FACTOR : NUDGE_RETURN_FACTOR;
   const fy = nudge.phase === 'out' ? 0.2 : NUDGE_RETURN_Y_FACTOR;
 
-  const bounds = win.getBounds();
-  const nextX = nudge.targetX > bounds.x
-    ? Math.min(bounds.x + (nudge.targetX - bounds.x) * fx * frameFactor, nudge.targetX)
-    : Math.max(bounds.x + (nudge.targetX - bounds.x) * fx * frameFactor, nudge.targetX);
-  const nextY = nudge.targetY > bounds.y
-    ? Math.min(bounds.y + (nudge.targetY - bounds.y) * fy * frameFactor, nudge.targetY)
-    : Math.max(bounds.y + (nudge.targetY - bounds.y) * fy * frameFactor, nudge.targetY);
+  // 位置推进必须走内部浮点状态（与 runMainAnimation 同构），不能每帧回读
+  // getBounds 再缓动：setBounds 写入取整，剩余距离缩到步长 < 1px 时取整会
+  // 把步进整个吞掉，位置停住而收敛判定（对内部值）永假——出程段永久卡死，
+  // 拖拽消息被全部丢弃（表现为面板冻结，只能 RShift 收起恢复）
+  let currentX = nudge.currentX;
+  let currentY = nudge.currentY;
+  currentX = nudge.targetX > currentX
+    ? Math.min(currentX + (nudge.targetX - currentX) * fx * frameFactor, nudge.targetX)
+    : Math.max(currentX + (nudge.targetX - currentX) * fx * frameFactor, nudge.targetX);
+  currentY = nudge.targetY > currentY
+    ? Math.min(currentY + (nudge.targetY - currentY) * fy * frameFactor, nudge.targetY)
+    : Math.max(currentY + (nudge.targetY - currentY) * fy * frameFactor, nudge.targetY);
+  nudge.currentX = currentX;
+  nudge.currentY = currentY;
 
-  if (nudge.phase === 'out' && Math.abs(nudge.outX - nextX) < 0.5) {
+  if (nudge.phase === 'out' && Math.abs(nudge.outX - currentX) < 0.5) {
     // 出程到位 → 切回程：目标先回到轻推起点，回程段由 moveMainWindow 持续
     // retarget 成拖拽预期位置（鼠标在动就跟手，静止则原位收回）
     nudge.phase = 'return';
@@ -448,7 +455,7 @@ const nudgeStep = () => {
     nudge.targetX = nudge.startX;
     nudge.targetY = nudge.startY;
   } else if (nudge.phase === 'return'
-    && Math.abs(nudge.targetX - nextX) < 0.5 && Math.abs(nudge.targetY - nextY) < 0.5) {
+    && Math.abs(nudge.targetX - currentX) < 0.5 && Math.abs(nudge.targetY - currentY) < 0.5) {
     // 收敛到拖拽预期位置：此时交还 1:1 拖拽，后续 moveMainWindow 直接生效，
     // 面板已在鼠标预期位，无跳变
     setBoundsAt(win, nudge.targetX, nudge.targetY);
@@ -463,7 +470,7 @@ const nudgeStep = () => {
     cancelNudge();
     return;
   }
-  setBoundsAt(win, nextX, nextY);
+  setBoundsAt(win, currentX, currentY);
   nudge.timer = setTimeout(nudgeStep, ANIM_TICK_MS);
 };
 
@@ -488,6 +495,8 @@ export const nudgeMainWindow = () => {
     timer: null,
     startX: bounds.x,
     startY: bounds.y,
+    currentX: bounds.x,
+    currentY: bounds.y,
     outX,
     targetX: outX,
     targetY: bounds.y,
