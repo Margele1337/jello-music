@@ -131,3 +131,30 @@ test('https upgrade resolver treats network errors as no-upgrade', async () => {
   const kept = await resolver.resolve(new URL('http://youth.kugou.com/a.mp3'));
   assert.equal(kept.protocol, 'http:');
 });
+
+test('concurrent resolves for the same host share a single probe and log once', async () => {
+  let calls = 0;
+  const logs = [];
+  const resolver = createHttpsUpgradeResolver({
+    fetchImpl: async (url, options) => {
+      calls += 1;
+      return responder(() => 403)(url, options);   // 403 = 探测定负（HEAD 一次）
+    },
+    log: (mode, host) => logs.push(`${mode}:${host}`)
+  });
+
+  const [a, b] = await Promise.all([
+    resolver.resolve(new URL('http://once.kugou.com/a.mp3')),
+    resolver.resolve(new URL('http://once.kugou.com/b.mp3'))
+  ]);
+
+  assert.equal(calls, 1);                          // 单飞：同 host 只探测一次
+  assert.deepEqual(logs, ['fallback:once.kugou.com']);
+  assert.equal(a.protocol, 'http:');
+  assert.equal(b.protocol, 'http:');
+
+  // 结果已入缓存：后续 resolve 不再探测、不再打日志
+  await resolver.resolve(new URL('http://once.kugou.com/c.mp3'));
+  assert.equal(calls, 1);
+  assert.deepEqual(logs, ['fallback:once.kugou.com']);
+});

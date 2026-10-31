@@ -68,6 +68,9 @@ export const createHttpsUpgradeResolver = ({
 } = {}) => {
   if (typeof fetchImpl !== 'function') throw new Error('fetchImpl is required');
   const cache = new Map();
+  // 进行中的探测（单飞）：音频元素与自解码预取常并发首访同一 host，
+  // 不合并的话同一 host 会重复探测并重复打日志
+  const inflightProbes = new Map();
 
   const probeOnce = async (httpsUrl, method) => {
     const controller = new AbortController();
@@ -105,11 +108,25 @@ export const createHttpsUpgradeResolver = ({
       if (url.protocol === 'https:') return url;
       const cached = cache.get(url.host);
       if (cached !== undefined) return cached ? toHttpsUrl(url) : url;
-      const ok = await probeHttps(toHttpsUrl(url));
-      cache.set(url.host, ok);
-      log(ok ? 'upgrade' : 'fallback', url.host);
+
+      // 单飞：同 host 的并发 resolve 共享同一次探测，日志也只打一次
+      let pending = inflightProbes.get(url.host);
+      if (!pending) {
+        pending = probeHttps(toHttpsUrl(url))
+          .then((ok) => {
+            cache.set(url.host, ok);
+            log(ok ? 'upgrade' : 'fallback', url.host);
+            return ok;
+          })
+          .finally(() => inflightProbes.delete(url.host));
+        inflightProbes.set(url.host, pending);
+      }
+      const ok = await pending;
       return ok ? toHttpsUrl(url) : url;
     },
-    clearCache: () => cache.clear()
+    clearCache: () => {
+      cache.clear();
+      inflightProbes.clear();
+    }
   };
 };

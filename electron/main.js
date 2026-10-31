@@ -362,14 +362,14 @@ const stopTrayTooltipSync = () => {
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
-  // Electron 45 起事件对象带 level/message/location，旧签名是位置参数：两种都收
-  contents.on('console-message', (event, legacyLevel, legacyMessage, legacyLine, legacySource) => {
-    const level = event?.level ?? legacyLevel;
-    const message = event?.message ?? legacyMessage;
-    if (message == null) return;
-    const source = event?.location?.url || legacySource || '';
-    const line = event?.location?.lineNumber ?? legacyLine;
-    recordRendererMessage(level, message, line ? `${source}:${line}` : source);
+  // Electron 45+ 新签名：参数都在事件对象上（message/level/lineNumber/sourceId）。
+  // 旧的位置参数签名已被弃用（注册即打印 deprecation 警告），不再使用；
+  // level 为 'info'|'warning'|'error'|'debug' 字符串，logSink 直接大写入日志
+  contents.on('console-message', (details) => {
+    if (details?.message == null) return;
+    const source = details.sourceId || '';
+    const line = details.lineNumber;
+    recordRendererMessage(details.level, details.message, line ? `${source}:${line}` : source);
   });
 });
 
