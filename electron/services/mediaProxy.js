@@ -53,7 +53,16 @@ const mediaResponse = async (request) => {
   if (range) headers.Range = range;
 
   try {
-    const upstream = await net.fetch(upstreamUrl, { method: 'GET', headers, redirect: 'follow' });
+    // 取消传播：元素中断（切歌/暂停/seek/关播放器）会 cancel 返回的 body 流，
+    // cancel 必须传导为上游 fetch 的中止——否则每个被切掉的歌都留一条占着
+    // per-host 连接的死流，快速切几首后新歌的缓冲被挤到饿死（「不播放」）
+    const controller = new AbortController();
+    const upstream = await net.fetch(upstreamUrl, {
+      method: 'GET',
+      headers,
+      redirect: 'follow',
+      signal: controller.signal
+    });
     const responseHeaders = new Headers();
     for (const name of PASSTHROUGH_HEADERS) {
       const value = upstream.headers.get(name);
@@ -62,7 +71,28 @@ const mediaResponse = async (request) => {
     // AudioWorklet 采集与自解码 fetch 都要求 CORS-clean 资源
     responseHeaders.set('Access-Control-Allow-Origin', '*');
     responseHeaders.set('Cache-Control', 'no-store');
-    return new Response(upstream.body, {
+
+    const body = new ReadableStream({
+      async start(c) {
+        const reader = upstream.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              c.close();
+              return;
+            }
+            c.enqueue(value);
+          }
+        } catch (error) {
+          c.error(error);
+        }
+      },
+      cancel() {
+        controller.abort();
+      }
+    });
+    return new Response(body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders

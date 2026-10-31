@@ -42,7 +42,8 @@ Conservative classification for this clean-room project:
 3. Reusing owner-authored Sigma code is allowed only after confirming it is
    original and does not incorporate upstream code.
 4. Do not bundle proprietary fonts such as Helvetica Neue without a license.
-   Use an open font (Inter, Roboto, Noto Sans) and regenerate any font atlases.
+   Use an open font (TeX Gyre Heros for the Helvetica look, Inter, Roboto,
+   Noto Sans) and regenerate any font atlases.
 5. Verify Sigma assets: use only assets you own or that are licensed for
    redistribution; replace Minecraft or other third-party assets otherwise.
 6. Keep third-party licenses in `NOTICE` and the corresponding package files.
@@ -56,7 +57,8 @@ Conservative classification for this clean-room project:
 | Electron/Vue/Vite skeleton | Original work | MIT | 2026-10-27 | — |
 | Sigma UI components/assets | Owner-authored sigmarebase work (ported from the legacy repo's Sigma UI) | MIT (owner) | 2026-10-27 | Owner review |
 | Roboto atlas font | Google Fonts / google/fonts | SIL OFL 1.1 | 2026-10-27 | Import check |
-| Selawik atlas font | microsoft/Selawik (Segoe UI metric-compatible, regenerated via tools/font-atlas) | SIL OFL 1.1 | 2026-10-28 | Import check |
+| TeX Gyre Heros atlas font | GUST / CTAN tex-gyre (open Helvetica clone matching the original Helvetica Neue Light look, regenerated via tools/font-atlas) | GUST Font License 1.0 | 2026-10-31 | Import check |
+| Selawik atlas font (superseded by TeX Gyre Heros 2026-10-31) | microsoft/Selawik (Segoe UI metric-compatible, regenerated via tools/font-atlas) | SIL OFL 1.1 | 2026-10-28 | Import check |
 | KuGouMusicApi sidecar | MakcRe/KuGouMusicApi | MIT | 2026-10-27 | Import check |
 | Jello/Sigma app & tray icon | Owner-authored Jello branding (stored in the legacy repo) | MIT (owner-authorized) | 2026-10-28 | Owner |
 | Spectrum HUD / FFT / AudioWorklet | Owner-authored sigmarebase spectrum (ported from the legacy repo with owner authorization) | MIT (owner-authorized) | 2026-10-28 | Owner |

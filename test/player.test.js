@@ -198,6 +198,8 @@ test('source error downgrades at most twice then schedules an auto advance', asy
   assert.equal(player.resolvedQuality, '128');
 
   // 第三次：已到 128，且降级次数用尽 → 排定自动跳歌
+  // （真实路径里元素 error 监听会先置 playing=false，这里同态模拟）
+  player.playing = false;
   element.error = { code: 4 };
   player.handleSourceError();
   assert.equal(player.failStreak, 1);

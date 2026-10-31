@@ -1,8 +1,10 @@
 <script setup>
 import { ref } from 'vue';
-import { addSongToPlaylist } from '../../services/api/collect.js';
+import { addSongToPlaylist, markSongLiked } from '../../services/api/collect.js';
 import { getUserPlaylists } from '../../services/api/library.js';
 import { useAuthStore } from '../../stores/auth.js';
+
+const emit = defineEmits(['collected']);
 
 const props = defineProps({
   player: { type: Object, default: null }
@@ -58,6 +60,8 @@ const addTo = async (playlist) => {
   messageError.value = false;
   try {
     await addSongToPlaylist(playlist, song);
+    if (isLiked(playlist)) markSongLiked(song);
+    emit('collected', { playlist, song });
     message.value = `已收藏到「${playlist.name}」`;
     setTimeout(() => {
       isOpen.value = false;

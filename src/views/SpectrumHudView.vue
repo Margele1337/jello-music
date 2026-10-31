@@ -136,12 +136,10 @@ const MOUSE_FADE_EASE_MS = 160;      // 进入/离开时半径的缓动时长
 const MOUSE_FADE_STALL_MS = 10000;   // 光标静止多久后假定已离开（mouseleave 丢失兜底）
 let mouseFadeEnabled = true;
 let mouseFadeRadius = 260;           // 渐隐圈最大半径（CSS 像素，设置可调）
-// 关闭动画：主进程销毁窗口前通知渲染层收尾，期间忽略数据、条形塌缩、卡片淡出
+// 关闭动画：主进程销毁窗口前通知渲染层收尾，期间忽略数据、条形塌缩、卡片淡出。
+// 打开不做动画：与「恢复播放」同款，条形经 pendingSnap 瞬间吸附到当前电平
 let closing = false;
 let closeAt = 0;
-// 打开动画：新窗口挂载/关闭动画期重开时反向播放（条形从 0 生长、信息卡淡入）
-let opening = false;
-let openAt = 0;
 let mouseX = -1;
 let mouseY = -1;
 let mouseInside = false;
@@ -330,16 +328,6 @@ const draw = (now = performance.now()) => {
     return Math.min(1, Math.max(0, (dist - inner) / Math.max(1, outer - inner)));
   };
 
-  // 打开动画：整体淡入因子（0→1），条形抬升与信息卡淡入同乘；结束即退出打开态
-  let openFade = 1;
-  if (opening) {
-    openFade = Math.min(1, (now - openAt) / 280);
-    if (openFade >= 1) {
-      opening = false;
-      pendingSnap = false;
-    }
-  }
-
   // 原版 onRender2D(EventRender2DCustom) 以 playing 门控整个 renderSpectrum：
   // 暂停时什么都不画（信息卡也随之消失）。legacy 暂停则继续绘制，条形按
   // 平滑式塌缩到 0（目标已在 applyPayload 归零），同样以「消失」收场；
@@ -378,7 +366,7 @@ const draw = (now = performance.now()) => {
     if (x >= width) break;
     const localAlpha = fadeActive ? mouseAlpha(x + barWidth / 2, height - heights[i] / 2) : 1;
     if (localAlpha <= 0) continue;
-    ctx.globalAlpha = barOpacity * localAlpha * openFade;
+    ctx.globalAlpha = barOpacity * localAlpha;
     // 层 1：灰幽灵条（MID_GREY #999999，alpha 0.2 且逐条渐隐，MusicManager.java:178-189）
     ctx.fillStyle = barStyles[i];
     ctx.fillRect(x, height - heights[i], barWidth, heights[i]);
@@ -462,13 +450,13 @@ const draw = (now = performance.now()) => {
   // legacy 预设也启用（用户要求的信息卡随鼓点缩放），幅度量纲与原版一致可直接复用
   const pulse = computePulseScale(levels);
   const pulseEl = coverPulseRef.value;
-  if (pulseEl && !closing && !opening) {
+  if (pulseEl && !closing) {
     const transform = `scale(${pulse.toFixed(4)})`;
     if (pulseEl.style.transform !== transform) pulseEl.style.transform = transform;
   }
 
   // 信息卡随光标距离渐隐：按卡片中心求系数，与「频谱信息透明度」相乘后每帧
-  // 直接写 style（避免 Vue 每帧重渲染）；关闭/打开动画期间再乘时间淡出/淡入因子
+  // 直接写 style（避免 Vue 每帧重渲染）；关闭动画期间再乘时间淡出因子
   const cardLayout = infoLayout(infoScale.value, height, pixelRatio);
   const cardFactor = fadeActive
     ? mouseAlpha(
@@ -478,9 +466,9 @@ const draw = (now = performance.now()) => {
     : 1;
   const closeFade = closing ? Math.max(0, 1 - (now - closeAt) / 260) : 1;
   const infoEl = infoRef.value;
-  if (infoEl) infoEl.style.opacity = String(infoOpacity.value * cardFactor * closeFade * openFade);
+  if (infoEl) infoEl.style.opacity = String(infoOpacity.value * cardFactor * closeFade);
 
-  drawTint(ctx, height, pulse, cardFactor * closeFade * openFade);
+  drawTint(ctx, height, pulse, cardFactor * closeFade);
 };
 
 const applyPayload = (data) => {
@@ -510,8 +498,7 @@ const applyPayload = (data) => {
       for (let i = 0; i < count; i += 1) incoming[i] = Number(data.levels[i]) || 0;
       adoptLevels(incoming, now);
     }
-    // 打开动画期间不吸附：条形从 0 按平滑式抬升，而不是瞬间跳到目标
-    if ((data.reset || pendingSnap) && !opening) {
+    if (data.reset || pendingSnap) {
       prevFrame = nextFrame;              // 立刻到位，不做跨歌/恢复渐变
       interpolateTargets(performance.now());
       levels.set(targets);
@@ -626,10 +613,10 @@ const onSpectrumClose = () => {
 };
 
 const onSpectrumReopen = () => {
-  // 关闭动画期重开：退出关闭态并反向播放（条形从 0 生长、信息卡淡入）
+  // 关闭动画期重开：退出关闭态，与「恢复播放」同款——下一条电平消息
+  // 到位即吸附到当前帧（pendingSnap），条形瞬间出现
   closing = false;
-  opening = true;
-  openAt = performance.now();
+  pendingSnap = true;
 };
 
 onMounted(() => {
@@ -652,9 +639,6 @@ onMounted(() => {
   unsubscribeSettings = window.jelloSpectrum?.onSettings?.(applySettings) || null;
   unsubscribeClose = window.jelloSpectrum?.onClose?.(onSpectrumClose) || null;
   unsubscribeReopen = window.jelloSpectrum?.onReopen?.(onSpectrumReopen) || null;
-  // 新窗口从零生长进场（条形按平滑式抬升 + 整体淡入），与关闭动画对称
-  opening = true;
-  openAt = performance.now();
   window.jelloSpectrum?.ready?.();
   raf = requestAnimationFrame(draw);
 });

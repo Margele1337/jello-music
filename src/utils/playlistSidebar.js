@@ -40,10 +40,11 @@ export const buildPlaylistSidebarItems = (playlists, { authenticated = false, re
   for (const playlist of source) {
     if (!playlist?.id || seenIds.has(playlist.id)) continue;
     if (liked?.id && playlist.id === liked.id) continue;
-    if (playlist.isDefault) continue;
 
     const name = String(playlist.name || '').trim() || '歌单';
-    if (name === '默认收藏') continue;
+    // 喜欢的别名歌单（我喜欢的音乐/我的喜欢）不重复显示；「默认收藏」是
+    // 酷狗账号的真实自建歌单（收藏弹窗可选它），以真名显示、不再隐藏——
+    // 否则收藏进去的歌在侧栏找不到
     if (liked?.id && LIKED_NAMES.has(name)) continue;
     if (seenNames.has(name)) continue;
 

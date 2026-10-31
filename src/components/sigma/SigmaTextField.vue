@@ -196,6 +196,8 @@ onBeforeUnmount(() => {
   font-variant-ligatures: none;
   text-align: left;
   caret-color: #fefefe;
+  /* Sigma 覆盖层风格：悬停也是箭头，不出现 I-beam（聚焦后插入符仍在） */
+  cursor: default;
 }
 
 .sigma-text-field-input::placeholder {
@@ -209,10 +211,13 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* 覆盖 App 全局的玻璃输入框样式（.rise-active input[type="text"] !important），
-   还原 sigmarebase 的透明输入框：无底色、无边框、无圆角 */
-.rise-active .sigma-text-field-input,
-.rise-active .sigma-text-field-input:focus {
+/* 覆盖 App 全局的玻璃输入框样式，还原 sigmarebase 的透明输入框：
+   无底色、无边框、无圆角。（不要加 .rise-active 前缀：当前 App 根节点
+   没有这个类——之前带上它导致组字颜色规则永不匹配，中文输入不显示）
+   文字本体由 canvas 图集绘制（color: transparent 保留光标/选区）；
+   仅输入法组字期间切回原生显示。 */
+.sigma-text-field-input,
+.sigma-text-field-input:focus {
   background-color: transparent !important;
   border: none !important;
   border-radius: 0 !important;
@@ -223,7 +228,7 @@ onBeforeUnmount(() => {
 }
 
 /* 输入法组字期间由原生输入框显示文字（含候选框定位），需覆盖上面的透明色 */
-.rise-active .sigma-text-field-input.is-composing {
+.sigma-text-field-input.is-composing {
   color: rgba(254, 254, 254, 0.9) !important;
 }
 </style>

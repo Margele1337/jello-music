@@ -27,8 +27,11 @@ Third-party components
 - Vite: MIT
 - electron-builder: MIT
 - Roboto (Sigma UI CSS font): SIL Open Font License 1.1
-- Selawik (Sigma text atlas, Segoe UI metric-compatible): SIL Open Font License 1.1
-  Copyright 2011 Google Inc. See src/assets/sigma/fonts/OFL.txt.
+- TeX Gyre Heros (Sigma text atlas, Helvetica clone matching the original
+  Helvetica Neue Light look): GUST Font License 1.0, full text at
+  src/assets/sigma/fonts/GUST-FONT-LICENSE.txt.
+- Selawik (former Sigma text atlas font, Segoe UI metric-compatible): SIL Open
+  Font License 1.1. Copyright 2011 Google Inc. See src/assets/sigma/fonts/OFL.txt.
 - Feather icon geometry (settings page inline SVGs): MIT License
   https://github.com/feathericons/feather
 - Other npm dependencies: used under their respective licenses; see

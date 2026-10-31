@@ -150,6 +150,9 @@ const ensureAudio = (store) => {
   audio.addEventListener('error', () => {
     if (!boundStore || !audio?.src) return;
     console.warn('[player] 元素错误:', audio.error?.code, audio.error?.message || '');
+    // MEDIA_ERR_ABORTED(1) 是快速切歌时旧 src 被新加载打断的正常噪音，
+    // 异步到达时新歌往往已在播——不能置 playing=false 也不能报错
+    if (audio.error?.code === 1) return;
     boundStore.playing = false;
     boundStore.handleSourceError();
   });
@@ -407,6 +410,10 @@ export const usePlayerStore = defineStore('player', {
           persistPlaybackState(this);
         }
       } catch (error) {
+        // 播放被新加载打断/取消（AbortError）是快速切歌的正常竞态：
+        // 新 load 自会接管播放，绝不进失败恢复（排自动跳歌会把用户
+        // 最后点中的、还在缓冲的歌打断——「快速切几首就不播」的元凶）
+        if (error?.name === 'AbortError') return;
         if (token === loadToken) {
           this.playing = false;
           this.error = playbackErrorText(error);
@@ -479,6 +486,12 @@ export const usePlayerStore = defineStore('player', {
       clearAutoAdvance();
       autoAdvanceTimer = setTimeout(() => {
         autoAdvanceTimer = null;
+        // 这 3 秒里可能出现的「不该跳」状态：
+        // - 用户已手动切歌且在播（playing=true）
+        // - 最后一首歌的 play() 还在缓冲（loading=true：await play() 未 settle
+        //   时 loadCurrent 的 finally 尚未执行）——跳走会把刚点中的歌打断
+        // 自动跳歌只服务于「真的停着」的状态
+        if (this.playing || this.loading) return;
         this.playNext();
       }, this.autoAdvanceDelayMs);
     },

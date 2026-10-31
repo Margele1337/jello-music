@@ -140,3 +140,16 @@ dd {
 .panel .check input {
   accent-color: #ff69b4;
 }
+
+/* Sigma 覆盖层风格：鼠标移过文字不出现 I-beam（箭头/工字来回闪），
+   文本不可拖选；输入类控件保留文本光标与选择 */
+#app {
+  cursor: default;
+  user-select: none;
+}
+
+#app input,
+#app textarea {
+  cursor: text;
+  user-select: text;
+}

@@ -26,11 +26,12 @@ const PNG_IMPORTS = {
 // 高 DPI：1x 位图在 dpr=1.5/2 的屏幕上会被浏览器整体放大，文字发虚/带锯齿。
 // 这里按需改用同一套 Java2D 参数光栅化的 2x 图集（tools/font-atlas/FontAtlas.java，
 // 字号翻倍），度量统一折算回 CSS px，布局代码不需要区分密度。
-// 重新生成（只覆盖实际用到的字号；当前图集由 Selawik 光栅化，见 docs/CLEAN_ROOM.md）：
-//   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 12,13,14,20,25,40 atlas-light
-//   java tools/font-atlas/FontAtlas.java <selawkl.ttf> src/assets/sigma/fonts 26,28,40,80 atlas2x-light
-//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 12,25 atlas-sans
-//   java tools/font-atlas/FontAtlas.java <selawk.ttf> src/assets/sigma/fonts 24,50 atlas2x-sans
+// 重新生成（只覆盖实际用到的字号；当前图集由 TeX Gyre Heros 光栅化——
+// 开源 Helvetica 克隆，对齐原版 Helvetica Neue Light 观感，见 docs/CLEAN_ROOM.md）：
+//   java tools/font-atlas/FontAtlas.java src/assets/sigma/fonts/texgyreheros-regular.otf src/assets/sigma/fonts 12,13,14,20,25,40 atlas-light
+//   java tools/font-atlas/FontAtlas.java src/assets/sigma/fonts/texgyreheros-regular.otf src/assets/sigma/fonts 26,28,40,80 atlas2x-light
+//   java tools/font-atlas/FontAtlas.java src/assets/sigma/fonts/texgyreheros-regular.otf src/assets/sigma/fonts 12,25 atlas-sans
+//   java tools/font-atlas/FontAtlas.java src/assets/sigma/fonts/texgyreheros-regular.otf src/assets/sigma/fonts 24,50 atlas2x-sans
 const HIGH_DPI_THRESHOLD = 1.25;
 const DENSITY_2X = 2;
 

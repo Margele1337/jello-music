@@ -319,9 +319,9 @@ test('频谱透明度由渲染层按层合成：信息卡 CSS opacity + 条形 c
   assert.ok(view.includes('spectrumMouseFade'), '应接收鼠标靠近透明开关');
   assert.ok(view.includes('spectrumMouseFadeRadius'), '应接收渐隐圈半径设置');
   assert.ok(view.includes('0.4 * barOpacity'), '条内封面叠加应随条形透明度衰减');
-  // 打开/关闭动画：条形与信息卡共用时间淡入/淡出因子
-  assert.ok(view.includes('openFade'), '打开动画应有整体淡入因子');
+  // 关闭动画有整体淡出因子；打开无动画（与恢复播放同款，pendingSnap 瞬间吸附）
   assert.ok(view.includes('closeFade'), '关闭动画应有整体淡出因子');
+  assert.ok(!view.includes('openFade'), '打开应吸附而非淡入');
   // 全屏根元素禁止套 CSS opacity：透明窗口的全屏合成层在部分 GPU 下整层不重绘，
   // 表现为设置透明度后整窗空白、换歌触发重绘才恢复
   const rootStart = view.indexOf('<div class="spectrum-hud"');

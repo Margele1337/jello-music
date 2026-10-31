@@ -71,10 +71,10 @@
     <SigmaQueueList ref="queueListRef" :player="player" />
 
     <!-- 收藏到歌单按钮 + 弹窗 -->
-    <button type="button" class="smp-collect-btn" title="收藏到歌单" @click="openCollect">
-      <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.9-9.7-9.2C.7 8.6 2.4 5 5.9 5c2 0 3.4 1.1 4.1 2.3h4c.7-1.2 2.1-2.3 4.1-2.3 3.5 0 5.2 3.6 3.6 6.8C19.5 16.1 12 21 12 21z" transform="scale(0.92) translate(1,0)" /></svg>
+    <button type="button" class="smp-collect-btn" :title="songLiked ? '已在我喜欢' : '收藏到歌单'" @click="openCollect">
+      <svg viewBox="0 0 24 24" :class="{ 'is-liked': songLiked }"><path d="M12 21s-7.5-4.9-9.7-9.2C.7 8.6 2.4 5 5.9 5c2 0 3.4 1.1 4.1 2.3h4c.7-1.2 2.1-2.3 4.1-2.3 3.5 0 5.2 3.6 3.6 6.8C19.5 16.1 12 21 12 21z" transform="scale(0.92) translate(1,0)" /></svg>
     </button>
-    <SigmaCollectModal ref="collectModalRef" :player="player" />
+    <SigmaCollectModal ref="collectModalRef" :player="player" @collected="refreshLikedState" />
 
     <!-- 搜索框 + 结果网格 -->
     <SigmaSearchBox
@@ -110,6 +110,7 @@ import SigmaSearchBox from './SigmaSearchBox.vue';
 import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
 import SigmaQueueList from './SigmaQueueList.vue';
 import SigmaCollectModal from './SigmaCollectModal.vue';
+import { ensureLikedHashSet, isSongLiked } from '../../services/api/collect.js';
 import SigmaText from './SigmaText.vue';
 import { useSigmaWindowDrag } from '../../composables/useSigmaWindowDrag.js';
 
@@ -278,6 +279,25 @@ const searchBoxRef = ref(null);
 const temporaryPlaylist = ref(null);
 const queueListRef = ref(null);
 const collectModalRef = ref(null);
+
+// 心形状态：当前歌是否已在「我喜欢」。切歌先置灰再异步刷新（收藏成功后
+// SigmaCollectModal 会 emit collected 触发重算）；未登录保持灰。
+const songLiked = ref(false);
+const refreshLikedState = async () => {
+  const song = props.player?.currentSong;
+  if (!auth.isAuthenticated || !song?.hash) {
+    songLiked.value = false;
+    return;
+  }
+  await ensureLikedHashSet().catch(() => {});
+  songLiked.value = isSongLiked(song);
+};
+watch(() => props.player?.currentSong?.hash, () => {
+  songLiked.value = false;
+  refreshLikedState();
+});
+watch(() => auth.isAuthenticated, refreshLikedState);
+onMounted(refreshLikedState);
 
 const openCollect = () => {
   if (!props.player?.currentSong) {
@@ -855,6 +875,10 @@ onBeforeUnmount(() => {
 .smp-collect-btn svg {
   width: 15px;
   height: 15px;
+  fill: rgba(254, 254, 254, 0.4);
+}
+
+.smp-collect-btn svg.is-liked {
   fill: rgba(255, 105, 180, 0.75);
 }
 

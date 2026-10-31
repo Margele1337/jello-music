@@ -8,9 +8,10 @@
 //    接管只换频谱来源，不动可听元素（startDecodeAnalysis 会锚定当前进度）。
 //    mp4 候选例外：闸门预探测成功的 blob 直接作为可听路径（立即使用）。
 //    original 预设的窗几何与原版一致：所有格式统一取帧首 1024 个采样时刻，
-//    按 convertToPCMFloatArray 的 L,R 打包语义做 1024 点 FFT。预设 2（legacy）
-//    整条自解码链路不准入（decideSelfDecode 直接拒绝），频谱由 tap+预读驱动，
-//    并用 legacy 的攒批机械时序（~250ms 一批推进 4 帧队首）。flac 需要 config.description 携带 'fLaC'+元数据块前缀
+//    按 convertToPCMFloatArray 的 L,R 打包语义做 1024 点 FFT。预设 1（legacy，
+//    默认）频谱不接管自解码：mp3/flac 的后台预取直接跳过（mp4 仅探测供可听
+//    闸门），频谱由 tap+预读驱动，并用 legacy 的攒批机械时序（~250ms 一批
+//    推进 4 帧队首）。flac 需要 config.description 携带 'fLaC'+元数据块前缀
 //    （Chromium 从 STREAMINFO 初始化解码器）；aac 需要 mp4Demux.js 从 moov 里
 //    取出的 AudioSpecificConfig（esds→DecoderSpecificInfo）+ 逐样本字节表。
 //    主线程 line buffer（≈4s，超出 hold Worker = SourceDataLine.write 阻塞背压的
@@ -77,7 +78,7 @@ const samples = new Float32Array(FFT_SIZE);
 const realOut = new Float32Array(FFT_SIZE);
 const imagOut = new Float32Array(FFT_SIZE);
 const sigmaQueue = [];
-// 预设 2（legacy）的攒批显示队列模型（纯状态机，见 mp3Frame.js createSigmaBurst）
+// 预设 1（legacy）的攒批显示队列模型（纯状态机，见 mp3Frame.js createSigmaBurst）
 const sigmaBurst = createSigmaBurst();
 // tap 链路 FFT 输入的响度归一化（与自解码 Worker 共用算法，对齐原版响度量级）。
 // 必须每首歌重建：内部慢 RMS 估计（EMA k=0.02，τ≈1.2s）跨歌保留会让同一首歌
@@ -95,7 +96,7 @@ let lookaheadSourceNode = null;
 let lookaheadTapGainNode = null;
 let starting = null;
 let enabled = false;
-// 频谱预设（original/legacy）：original 的窗几何在 prepareSelfDecode 时烘进
+// 频谱预设（legacy/original）：legacy 的 tap 链路状态即时生效；original 的
 // decode 对象下一首生效；切到 legacy 立即停用自解码并改变 tap 链路的队列模型
 let decodePreset = 'original';
 let sourceBound = false;
@@ -191,7 +192,7 @@ const handleBlock = (block) => {
 
   for (let i = 0; i < FFT_SIZE; i += 1) samples[i] = block[i];
   // 响度归一化（FFT 输入前，与自解码链路同算法）：任意音源 → 原版等效幅度量级。
-  // 预设 2（legacy）跳过：legacy 直接用原始 Int16 量纲的样本喂 FFT。
+  // 预设 1（legacy）跳过：legacy 直接用原始 Int16 量纲的样本喂 FFT。
   if (decodePreset !== 'legacy') tapLoudnessNormalizer(samples);
   spectrumFft(samples, realOut, imagOut);
   for (let i = 0; i < BAR_COUNT; i += 1) {
@@ -201,14 +202,14 @@ const handleBlock = (block) => {
   }
 
   if (decodePreset === 'legacy') {
-    // 预设 2：legacy 的攒批机械时序——每 ~250ms 把攒够的帧一次性冲进 4 深
+    // 预设 1：legacy 的攒批机械时序——每 ~250ms 把攒够的帧一次性冲进 4 深
     // 显示队列，队首台阶式前移（这是 legacy 观感的核心，故意不复刻均匀推进）
     const queued = sigmaBurst.push(Float32Array.from(rawLevels));
     sendSpectrum(queued || rawLevels);
     return;
   }
 
-  // 预设 1：每帧直接入队并发送队首（~43Hz，与自解码链路同节拍）
+  // 预设 2（original）：每帧直接入队并发送队首（~43Hz，与自解码链路同节拍）
   sigmaQueue.push(Float32Array.from(rawLevels));
   if (sigmaQueue.length > QUEUE_MAX) sigmaQueue.shift();
 

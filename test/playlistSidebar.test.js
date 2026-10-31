@@ -25,14 +25,16 @@ test('prefers the literal 我喜欢 playlist when no default flag is present', (
   assert.equal(items[2].id, 'liked');
 });
 
-test('prefers the real 我喜欢 playlist over an empty default collection', () => {
+test('shows the real 默认收藏 playlist and prefers 我喜欢 for the liked slot', () => {
   const items = buildPlaylistSidebarItems([
     { id: 'default', name: '默认收藏', isDefault: true },
     { id: 'liked', name: '我喜欢', isDefault: true },
     { id: 'other', name: '今日有酒今朝醉' }
   ], { authenticated: true });
 
-  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '我喜欢', '今日有酒今朝醉']);
+  // 「默认收藏」是真实自建歌单（收藏弹窗可选它），以真名显示、不再隐藏——
+  // 否则收藏进去的歌在侧栏找不到
+  assert.deepEqual(names(items), ['猜你喜欢', '每日推荐', '我喜欢', '默认收藏', '今日有酒今朝醉']);
   assert.equal(items[2].id, 'liked');
 });
 
