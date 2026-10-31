@@ -1,11 +1,7 @@
 // jello-media 协议冒烟：真实 Electron 运行时里验证白名单拦截与 HTTPS 升级。
 // 用法：npx electron tools/smoke-media-proxy.mjs   （退出码 0 = 全部通过）
 import { app, BrowserWindow } from 'electron';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { initMediaProxy } from '../electron/services/mediaProxy.js';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
 
 const results = [];
 const check = (name, ok, detail = '') => {

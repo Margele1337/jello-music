@@ -29,13 +29,14 @@ const buildWin32Api = (koffi) => {
   const RECT = koffi.struct('RECT', {
     left: 'long', top: 'long', right: 'long', bottom: 'long'
   });
-  const MONITORINFO = koffi.struct('MONITORINFO', {
+  // 注册即生效：下面的 func 签名按名字引用 'MONITORINFO' / 'DWMDWORD'，无需接住返回值
+  koffi.struct('MONITORINFO', {
     cbSize: 'uint32',
     rcMonitor: RECT,
     rcWork: RECT,
     dwFlags: 'uint32'
   });
-  const DWMDWORD = koffi.struct('DWMDWORD', { value: 'uint32' });
+  koffi.struct('DWMDWORD', { value: 'uint32' });
 
   const user32 = koffi.load('user32.dll');
   const dwmapi = koffi.load('dwmapi.dll');

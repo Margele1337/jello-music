@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, screen, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC, SETTINGS_ARG, findDeepLinkArg, hasSettingsArg, parseDeepLink, formatTrayTooltip } from '../shared/ipc.js';
-import { initSettings, getSettings, updateSettings } from './services/settingsStore.js';
+import { initSettings, getSettings } from './services/settingsStore.js';
 import { registerIpc } from './ipc/index.js';
 import { startSidecar, stopSidecar, initSidecar } from './services/sidecar.js';
 import { applyProxySettings } from './services/proxyService.js';
@@ -374,8 +374,15 @@ app.whenReady().then(async () => {
   registerDeepLinkProtocol();
   setupJumpList();
   initDockController(() => mainWindow);
+  // IPC 信任粒度：handler 显式声明 scope（'main' | 'hud' | 'any'），注册器集中
+  // 强制（见 ipc/index.js / ipc/scope.js）。这里只提供三个窗口的访问器，
+  // 危险通道（settings/auth/api/update…）一律 main-only。
   registerIpc(
-    () => [mainWindow, getDesktopLyricsWindow(), getSpectrumWindow()].filter(Boolean),
+    {
+      main: () => mainWindow,
+      lyrics: getDesktopLyricsWindow,
+      spectrum: getSpectrumWindow
+    },
     { consumeLaunchIntent, restartApp }
   );
   initTray({

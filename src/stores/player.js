@@ -226,7 +226,7 @@ export const usePlayerStore = defineStore('player', {
     // 任何缺失/损坏都静默按空启动。
     async restorePersistedState() {
       if (typeof window === 'undefined' || !window.jello?.playbackState?.get) return;
-      let state = null;
+      let state;
       try {
         state = await window.jello.playbackState.get();
       } catch {

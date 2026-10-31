@@ -15,13 +15,13 @@ Third-party components
 ----------------------
 - KuGouMusicApi (api/ submodule): MIT License, Copyright (c) 2023 MakcRe
   https://github.com/MakcRe/KuGouMusicApi
-  Local install-time patch: tools/patch-api.cjs (run via the root postinstall /
-  install-all scripts) rewrites api/module/everyday_recommend.js so the
-  /everyday/recommend endpoint forwards the pagesize/page request parameters
-  (upstream sends a fixed body with only "platform"). The patch is idempotent
-  (JELLO_DAILY_PAGING_PATCH marker), skips cleanly when the submodule is
-  absent, and never fails the install. No other submodule file is modified,
-  and the submodule's git history is untouched.
+  The sidecar process wraps api/module/everyday_recommend.js in memory at
+  require time (electron/sidecar-entry.cjs) so the /everyday/recommend
+  endpoint forwards the pagesize/page request parameters (upstream sends a
+  fixed body with only "platform"). No submodule file is modified on disk,
+  the submodule's working tree and git history stay untouched, and if the
+  module is missing or renamed the sidecar starts with plain upstream
+  behavior.
 - Electron: MIT
 - Vue: MIT
 - Vite: MIT

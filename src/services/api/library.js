@@ -66,9 +66,10 @@ export const getPlaylistTracks = async (playlist, { page = 1, pagesize = 300 } =
   return normalizeSongList(list);
 };
 
-// 每日推荐分页拉满 60 首：上游侧车模块只发固定 POST 体（见 tools/patch-api.cjs
-// 的安装期补丁，透传 pagesize/page）。服务端不认分页参数时按 hash 去重无新增即停，
-// 硬上限 4 页；整段全部失败则回退旧的单次无参请求（错误照常抛出给调用方）。
+// 每日推荐分页拉满 60 首：上游侧车模块只发固定 POST 体（sidecar-entry.cjs 在
+// require 层内存注入，透传 pagesize/page，不改子模块文件）。服务端不认分页参数时
+// 按 hash 去重无新增即停，硬上限 4 页；整段全部失败则回退旧的单次无参请求
+//（错误照常抛出给调用方）。
 const DAILY_TARGET_COUNT = 60;
 const DAILY_MAX_PAGES = 4;
 

@@ -28,9 +28,12 @@ export const SPECTRUM_PRESET_VALUES = Object.freeze(['original', 'legacy']);
 export const API_BASE_URL_MODES = Object.freeze(['default', 'custom']);
 
 
-const PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
-const PROXY_SCHEMES = Object.freeze(['http', 'https', 'socks4', 'socks4a', 'socks5']);
-const isLoopbackHost = (hostname) => {
+// 以下三个是安全白名单的单一事实来源：主进程 sanitize（本文件）、设置页
+// 解释文案（addressChecks.js）与媒体协议诊断放行（mediaScheme.js）共用。
+// 之前各自复制一份曾出现宽松度漂移（127.0.0.2 / [::1] 语义不一致），禁止再复制。
+export const PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+export const PROXY_SCHEMES = Object.freeze(['http', 'https', 'socks4', 'socks4a', 'socks5']);
+export const isLoopbackHost = (hostname) => {
   const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host === '::1') return true;
   return /^127(\.\d{1,3}){3}$/.test(host);

@@ -3,6 +3,7 @@
 // 逐主机 HTTPS 升级（HTTP 仅作为概念版 CDN 证书不匹配时的兜底）。
 // 协议名与 CDN 后缀白名单同时被 CSP 生成、渲染器 URL 构造和主进程代理使用，
 // 因此统一放在本模块，避免两份主机匹配实现失同步。
+import { isLoopbackHost } from './settings.js';
 
 export const MEDIA_SCHEME = 'jello-media';
 
@@ -39,9 +40,10 @@ export const validateMediaTarget = (raw) => {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('unsupported media protocol');
   }
-  // JELLO_DIAG 诊断模式放行本机测试音频（频谱实机标定用，正常构建不进入此分支）
+  // JELLO_DIAG 诊断模式放行本机测试音频（频谱实机标定用，正常构建不进入此分支）。
+  // 回环判定用 shared/settings.js 的单点实现：127.x / localhost / [::1] 语义一致
   if (typeof process !== 'undefined' && process.env?.JELLO_DIAG === '1'
-    && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')) {
+    && isLoopbackHost(url.hostname)) {
     return url;
   }
   if (!isMediaHostAllowed(url.host)) throw new Error('media host is not allowlisted');

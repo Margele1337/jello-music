@@ -96,7 +96,6 @@ app.whenReady().then(async () => {
       // 全文件扫帧，看哪里断
       let off = first.offset;
       let count = 0;
-      let prev = first.offset;
       while (true) {
         const next = findNextFlacFrameOffset(bytes, off + 1, first.stream.streaminfo, off);
         if (next < 0) { console.log(`scan ended after ${count} frames at offset ${off} (remaining ${bytes.length - off}B — 末帧或断点)`); break; }
@@ -105,7 +104,6 @@ app.whenReady().then(async () => {
         if (h.blocksize !== first.header.blocksize || h.sampleRate !== first.header.sampleRate) {
           console.log(`frame ${count + 1} @ ${next}: blocksize=${h.blocksize} rate=${h.sampleRate} (drift!)`);
         }
-        prev = next;
         off = next;
         count += 1;
       }

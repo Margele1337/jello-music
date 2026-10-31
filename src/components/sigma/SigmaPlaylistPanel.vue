@@ -78,24 +78,13 @@ const draggableKeys = () => displayItems.value
 // 拖动上下文（长按触发时建）：起点/键序/项高，供逐帧 transform 计算
 let dragCtx = null;
 
-const clearDragStyles = () => {
-  panelRef.value?.querySelectorAll('.sigma-playlist-item').forEach((el) => {
-    el.style.transform = '';
-    el.style.zIndex = '';
-    el.style.transition = '';
-  });
-};
-
 const finishDrag = async () => {
   const dragKey = dragCtx?.key || null;
-  let keysSnapshot = null;
-  let fromIdx = 0;
-  let lastIdx = 0;
   let preTops = null;
   if (dragCtx) {
-    keysSnapshot = dragCtx.keys;
-    fromIdx = dragCtx.fromIdx;
-    lastIdx = dragCtx.lastIdx;
+    const keysSnapshot = dragCtx.keys;
+    const fromIdx = dragCtx.fromIdx;
+    const lastIdx = dragCtx.lastIdx;
     const nextKeys = [...keysSnapshot];
     nextKeys.splice(fromIdx, 1);
     // lastIdx（curSlot）就是移除被拖项后的最终数组槽位——向下交换不做 -1

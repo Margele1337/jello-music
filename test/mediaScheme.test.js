@@ -45,15 +45,19 @@ test('validateMediaTarget enforces protocol and host allowlist', () => {
   assert.throws(() => validateMediaTarget('::::'), /invalid media url/);
 });
 
-test('validateMediaTarget allows localhost only under JELLO_DIAG', () => {
+test('validateMediaTarget allows loopback only under JELLO_DIAG', () => {
   // JELLO_DIAG=1 是频谱实机标定的诊断模式（见 electron/services/diagServer.js），
-  // 放行 127.0.0.1 测试音频；正常环境（含测试默认环境）必须保持拒绝。
+  // 放行本机回环测试音频；正常环境（含测试默认环境）必须保持拒绝。
+  // 回环语义以 shared/settings.js 的 isLoopbackHost 为单点：127.x / localhost / [::1]。
   assert.throws(() => validateMediaTarget('http://127.0.0.1:8123/beat.wav'), /not allowlisted/);
   const original = process.env.JELLO_DIAG;
   process.env.JELLO_DIAG = '1';
   try {
-    const ok = validateMediaTarget('http://127.0.0.1:8123/beat.wav');
-    assert.equal(ok.host, '127.0.0.1:8123');
+    assert.equal(validateMediaTarget('http://127.0.0.1:8123/beat.wav').host, '127.0.0.1:8123');
+    // 与旧实现（只认 127.0.0.1/localhost）的差异点：其余回环形态同样放行
+    assert.equal(validateMediaTarget('http://127.0.0.2:8123/beat.wav').host, '127.0.0.2:8123');
+    assert.equal(validateMediaTarget('http://[::1]:8123/beat.wav').host, '[::1]:8123');
+    assert.equal(validateMediaTarget('http://localhost:8123/beat.wav').host, 'localhost:8123');
   } finally {
     if (original === undefined) delete process.env.JELLO_DIAG;
     else process.env.JELLO_DIAG = original;

@@ -2,18 +2,13 @@
 // 并把 shared 的归一化结果翻译成中文原因。
 // shared/settings.js 的 normalize* 只会回空串，设置页若不做这层判定就会把
 // 「没存进去」显示成「已保存」，用户直到请求失败才发现地址是空的。
-import { normalizeApiBaseUrl, normalizeProxyUrl } from '../../../shared/settings.js';
-
-const PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
-const PROXY_SCHEMES = Object.freeze(['http', 'https', 'socks4', 'socks4a', 'socks5']);
-
-// 与 shared/settings.js 的 isLoopbackHost 同语义（那份未导出，UI 侧只能自带一份，
-// 仅用于生成解释文案；真正的放行判定始终以主进程 sanitize 结果为准）
-const isLoopbackHost = (hostname) => {
-  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host === '::1') return true;
-  return /^127(\.\d{1,3}){3}$/.test(host);
-};
+import {
+  PROTOCOL_RE,
+  PROXY_SCHEMES,
+  isLoopbackHost,
+  normalizeApiBaseUrl,
+  normalizeProxyUrl
+} from '../../../shared/settings.js';
 
 const parseLoose = (value) => {
   const raw = String(value ?? '').trim();

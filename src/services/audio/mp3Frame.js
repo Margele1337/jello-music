@@ -186,7 +186,7 @@ const parseXingHeader = (bytes, frame, pos, frameEnd) => {
   };
 };
 
-const parseVbriHeader = (bytes, pos, frameEnd) => {
+const parseVbriHeader = (bytes, pos, frameEnd, frame) => {
   if (pos + 36 > frameEnd) return null;
   const declaredBytes = readU32Be(bytes, pos + 16);
   const frames = readU32Be(bytes, pos + 20);
@@ -235,7 +235,7 @@ export const parseMp3VbrHeader = (bytes, frame) => {
   const frameEnd = Math.min(offset + header.frameSize, bytes.byteLength);
   const preferred = offset + 4 + mp3SideInfoBytes(header);
   let pos = -1;
-  let kind = '';
+  let kind;
   const probe = (at) => {
     if (at < 0 || at + 4 > frameEnd) return '';
     const magic = fourCc(bytes, at);
@@ -252,7 +252,7 @@ export const parseMp3VbrHeader = (bytes, frame) => {
   }
   if (pos < 0) return null;
   const parsed = kind === 'vbri'
-    ? parseVbriHeader(bytes, pos, frameEnd)
+    ? parseVbriHeader(bytes, pos, frameEnd, frame)
     : parseXingHeader(bytes, frame, pos, frameEnd);
   if (!parsed || !(parsed.frames > 0)) return null;
   // 时间→帧位置需要每帧样本数与采样率，直接绑在映射表上（同一首歌曲内恒定）

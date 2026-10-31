@@ -434,7 +434,7 @@ const parseMp4 = (input) => {
   const { asc, maxBitrate, avgBitrate } = description;
   const { sampleRate, channels } = parseAudioSpecificConfig(asc);
   const stsz = readSampleSizes(view, requireChild(view, stbl, 'stsz'));
-  const { durationsUs, totalSamples, totalUs } = readTimeToSample(
+  const { durationsUs, totalUs } = readTimeToSample(
     view, requireChild(view, stbl, 'stts'), timescale, stsz.count
   );
   const chunkOffsets = readChunkOffsets(view, stbl);

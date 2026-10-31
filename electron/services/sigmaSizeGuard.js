@@ -23,8 +23,9 @@ const loadWin32Api = () => {
   win32Loading = import('koffi')
     .then((module) => {
       const koffi = module.default || module;
-      // 结构体名不能与 fullscreenWatcher 注册的 'RECT' 重复（koffi 注册表进程级共享）
-      const RECT = koffi.struct('SigmaGuardRect', {
+      // 结构体名不能与 fullscreenWatcher 注册的 'RECT' 重复（koffi 注册表进程级共享）；
+      // 下面的 func 签名按名字引用 'SigmaGuardRect'，注册即生效，无需接住返回值
+      koffi.struct('SigmaGuardRect', {
         left: 'long', top: 'long', right: 'long', bottom: 'long'
       });
       const user32 = koffi.load('user32.dll');

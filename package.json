@@ -10,10 +10,10 @@
     "node": ">=20.19.0"
   },
   "scripts": {
-    "install-all": "npm install && npm --prefix api install && node tools/patch-api.cjs",
-    "postinstall": "node tools/patch-api.cjs",
+    "install-all": "npm install && npm --prefix api install",
     "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build",
+    "lint": "eslint .",
     "start": "electron .",
     "preview": "vite preview",
     "test": "node --test",
@@ -27,11 +27,15 @@
     "koffi": "^3.3.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.10",
     "concurrently": "^10.0.6",
     "cross-env": "^10.1.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-vue": "^10.12.0",
+    "globals": "^17.13.0",
     "pinia": "^3.0.4",
     "vite": "^8.3.5",
     "vue": "^3.5.44",

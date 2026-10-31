@@ -410,7 +410,6 @@ const docked = ref(false);
 const shellDocked = ref(false);
 const undockRequested = ref(false);
 const translucent = computed(() => docked.value && !undockRequested.value);
-const revealing = computed(() => !shellDocked.value);
 let unsubscribeDock = null;
 let unsubscribeOverhang = null;
 let dockedTimer = null;

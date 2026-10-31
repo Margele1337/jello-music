@@ -5,9 +5,6 @@ import { app, safeStorage } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
 
 // 必须 before-ready：让 sessionVault / electron-store 全部落到临时目录
 app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'jello-session-smoke-')));
@@ -23,7 +20,7 @@ app.whenReady().then(async () => {
     return;
   }
 
-  const { initAuthSession, storeLoginData, storeSetCookies, flushAuthSession, getProfile, getCookieHeader }
+  const { initAuthSession, storeLoginData, storeSetCookies, flushAuthSession }
     = await import('../electron/services/authSession.js');
   const { loadSession } = await import('../electron/services/sessionVault.js');
 
