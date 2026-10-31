@@ -71,8 +71,11 @@
     <SigmaQueueList ref="queueListRef" :player="player" />
 
     <!-- 收藏到歌单按钮 + 弹窗 -->
-    <button type="button" class="smp-collect-btn" :title="songLiked ? '已在我喜欢' : '收藏到歌单'" @click="openCollect">
-      <svg viewBox="0 0 24 24" :class="{ 'is-liked': songLiked }"><path d="M12 21s-7.5-4.9-9.7-9.2C.7 8.6 2.4 5 5.9 5c2 0 3.4 1.1 4.1 2.3h4c.7-1.2 2.1-2.3 4.1-2.3 3.5 0 5.2 3.6 3.6 6.8C19.5 16.1 12 21 12 21z" transform="scale(0.92) translate(1,0)" /></svg>
+    <button type="button" class="smp-collect-btn" :title="songLiked ? '已在我喜欢' : '收藏到「我喜欢」'" @click="collectToLiked">
+      <svg viewBox="0 0 24 24" :class="{ 'is-liked': songLiked }"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+    </button>
+    <button type="button" class="smp-add-btn" title="添加到歌单" @click="openCollect">
+      <svg viewBox="0 0 14 14"><rect x="6" y="0" width="2" height="14"/><rect x="0" y="6" width="14" height="2"/></svg>
     </button>
     <SigmaCollectModal ref="collectModalRef" :player="player" @collected="refreshLikedState" />
 
@@ -110,7 +113,12 @@ import SigmaSearchBox from './SigmaSearchBox.vue';
 import SigmaPlaylistPanel from './SigmaPlaylistPanel.vue';
 import SigmaQueueList from './SigmaQueueList.vue';
 import SigmaCollectModal from './SigmaCollectModal.vue';
-import { ensureLikedHashSet, isSongLiked } from '../../services/api/collect.js';
+import {
+  collectSongToLiked,
+  ensureLikedHashSet,
+  isSongLiked,
+  markSongLiked
+} from '../../services/api/collect.js';
 import SigmaText from './SigmaText.vue';
 import { useSigmaWindowDrag } from '../../composables/useSigmaWindowDrag.js';
 
@@ -298,6 +306,36 @@ watch(() => props.player?.currentSong?.hash, () => {
 });
 watch(() => auth.isAuthenticated, refreshLikedState);
 onMounted(refreshLikedState);
+
+// 心形：一键收藏当前歌到「我喜欢」（已收藏时只提示，不重复请求）
+const collecting = ref(false);
+const collectToLiked = async () => {
+  const song = props.player?.currentSong;
+  if (!song?.hash) {
+    window.dispatchEvent(new CustomEvent('jello:toast', { detail: '没有正在播放的歌曲' }));
+    return;
+  }
+  if (!auth.isAuthenticated) {
+    emit('request-login');
+    return;
+  }
+  if (songLiked.value) {
+    window.dispatchEvent(new CustomEvent('jello:toast', { detail: '这首歌已在我喜欢' }));
+    return;
+  }
+  if (collecting.value) return;
+  collecting.value = true;
+  try {
+    await collectSongToLiked(song);
+    markSongLiked(song);
+    songLiked.value = true;
+    window.dispatchEvent(new CustomEvent('jello:toast', { detail: '已收藏到「我喜欢」' }));
+  } catch (error) {
+    window.dispatchEvent(new CustomEvent('jello:toast', { detail: error?.message || '收藏失败' }));
+  } finally {
+    collecting.value = false;
+  }
+};
 
 const openCollect = () => {
   if (!props.player?.currentSong) {
@@ -846,11 +884,39 @@ onBeforeUnmount(() => {
   display: block;
   width: 14px;
   height: 2px;
-  border-radius: 1px;
   background: rgba(254, 254, 254, 0.7);
 }
 
-/* 收藏到歌单按钮（队列按钮左侧） */
+/* 添加到歌单按钮（十字，队列按钮右侧） */
+.smp-add-btn {
+  position: absolute;
+  left: 738px;
+  top: 534px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.smp-add-btn:hover {
+  background: rgba(254, 254, 254, 0.12);
+}
+
+.smp-add-btn svg {
+  /* 十字 1:1 对齐队列图标：14px 渲染 = 横线同宽、2px 同粗、方角 */
+  width: 14px;
+  height: 14px;
+  fill: rgba(254, 254, 254, 0.7);
+}
+
+/* 心形按钮（队列按钮左侧，一键收藏到我喜欢） */
 .smp-collect-btn {
   position: absolute;
   left: 674px;

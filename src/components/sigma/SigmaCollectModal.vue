@@ -89,7 +89,7 @@ defineExpose({ open });
           <ul v-else class="collect-list">
             <li v-for="playlist in playlists" :key="playlist.id"
               :class="{ 'is-liked': isLiked(playlist) }" @click="addTo(playlist)">
-              <span class="collect-name">{{ isLiked(playlist) ? '♥ ' : '' }}{{ playlist.name }}</span>
+              <span class="collect-name">{{ playlist.name }}</span>
               <span v-if="addingId === playlist.id" class="collect-busy">添加中…</span>
             </li>
           </ul>
@@ -164,10 +164,6 @@ defineExpose({ open });
 .collect-list li:hover {
   background: rgba(255, 105, 180, 0.12);
   color: #fff;
-}
-
-.collect-list li.is-liked .collect-name {
-  color: #ff69b4;
 }
 
 .collect-name {

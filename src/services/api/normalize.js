@@ -74,7 +74,10 @@ export const normalizePlaylist = (raw) => {
   const id = collectionId || (listId != null ? String(listId) : '');
   if (!id) return null;
 
-  const name = toText(raw.specialname) || toText(raw.name) || toText(raw.listname) || '歌单';
+  let name = toText(raw.specialname) || toText(raw.name) || toText(raw.listname) || '歌单';
+  // 酷狗自建默认歌单的名称「默认收藏」极易与「我喜欢」（红心收藏）混淆，
+  // 归一化层统一改显为「默认歌单」（识别逻辑用的是 isDefault 标记，不受影响）
+  if (name === '默认收藏') name = '默认歌单';
 
   return {
     id,
