@@ -371,7 +371,7 @@ export const registerIpc = (getWindow, intents = {}) => {
   // 锁定切换握手：渲染层呈现空帧后回报，此刻 setBounds 才无旧内容可闪
   ipcMain.on(IPC.SPECTRUM_GEOMETRY_READY, (event) => {
     if (!isTrustedSender(event, getSpectrumWindow())) return;
-    flushSpectrumGeometry('ack');
+    flushSpectrumGeometry();
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {

@@ -447,15 +447,13 @@ let hudClosed = false;
 let geometrySwitchTimer = null;
 let deferredGeometry = false;
 
-// 渲染层 ACK（或兜底超时）到达：执行被推迟的几何换挡。
-// source 仅用于 main.log 排障：ack=渲染层空帧确认，fallback=ACK 丢失兜底
-export const flushSpectrumGeometry = (source = 'unknown') => {
+// 渲染层 ACK（或兜底超时）到达：执行被推迟的几何换挡
+export const flushSpectrumGeometry = () => {
   deferredGeometry = false;
   if (geometrySwitchTimer) {
     clearTimeout(geometrySwitchTimer);
     geometrySwitchTimer = null;
   }
-  console.log(`[spectrum-geo] switch geometry via ${source}`);
   applyHudTarget();
 };
 
@@ -550,12 +548,11 @@ export const syncSpectrumHudSettings = (settings) => {
     applySpectrumHudMouseEvents(settings.spectrumLocked, { deferGeometry: true });
     deferredGeometry = true;
     if (geometrySwitchTimer) clearTimeout(geometrySwitchTimer);
-    console.log(`[spectrum-geo] defer switch (lock=${payload.spectrumLocked}), waiting for empty-frame ack`);
     // 正路：渲染层画出并呈现空帧后回 geometry-ready（flushSpectrumGeometry）；
     // 兜底：ACK 丢失（渲染层卡顿/重载）250ms 后强制换挡
     geometrySwitchTimer = setTimeout(() => {
       geometrySwitchTimer = null;
-      flushSpectrumGeometry('fallback');
+      flushSpectrumGeometry();
     }, 250);
     return;
   }
