@@ -20,7 +20,7 @@
     </div>
     <!-- 整屏 HUD 不能再给 body 铺半透明底色（会把整个桌面压暗），
          解锁态只画一条不拦截鼠标的边框 + 一个可点的锁定按钮 -->
-    <div class="hud-edit-band" v-if="!locked">
+    <div class="hud-edit-band" v-if="!locked && !closingUi">
       <span class="hud-edit-hint" aria-hidden="true">拖动调整位置 · 双击任意处锁定</span>
       <button type="button" class="hud-edit-lock" aria-label="重新锁定频谱窗口" @click.stop="setLocked(true)">锁定</button>
     </div>
@@ -68,6 +68,9 @@ const playing = ref(false);
 // 条形透明度乘进 canvas 的条形层；信息透明度作用于信息卡（CSS）与柔边层（canvas）
 const infoOpacity = ref(1);
 let barOpacity = 1;
+// 关闭态的 UI 镜像：closing 是 draw 循环用的普通变量，模板（编辑边框的
+// 显隐）需要响应式版本。窗口关闭后不再隐藏，边框必须随关闭消失
+const closingUi = ref(false);
 
 const canvasRef = ref(null);
 const infoRef = ref(null);
@@ -137,7 +140,12 @@ const MOUSE_FADE_STALL_MS = 10000;   // 光标静止多久后假定已离开（m
 let mouseFadeEnabled = true;
 let mouseFadeRadius = 260;           // 渐隐圈最大半径（CSS 像素，设置可调）
 // 关闭动画：主进程销毁窗口前通知渲染层收尾，期间忽略数据、条形塌缩、卡片淡出。
-// 打开不做动画：与「恢复播放」同款，条形经 pendingSnap 瞬间吸附到当前电平
+// 入场动画：恢复播放/重开频谱共用——条形以当前真实频谱为形状从基线整体升起
+// （easeOutCubic，只缩放可见高度不改电平数据）。起播点取首个真实电平帧：
+// 冷启动/攒批空窗的全零帧不计入动画时长，升起从条形有数据的瞬间开始
+const ENTRANCE_MS = 450;
+let entranceAt = 0;
+let entranceArmed = false;
 let closing = false;
 let closeAt = 0;
 let mouseX = -1;
@@ -354,9 +362,19 @@ const draw = (now = performance.now()) => {
 
   const barWidth = Math.ceil(width / BAR_COUNT);
   const sigmaAmp = displayScale * spectrumScale;
+  // 入场因子：1 = 正常绘制；武装未起播 = 0。条形无数据本就不可见，关键是
+  // 信息卡必须等入场一起出现——重开频谱时 playing 冻结为 true，卡片 v-show
+  // 一直挂着，若不压住会在窗口弹出瞬间以满透明度闪现、入场起播又被清零，
+  // 和恢复播放「卡片随条形一起淡入」对不上
+  let entrance = entranceArmed ? 0 : 1;
+  if (entranceAt) {
+    const t = (now - entranceAt) / ENTRANCE_MS;
+    if (t >= 1) entranceAt = 0;
+    else entrance = 1 - (1 - t) ** 3;
+  }
   for (let i = 0; i < BAR_COUNT; i += 1) {
     const refHeight = Math.sqrt(levels[i]) / 12 - 5;
-    heights[i] = Math.min(height, Math.max(0, refHeight) * sigmaAmp);
+    heights[i] = Math.min(height, Math.max(0, refHeight) * sigmaAmp) * entrance;
   }
 
   // 条形透明度只作用于条形层（幽灵条 + 实心条同系数）；鼠标渐隐激活时逐条再乘
@@ -466,9 +484,9 @@ const draw = (now = performance.now()) => {
     : 1;
   const closeFade = closing ? Math.max(0, 1 - (now - closeAt) / 260) : 1;
   const infoEl = infoRef.value;
-  if (infoEl) infoEl.style.opacity = String(infoOpacity.value * cardFactor * closeFade);
+  if (infoEl) infoEl.style.opacity = String(infoOpacity.value * cardFactor * closeFade * entrance);
 
-  drawTint(ctx, height, pulse, cardFactor * closeFade);
+  drawTint(ctx, height, pulse, cardFactor * closeFade * entrance);
 };
 
 const applyPayload = (data) => {
@@ -486,8 +504,12 @@ const applyPayload = (data) => {
     if (coverPulseRef.value) coverPulseRef.value.style.transform = '';
     if (spectrumPreset !== 'legacy') levels.fill(0);
   } else {
-    if (!wasPlaying) pendingSnap = true;
+    if (!wasPlaying) {
+      pendingSnap = true;
+      entranceArmed = true;
+    }
 
+    let hasSignal = false;
     if (Array.isArray(data.levels) && data.levels.length) {
       // 两个预设都逐条采纳电平消息：预设 1 即原版每解码帧 ~43 次/秒；
       // 预设 2（legacy）生产端每块发队首，台阶节奏由 250ms 攒批决定
@@ -496,13 +518,21 @@ const applyPayload = (data) => {
       const count = Math.min(BAR_COUNT, data.levels.length);
       const incoming = new Float32Array(BAR_COUNT);
       for (let i = 0; i < count; i += 1) incoming[i] = Number(data.levels[i]) || 0;
+      hasSignal = incoming.some((value) => value > 0);
+      if (hasSignal && entranceArmed) {
+        entranceArmed = false;
+        entranceAt = now;
+      }
       adoptLevels(incoming, now);
     }
+    // 吸附只由首个「真实电平」帧消费：重开频谱冷启动时 startSpectrum 先发的
+    // 全零 reset 帧不算到位，pendingSnap 留到首个非零帧——被零帧消耗掉的话，
+    // 真实电平到达后条形只能走平滑爬升，观感是「升起动画」而非恢复播放的瞬间出现
     if (data.reset || pendingSnap) {
       prevFrame = nextFrame;              // 立刻到位，不做跨歌/恢复渐变
       interpolateTargets(performance.now());
       levels.set(targets);
-      pendingSnap = false;
+      pendingSnap = !hasSignal;
     }
   }
 
@@ -606,17 +636,22 @@ const onMouseFadeLeave = () => {
 // 动画期内忽略后续数据（stopSpectrum 的收尾零帧会抢在动画前把条形拍平）
 const onSpectrumClose = () => {
   closing = true;
+  closingUi.value = true;
   closeAt = performance.now();
+  // 挂起的入场必须撤掉：关闭动画靠 closeFade 淡出卡片，因子被压成 0 会让
+  // 淡出变成瞬间消失
+  entranceArmed = false;
   targets.fill(0);
   prevFrame = null;
   nextFrame = null;
 };
 
 const onSpectrumReopen = () => {
-  // 关闭动画期重开：退出关闭态，与「恢复播放」同款——下一条电平消息
-  // 到位即吸附到当前帧（pendingSnap），条形瞬间出现
+  // 重开与恢复播放同款：吸附挂起（等首个真实电平帧），并武装升起入场动画
   closing = false;
+  closingUi.value = false;
   pendingSnap = true;
+  entranceArmed = true;
 };
 
 onMounted(() => {

@@ -8,7 +8,9 @@
   Electron `globalShortcut` cannot distinguish left/right Shift. Optional
   desktop-lyrics and spectrum-HUD windows are transparent, always-on-top,
   click-through windows with dedicated narrow preloads; they only receive
-  sanitized lyric text or spectrum levels.
+  sanitized lyric text or spectrum levels. The spectrum HUD is created once and
+  never hidden afterwards — closed means renderer-empty plus forced
+  click-through (see Spectrum HUD window lifecycle).
 - **The main process owns settings, auth state, and API access.** The renderer
   never receives tokens, cookies, or the sidecar port.
 - **Renderer is sandboxed:** `contextIsolation: true`, `nodeIntegration: false`,
@@ -218,6 +220,54 @@ receives `window:dock-changed` and fades the Sigma UI to 50% while docked. The
 strip click sends `window:restore`; tray "show" also restores a docked window.
 The poll only reads the Shift virtual-key state and never installs a keyboard
 hook.
+
+## Spectrum HUD window lifecycle
+
+The HUD window is created once and **never hidden afterwards**; this is the
+load-bearing decision that keeps "toggle the spectrum" and "resume playback"
+visually identical. Every hidden→show transition on Windows plays a
+window-level appearance animation: DWM fades top-level windows in and out by
+default (~200 ms; per-window suppressible with
+`DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, 1)`, which
+Electron does not expose — `spectrumHud.js` sets it once per creation through
+the shared `koffi`/dwmapi bridge), and transparent/layered windows can
+additionally flash while their composited surface rebinds. Pause/resume never
+shows the window, so it never had any of this; while toggling kept hiding and
+re-showing the window, no amount of renderer work could make the two entrances
+match.
+
+- **Close** sends `spectrum:close`; the renderer collapses the bars, fades the
+  info card, and keeps drawing an empty canvas. The window stays visible but
+  fully transparent, and `hudClosed` forces
+  `setIgnoreMouseEvents(true, { forward: true })` — taking over hide's old job
+  of keeping the unlocked fullscreen surface from eating clicks. The unlocked
+  edit band is hidden through a reactive `closingUi` mirror for the same
+  reason.
+- **Reopen** restores click-through per the lock setting and sends
+  `spectrum:reopen`; no window events are involved. The only entrance left is
+  the renderer's rise-in (bars and info card share one 450 ms easeOutCubic
+  factor that starts at the first frame carrying non-zero levels), and the only
+  `showInactive()` left in the window's life is its creation — covered by the
+  DWM attribute. `destroySpectrumHud` still runs only at app quit.
+
+Pitfalls hit on the way, fixed and worth remembering:
+
+- **Born at final geometry.** Initial `BrowserWindow` bounds must already equal
+  the target (`initialHudBounds` reuses `getHudTarget`'s math); a `setBounds`
+  after `ready-to-show` reads as a visible scale/move jump.
+- **Renderer state outlives the closed period.** `applyPayload` early-returns
+  while `closing`, so `playing` freezes at its last value: the `v-show`-ed
+  info card never unmounts while music keeps playing and would reappear at
+  full opacity the instant the window reappears, then blink off when the
+  entrance begins. The entrance factor is therefore 0 while armed and not yet
+  started, covering card and bars alike.
+- **Snap is consumed by signal, not by any frame.** `pendingSnap` survives
+  all-zero frames (the cold-start reset frame `startSpectrum` sends first) and
+  is cleared by the first frame with non-zero levels — a zero frame would eat
+  the snap and leave a visible smoothing ramp instead of the entrance.
+- **Debugging trick:** unlock the HUD (drag mode). The edit border makes
+  window-level fades visible — that is how the mismatch was traced to the
+  window layer instead of the renderer.
 
 ## Updates
 

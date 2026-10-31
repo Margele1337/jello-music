@@ -196,6 +196,31 @@ const initialHudBounds = (store, area, dipScale) => {
   return { ...size, ...position, offset };
 };
 
+// Windows 默认给顶层窗口的显示/隐藏加 ~200ms 淡入淡出（DWM 过渡）。频谱 HUD
+// 全透明、内容为空时看不出它；但解锁态的编辑边框、以及首显瞬间尚未清零的
+// 内容都会被这层淡入罩住。DWMWA_TRANSITIONS_FORCEDISABLED(3)=1 只关过渡动画，
+// 不动阴影/穿透/置顶；Electron 未暴露此属性，经 koffi 调 dwmapi（与
+// fullscreenWatcher 同一桥）。窗口创建后异步落定，生命周期内只需一次；
+// 失败只是退回系统默认过渡，不值得打扰用户
+let dwmDisableStarted = false;
+
+const disableDwmTransitions = (win) => {
+  if (process.platform !== 'win32' || dwmDisableStarted) return;
+  dwmDisableStarted = true;
+  // 句柄同步取：异步间隙窗口理论上可能已被销毁
+  const handle = win.getNativeWindowHandle();
+  import('koffi')
+    .then((module) => {
+      const koffi = module.default || module;
+      // 结构体名不能与 fullscreenWatcher 的 DWMDWORD 重名：koffi 全局注册
+      const dword = koffi.struct('SpectrumDwmDword', { value: 'uint32' });
+      const dwmapi = koffi.load('dwmapi.dll');
+      const setAttribute = dwmapi.func('long __stdcall DwmSetWindowAttribute(void*, uint32, _In_ SpectrumDwmDword*, uint32)');
+      setAttribute(handle, 3, { value: 1 }, 4);
+    })
+    .catch(() => {});
+};
+
 export const showSpectrumHud = () => {
   if (hudWindow && !hudWindow.isDestroyed()) {
     hudWindow.showInactive();
@@ -205,6 +230,7 @@ export const showSpectrumHud = () => {
   // 创建窗口前先落定锁定状态：initialHudBounds / 首次 applyHudTarget 都依赖它，
   // 顺序错了窗口会以错误几何显示、再跳到目标位置
   hudLocked = getSettings().spectrumLocked === true;
+  hudClosed = false;
 
   const store = getBoundsStore();
   const display = screen.getPrimaryDisplay();
@@ -246,6 +272,7 @@ export const showSpectrumHud = () => {
   spectrumUserOffset = offset;
 
   hudWindow.setAlwaysOnTop(true, 'screen-saver');
+  disableDwmTransitions(hudWindow);
   hudWindow.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true });
   applySpectrumHudMouseEvents(getSettings().spectrumLocked === true);
 
@@ -382,12 +409,9 @@ export const showSpectrumHud = () => {
 };
 
 export const destroySpectrumHud = () => {
-  if (closeTimer) {
-    clearTimeout(closeTimer);
-    closeTimer = null;
-  }
   if (hudWindow && !hudWindow.isDestroyed()) hudWindow.destroy();
   hudWindow = null;
+  hudClosed = false;
   lastData = null;
   lastSettings = null;
   spectrumGeometryKey = '';
@@ -405,30 +429,19 @@ export const destroySpectrumHud = () => {
   spectrumDisplayListenersBound = false;
 };
 
-// 关闭动画时长：渲染层先播条形塌缩/信息卡淡出，动画结束后隐藏窗口；
-// 重开时直接 showInactive + reopen——窗口与页面保持存活，重建带来的
-// 加载期丢帧（sendSpectrumData 对 isLoading 的丢弃）与整窗闪现都不存在
-const CLOSE_ANIMATION_MS = 380;
-let closeTimer = null;
-
-// 动画播完只隐藏：隐藏的窗口保留渲染层状态（targets/levels/opening），
-// 重开即反向动画；销毁只发生在应用退出
-const hideSpectrumHud = () => {
-  try {
-    hudWindow?.hide();
-  } catch {
-    /* ignore */
-  }
-};
+// 关闭不再隐藏窗口。隐藏→显示会触发 Windows 的窗口级出现动画（DWM 过渡、
+// 分层表面重新挂载），即使设了 DWMWA_TRANSITIONS_FORCEDISABLED 也压不干净；
+// 而恢复播放不走 show、永远没有这层——这是「开关频谱」与「恢复播放」观感
+// 无法对齐的根源。窗口保持存活+可见但内容清空（全透明不可见），重开零窗口
+// 事件，入场只剩渲染层的升起动画；销毁只发生在应用退出。
+// 解锁态原本靠隐藏避免吃点击，关闭态改由 hudClosed 强制穿透替代。
+let hudClosed = false;
 
 export const syncSpectrumHud = (enabled) => {
   if (enabled) {
-    if (closeTimer) {
-      clearTimeout(closeTimer);
-      closeTimer = null;
-    }
+    hudClosed = false;
     if (hudWindow && !hudWindow.isDestroyed()) {
-      hudWindow.showInactive();
+      applySpectrumHudMouseEvents(getSettings().spectrumLocked === true);
       try {
         hudWindow.webContents.send('spectrum:reopen');
       } catch {
@@ -440,16 +453,26 @@ export const syncSpectrumHud = (enabled) => {
     return;
   }
   if (!hudWindow || hudWindow.isDestroyed()) return;
+  hudClosed = true;
   try {
     hudWindow.webContents.send('spectrum:close');
   } catch {
     /* ignore */
   }
-  if (closeTimer) clearTimeout(closeTimer);
-  closeTimer = setTimeout(() => {
-    closeTimer = null;
-    hideSpectrumHud();
-  }, CLOSE_ANIMATION_MS);
+  applySpectrumHudMouseEvents(getSettings().spectrumLocked === true);
+};
+
+// 设置页「重置频谱位置」：清掉拖动记录与全部位置存档，回到左下贴底锚点。
+// 关闭态窗口也照常生效（applyHudTarget 只依赖几何，不依赖可见性）
+export const resetSpectrumHudPosition = () => {
+  spectrumUserMoved = false;
+  spectrumUserOffset = { x: 0, y: 0 };
+  const store = getBoundsStore();
+  store.delete('spectrumUserMoved');
+  store.delete('spectrumWindowPosition');
+  store.delete('spectrumWindowSize');
+  store.delete('spectrumGeometryDipScale');
+  applyHudTarget();
 };
 
 // 锁定 = 鼠标完全穿透（forward 让 mousemove 仍转发，方便渲染层感知）；解锁 = 可拖动/缩放。
@@ -459,7 +482,9 @@ export const syncSpectrumHud = (enabled) => {
 export const applySpectrumHudMouseEvents = (locked) => {
   hudLocked = locked === true;
   if (!hudWindow || hudWindow.isDestroyed()) return;
-  if (locked === true) {
+  // 关闭态强制穿透：窗口不再隐藏（见 syncSpectrumHud），解锁态的空窗口
+  // 若仍接鼠标会吃掉整片区域的点击
+  if (hudLocked || hudClosed) {
     hudWindow.setIgnoreMouseEvents(true, { forward: true });
   } else {
     hudWindow.setIgnoreMouseEvents(false);

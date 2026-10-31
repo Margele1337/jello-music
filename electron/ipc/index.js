@@ -20,7 +20,7 @@ import {
 } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
-import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings } from '../windows/spectrumHud.js';
+import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings, resetSpectrumHudPosition } from '../windows/spectrumHud.js';
 import {
   isMainWindowDocked,
   moveMainWindow,
@@ -360,6 +360,12 @@ export const registerIpc = (getWindow, intents = {}) => {
       if (Number.isFinite(num)) next[key] = Math.round(num);
     }
     if (Object.keys(next).length) window.setBounds(next);
+  });
+
+  // 设置页「重置频谱位置」：清拖动记录回到默认锚点（主窗口发起）
+  ipcMain.on(IPC.SPECTRUM_RESET_POSITION, (event) => {
+    if (!isTrustedSender(event, getWindow())) return;
+    resetSpectrumHudPosition();
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {

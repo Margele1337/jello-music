@@ -905,6 +905,15 @@ const settingSections = [
           { value: true, displayText: '锁定（穿透鼠标）' },
           { value: false, displayText: '解锁（可拖动位置）' }
         ]
+      },
+      {
+        key: 'spectrumResetPosition',
+        control: 'action',
+        icon: 'refresh',
+        label: '重置频谱位置',
+        customText: '重置',
+        action: () => window.jello?.spectrum?.resetPosition?.(),
+        description: '清除手动拖动过的位置，频谱窗口回到屏幕左下角默认锚点。'
       }
     ]
   },

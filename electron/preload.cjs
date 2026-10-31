@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld('jello', {
   },
   spectrum: {
     update: (payload) => ipcRenderer.send('spectrum:update', payload),
+    // 设置页「重置频谱位置」：清拖动记录回到默认锚点
+    resetPosition: () => ipcRenderer.send('spectrum:reset-position'),
     onRequestCurrent: (callback) => {
       const handler = () => callback();
       ipcRenderer.on('spectrum:request-current', handler);

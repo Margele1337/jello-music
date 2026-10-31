@@ -41,6 +41,8 @@ export const IPC = Object.freeze({
   SPECTRUM_SETTINGS: 'spectrum:settings',
   SPECTRUM_LOCK_TOGGLE: 'spectrum:lock-toggle',
   SPECTRUM_BOUNDS: 'spectrum:bounds',
+  // 设置页「重置频谱位置」：清除拖动记录，回到左下贴底锚点
+  SPECTRUM_RESET_POSITION: 'spectrum:reset-position',
   WINDOW_DOCK_TOGGLE: 'window:dock-toggle',
   WINDOW_DOCK_GET: 'window:dock-get',
   WINDOW_RESTORE: 'window:restore',
