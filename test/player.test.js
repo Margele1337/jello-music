@@ -535,3 +535,57 @@ test('radio song keeps accumulating distinct recommendations', () => {
   assert.equal(player.queue.length, 2);
   assert.equal(player.index, 0);
 });
+
+test('radio provider feeds a fresh song when playback reaches the queue end', async () => {
+  stubApi();
+  const player = setupPlayer();
+  player.queue = [{ hash: 'h0', name: '歌曲0' }];
+  player.index = 0;
+  player.setRadioProvider(async () => {
+    player.playRadioSong({ hash: 'r1', name: '推荐1' });
+    return true;
+  });
+
+  player.playNext();
+  await sleep(20);
+  assert.equal(player.queue.length, 2);
+  assert.equal(player.index, 1);
+  assert.equal(player.currentSong.name, '推荐1');
+  player.setRadioProvider(null);
+});
+
+test('radio provider declining falls back to the original replay/wrap logic', async () => {
+  stubApi();
+  const player = setupPlayer();
+  player.queue = [{ hash: 'h0', name: '歌曲0' }];
+  player.index = 0;
+  player.setRadioProvider(async () => false);
+
+  player.playNext();
+  await sleep(20);
+  assert.equal(player.queue.length, 1);   // 不追加
+  assert.equal(player.index, 0);          // 单曲队列重播当前曲
+  assert.equal(player.playing, true);
+  player.setRadioProvider(null);
+});
+
+test('radio provider only fires at the queue end, not on mid-queue advance', async () => {
+  stubApi();
+  const player = setupPlayer();
+  player.queue = [{ hash: 'h0' }, { hash: 'h1' }];
+  player.index = 0;
+  let calls = 0;
+  player.setRadioProvider(async () => {
+    calls += 1;
+    return false;
+  });
+
+  player.playNext();   // 中段推进：不问电台
+  assert.equal(calls, 0);
+  assert.equal(player.index, 1);
+  player.playNext();   // 已是最后一首：问电台，电台拒绝 → 回退循环到 0
+  await sleep(10);
+  assert.equal(calls, 1);
+  assert.equal(player.index, 0);
+  player.setRadioProvider(null);
+});
