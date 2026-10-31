@@ -1,5 +1,5 @@
 <script setup>
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   PLAYBACK_RATES,
@@ -921,6 +921,15 @@ const settingSections = [
     title: '系统',
     items: [
       {
+        key: 'masterVolume',
+        control: 'slider',
+        icon: 'volume',
+        label: '应用音量',
+        description: '音量合成器式的应用级音量：与主界面音量相乘后输出（应用 50% × 主界面 80% = 实际 40%），主界面滑杆语义不变。',
+        slider: { min: 0, max: 1, step: 0.01 },
+        format: (value) => `${Math.round(value * 100)}%`
+      },
+      {
         key: 'hotkeyIntroSeen',
         control: 'action',
         icon: 'keyboard',
@@ -1166,6 +1175,54 @@ const onSegClick = (item, option) => {
 
 const sliderDisplay = (item) => item.format(Number(settings[item.key]));
 
+// ===== 滑条数值点击编辑：点数字 → 文本框，回车/失焦提交（Esc 取消） =====
+const editingSliderKey = ref('');
+const editingSliderValue = ref('');
+const editingSliderCancel = ref(false);
+let editingSliderInput = null;
+
+const sliderIsPercent = (item) => item.format(Number(settings[item.key])).endsWith('%');
+
+const startSliderEdit = (item, event) => {
+  editingSliderKey.value = item.key;
+  editingSliderCancel.value = false;
+  // 百分比刻度按屏幕上的百分数编辑（45% 就输 45），其余按原始值
+  editingSliderValue.value = sliderIsPercent(item)
+    ? String(Math.round(Number(settings[item.key]) * 10000) / 100)
+    : String(settings[item.key]);
+  nextTick(() => {
+    editingSliderInput = event.target.parentElement?.querySelector('.row-value-input');
+    editingSliderInput?.focus();
+    editingSliderInput?.select();
+  });
+};
+
+const cancelSliderEdit = () => {
+  editingSliderCancel.value = true;
+  editingSliderInput?.blur();
+};
+
+const commitSliderEdit = (item) => {
+  if (editingSliderKey.value !== item.key) return;
+  editingSliderKey.value = '';
+  if (editingSliderCancel.value) {
+    editingSliderCancel.value = false;
+    return;
+  }
+  const raw = Number(editingSliderValue.value);
+  if (!Number.isFinite(raw)) return;
+  const { min, max, step } = item.slider;
+  let value = sliderIsPercent(item) ? raw / 100 : raw;
+  value = Math.min(max, Math.max(min, value));
+  if (Number.isFinite(step) && step > 0) {
+    // 吸附到步长并收敛浮点噪声（0.30000000000004 → 0.3）
+    value = min + Math.round((value - min) / step) * step;
+    value = Number(value.toFixed((String(step).split('.')[1] || '').length));
+  }
+  value = Math.min(max, Math.max(min, value));
+  if (value !== Number(settings[item.key])) updateSetting(item.key, value);
+};
+
 // ===== 按分类重置：仅把该分类中存在于 SETTING_DEFAULTS 的键恢复默认 =====
 const sectionResetPatch = (section) => {
   const patch = {};
@@ -1383,9 +1440,15 @@ onBeforeUnmount(() => {
                 </button>
               </div>
 
-              <!-- 滑条型：行内滑条 + 数值 -->
+              <!-- 滑条型：行内滑条 + 数值（点数值可直接输入，回车/失焦提交，Esc 取消） -->
               <div v-else-if="item.control === 'slider'" class="row-slider-wrap">
-                <span class="row-value">{{ sliderDisplay(item) }}</span>
+                <input v-if="editingSliderKey === item.key" type="text" class="row-value-input"
+                  v-model="editingSliderValue" spellcheck="false"
+                  @keydown.enter.prevent="$event.target.blur()"
+                  @keydown.esc.prevent="cancelSliderEdit"
+                  @blur="commitSliderEdit(item)" />
+                <span v-else class="row-value row-value-editable" title="点击输入数值"
+                  @click="startSliderEdit(item, $event)">{{ sliderDisplay(item) }}</span>
                 <input type="range" class="row-slider" :min="item.slider.min" :max="item.slider.max"
                   :step="item.slider.step" :value="settings[item.key]"
                   @change="updateSetting(item.key, Number($event.target.value))" />
@@ -1798,6 +1861,26 @@ onBeforeUnmount(() => {
   color: rgba(255, 154, 213, 0.9);
   min-width: 52px;
   text-align: right;
+}
+
+/* 滑条数值可点击输入：虚线下划线提示可编辑 */
+.row-value-editable {
+  cursor: pointer;
+  border-bottom: 1px dashed rgba(255, 154, 213, 0.35);
+}
+
+.row-value-input {
+  width: 64px;
+  min-width: 0;
+  padding: 1px 6px;
+  background: rgba(254, 254, 254, 0.06);
+  border: 1px solid rgba(255, 105, 180, 0.45);
+  border-radius: 4px;
+  color: #ece9f1;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: right;
+  outline: none;
 }
 
 .row-slider {

@@ -231,7 +231,8 @@ const syncSpectrum = () => {
     void startSpectrum(player.audio, {
       getSong: () => player.currentSong,
       isPlaying: () => player.playing,
-      getVolume: () => settings.volume,
+      // 频谱图内增益跟随「主界面音量 × 应用音量」，与元素路径同口径
+      getVolume: () => player.effectiveVolume,
       getMuted: () => false,
       send: sendSpectrum
     });
@@ -257,6 +258,11 @@ watch(() => player.playing, () => {
 watch(() => settings.playbackRate, (rate) => {
   player.setPlaybackRate(Number(rate) || 1);
   syncMediaPosition();
+});
+
+// 设置页「应用音量」（音量合成器式二级音量）变化即重放当前音量
+watch(() => settings.masterVolume, () => {
+  player.applyMasterVolume();
 });
 watch(() => settings.loudnessNormalization, (enabled) => {
   player.applyLoudnessSetting(enabled);

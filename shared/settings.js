@@ -104,6 +104,9 @@ export const SETTING_DEFAULTS = Object.freeze({
   quality: '320',
   dataSource: 'concept',
   volume: 1,
+  // 音量合成器式应用级音量：与主界面音量相乘后输出（应用音量 50% × 主界面
+  // 80% = 实际 40%），主界面滑杆语义不变
+  masterVolume: 1,
   playbackRate: 1,
   loudnessNormalization: false,
   audioOutputDevice: 'default',
@@ -160,6 +163,12 @@ export const sanitizeSettings = (patch) => {
     if (key === 'volume') {
       const number = Number(value);
       if (Number.isFinite(number)) next.volume = Math.max(0, Math.min(1, number));
+      continue;
+    }
+
+    if (key === 'masterVolume') {
+      const number = Number(value);
+      if (Number.isFinite(number)) next.masterVolume = Math.max(0, Math.min(1, number));
       continue;
     }
 

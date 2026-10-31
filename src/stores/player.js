@@ -124,6 +124,13 @@ const clearAutoAdvance = () => {
   }
 };
 
+// 音量合成器式二级音量（设置页「应用音量」）：与主界面音量相乘后输出。
+// settings.volume 仍是主界面的媒体音量，这里只做应用级整体缩放
+const masterVolumeScale = () => {
+  const master = Number(useSettingsStore().masterVolume);
+  return Number.isFinite(master) ? Math.min(1, Math.max(0, master)) : 1;
+};
+
 const ensureAudio = (store) => {
   // 始终重绑到最新 store：audio 元素是单例，但 store 可能重建（测试/热更新）
   boundStore = store;
@@ -133,7 +140,7 @@ const ensureAudio = (store) => {
   audio.preload = 'auto';
   // Spectrum sampling needs CORS-enabled media; Kugou CDNs return ACAO: *
   audio.crossOrigin = 'anonymous';
-  audio.volume = clampPercent(store?.volume ?? 100) / 100;
+  audio.volume = (clampPercent(store?.volume ?? 100) / 100) * masterVolumeScale();
 
   audio.addEventListener('play', () => {
     if (boundStore) boundStore.playing = true;
@@ -192,6 +199,10 @@ export const usePlayerStore = defineStore('player', {
   getters: {
     currentSong: (state) => state.queue[state.index] || null,
     currentPlaybackModeIndex: (state) => state.mode,
+    // 主界面音量 × 应用音量（音量合成器式二级音量），0-1
+    effectiveVolume() {
+      return (this.volume / 100) * masterVolumeScale();
+    },
     audio() {
       return ensureAudio(this);
     }
@@ -204,7 +215,7 @@ export const usePlayerStore = defineStore('player', {
       const settings = useSettingsStore();
       const volume = Number(settings.volume);
       this.volume = clampPercent((Number.isFinite(volume) ? volume : 1) * 100);
-      ensureAudio(this).volume = this.volume / 100;
+      ensureAudio(this).volume = (this.volume / 100) * masterVolumeScale();
       bindUnloadPersistHooks();
       void this.restorePersistedState();
     },
@@ -253,7 +264,7 @@ export const usePlayerStore = defineStore('player', {
       const next = clampPercent(value * 100);
       if (next === this.volume) return;
       this.volume = next;
-      ensureAudio(this).volume = next / 100;
+      ensureAudio(this).volume = (next / 100) * masterVolumeScale();
     },
 
     async loadCurrent({ keepTime = false, resume = true, qualityOverride = '' } = {}) {
@@ -313,7 +324,7 @@ export const usePlayerStore = defineStore('player', {
         } else {
           element.src = result.url;
         }
-        element.volume = this.volume / 100;
+        element.volume = (this.volume / 100) * masterVolumeScale();
         element.playbackRate = Number(settings.playbackRate) || 1;
         this.loudness = result.loudness || null;
         setLoudnessEnabled(!!settings.loudnessNormalization);
@@ -723,8 +734,9 @@ export const usePlayerStore = defineStore('player', {
       const next = clampPercent(value);
       this.volume = next;
       // Web Audio gain 优先（频谱启用时音频走音频图）；否则直接设元素音量
-      if (!applyOutputVolume(next / 100, false)) {
-        ensureAudio(this).volume = next / 100;
+      const effective = (next / 100) * masterVolumeScale();
+      if (!applyOutputVolume(effective, false)) {
+        ensureAudio(this).volume = effective;
       }
 
       if (persistTimer) clearTimeout(persistTimer);
@@ -733,6 +745,15 @@ export const usePlayerStore = defineStore('player', {
         const settings = useSettingsStore();
         void settings.update({ volume: next / 100 }).catch(() => {});
       }, 500);
+    },
+
+    // 设置页「应用音量」（音量合成器式二级音量）变化时重放当前音量：
+    // 与 setVolumePercent 同路径（Web Audio gain 优先，元素兜底）
+    applyMasterVolume() {
+      const effective = (this.volume / 100) * masterVolumeScale();
+      if (!applyOutputVolume(effective, false)) {
+        ensureAudio(this).volume = effective;
+      }
     }
   }
 });
