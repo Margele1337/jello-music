@@ -112,8 +112,8 @@ export const SETTING_DEFAULTS = Object.freeze({
   desktopLyricsFont: '',
   spectrum: false,
   spectrumScale: 1,
-  // 只作用于频谱条形层（幽灵条/实心条/条内封面叠加）的不透明度
-  spectrumBarOpacity: 1,
+  // 只作用于频谱条形层（幽灵条/实心条/条内封面叠加）的不透明度，默认 10%
+  spectrumBarOpacity: 0.1,
   // 频谱信息卡（封面、歌名与四周柔边）的不透明度，1 = 原版
   spectrumInfoOpacity: 1,
   // 鼠标靠近透明：光标附近的条形/信息卡以圆形区域渐隐（半径随进入逐渐扩大），
