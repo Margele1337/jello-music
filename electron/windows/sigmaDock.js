@@ -40,10 +40,9 @@ const TOGGLE_THROTTLE_MS = 120;
 let getWindow = () => null;
 let docked = false;
 let animating = false;
-// 动画归属：'dock'（收起/呼出）| 'nudge'（轻推手势）。两者同为 renderer 模式，
-// nudge-done 回报只能清理自己的那份——连续快按 RShift 时，收起动画在
-// dock-changed → startAnimation 之后才收到迟到的 nudge-done，不区分会把
-// 刚启动的收起动画杀掉，面板卡在半路（docked=true 但窗口不在收起位）
+// 动画归属（'dock' | 'nudge'）：两者同为 renderer 模式，nudge-done 回报
+// 只能清理自己的那份——连续快按 RShift 时迟到的 nudge-done 不得误杀刚
+// 启动的收起动画
 let animationKind = null;
 let animationTimer = null;
 let animationWatchdog = null;
@@ -60,11 +59,8 @@ let raiseTimer = null;
 // 渲染层拖拽会话存活（window:drag-active 上报，pointerdown 建 / pointerup 撤）
 let dragActive = false;
 
-// 拖拽中按 RShift 的「侧边轻推」：主进程只裁定「这是轻推不是收起」并下发
-// 起手帧参数（出程目标 = 向收起位方向的一段位移），手势动画整体由渲染层
-// rAF 驱动（与收起/呼出动画同款，垂直同步平滑；主进程 setTimeout 粒度
-// ~15ms 且不与 vsync 对齐，之前的主进程驱动版本观感发涩）。主进程仅保留
-// 一个带兜底时限的标志：轻推中再按 RShift = 明确收起
+// 拖拽中按 RShift 的「侧边轻推」：主进程只下发起手帧，手势由渲染层 rAF
+// 驱动（垂直同步平滑）；轻推中再按 RShift = 明确收起
 let nudgeActiveUntil = 0;
 
 export const initDockController = (getter) => {
@@ -390,13 +386,11 @@ const NUDGE_OUT_RATIO = 0.25;   // 出程位移 = 距收起位距离的 25%（�
 const NUDGE_MAX_PX = 140;       // 出程位移上限
 const NUDGE_MIN_PX = 24;        // 已悬出收起位时的保底可见位移
 // 主进程侧轻推标志的兜底时限：正常手势 ~360ms，渲染层结束时会回报清零，
-// 这里只防渲染层失联（崩溃/无回报）后标志永久悬挂
+// 这里只防渲染层失联后标志永久悬挂
 const NUDGE_FLAG_FALLBACK_MS = 900;
 
-// 下发轻推起手帧并进入 renderer 动画态：渲染层以 rAF 驱动整个手势
-//（出程 → 回程追踪拖拽预期位），经 animate-position 通道逐帧落位，
-// 结束时回报 nudge-done（finishWindowNudge）。置 renderer 动画态后
-// applyAnimatePosition 才接帧，且 moveMainWindow 被动画闸拦住不会打架
+// 下发轻推起手帧并进入 renderer 动画态：手势由渲染层 rAF 驱动，逐帧经
+// animate-position 落位，结束时回报 nudge-done
 export const beginNudge = () => {
   const win = getWindow();
   if (!win || win.isDestroyed() || !win.isVisible()) return false;
@@ -425,9 +419,7 @@ export const beginNudge = () => {
   return true;
 };
 
-// 渲染层回报手势结束（完成或被取消）：清轻推标志，交还常规拖拽。
-// 动画只清自己的那份——若手势取消发生在 dockMainWindow 已启动收起动画
-// 之后（连续快按 RShift 的时序），此刻 running 的是收起动画，绝不能动
+// 渲染层回报手势结束（完成或被取消）：清轻推标志；动画只清自己的那份
 export const finishWindowNudge = () => {
   nudgeActiveUntil = 0;
   if (animating && animationMode === 'renderer' && animationKind === 'nudge') {

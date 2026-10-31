@@ -362,9 +362,7 @@ const stopTrayTooltipSync = () => {
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-attach-webview', (event) => event.preventDefault());
-  // Electron 45+ 新签名：参数都在事件对象上（message/level/lineNumber/sourceId）。
-  // 旧的位置参数签名已被弃用（注册即打印 deprecation 警告），不再使用；
-  // level 为 'info'|'warning'|'error'|'debug' 字符串，logSink 直接大写入日志
+  // Electron 45+ 事件对象签名（旧位置参数签名已弃用，注册即打印警告）
   contents.on('console-message', (details) => {
     if (details?.message == null) return;
     const source = details.sourceId || '';
@@ -387,9 +385,7 @@ app.whenReady().then(async () => {
   registerDeepLinkProtocol();
   setupJumpList();
   initDockController(() => mainWindow);
-  // IPC 信任粒度：handler 显式声明 scope（'main' | 'hud' | 'any'），注册器集中
-  // 强制（见 ipc/index.js / ipc/scope.js）。这里只提供三个窗口的访问器，
-  // 危险通道（settings/auth/api/update…）一律 main-only。
+  // IPC 信任粒度：scope 显式声明、注册器集中强制（见 ipc/index.js / ipc/scope.js）
   registerIpc(
     {
       main: () => mainWindow,

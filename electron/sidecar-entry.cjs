@@ -7,21 +7,11 @@
 const Module = require('node:module');
 const path = require('node:path');
 
-// ===== 每日推荐分页透传（纯逻辑，可在测试中直接 require 本文件复用） =====
-//
-// 上游 /everyday/recommend 模块（api/module/everyday_recommend.js）把请求体
-// 钉死为 { platform }，丢弃渲染进程传入的 pagesize/page，导致普通账号每日
-// 推荐永远只有一页 30 首。旧方案在 postinstall 用整文件覆盖改写子模块，
-// 会让子模块工作树长期变脏（git submodule update 冲突/吞补丁）；这里改为
-// require 层注入：钩住 Module._load，仅命中该模块时包一层——调用原模块，
-// 但喂给它一个「把分页参数并入上游最终请求体」的 useAxios。
-//
-// 与整文件覆盖相比：
-// - 子模块文件与 git 状态保持干净，npm install 不再写第三方源码；
-// - 上游若改版（换 URL/加密方式），包装不覆盖任何上游字段，天然跟随；
-// - 上游若自行转发分页参数，合并只在缺键时补，幂等；
-// - 上游若换文件名导致钩子不命中，行为退回上游原样（每日推荐 30 首），
-//   与未打补丁一致，绝不影响 sidecar 启动。
+// ===== 每日推荐分页透传（纯逻辑，测试可直接 require 本文件复用） =====
+// 上游 /everyday/recommend 模块把请求体钉死为 { platform }，丢弃 pagesize/page。
+// 在 require 层包一层而非改子模块磁盘文件：子模块工作树保持干净；合并只在
+// 缺键时补（上游自行转发时幂等）；钩子不命中（上游换名/改版）则退回上游
+// 原样（每日推荐 30 首），绝不影响 sidecar 启动。
 const PAGING_KEYS = ['pagesize', 'page'];
 
 const pickPagingParams = (params) => {
@@ -47,8 +37,7 @@ const wrapEverydayRecommend = (original) => (params, useAxios) => {
   });
 };
 
-// 拦截 require：仅命中 <api 目录>/module/everyday_recommend.js 时返回包装版。
-// Module._resolveFilename 是非公开 API，异常时按未命中处理（分页退回上游原样）。
+// 拦截 require：仅命中 <api 目录>/module/everyday_recommend.js 时返回包装版
 const installEverydayPagingHook = (entryPath) => {
   const target = path.join(path.dirname(path.resolve(entryPath)), 'module', 'everyday_recommend.js');
   const originals = new WeakMap();

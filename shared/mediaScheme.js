@@ -40,8 +40,7 @@ export const validateMediaTarget = (raw) => {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('unsupported media protocol');
   }
-  // JELLO_DIAG 诊断模式放行本机测试音频（频谱实机标定用，正常构建不进入此分支）。
-  // 回环判定用 shared/settings.js 的单点实现：127.x / localhost / [::1] 语义一致
+  // JELLO_DIAG 诊断模式放行本机测试音频（回环判定单点：127.x / localhost / [::1]）
   if (typeof process !== 'undefined' && process.env?.JELLO_DIAG === '1'
     && isLoopbackHost(url.hostname)) {
     return url;

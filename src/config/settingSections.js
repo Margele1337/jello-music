@@ -4,12 +4,9 @@ import { PLAYBACK_RATES } from '../../shared/settings.js';
 export const rateText = (rate) => (rate === 1 ? '1.0x' : `${rate}x`);
 
 /**
- * 设置分区 schema（分类胶囊 + 卡片行 + 通用渲染器的数据源）。
- *
- * 本模块只描述「有哪些行、长什么样、行为指向哪」；所有响应式状态（settings
- * store、computed 文案、草稿 ref）与动作（保存/测试/重启/教程）由 SettingsView
- * 在调用时注入——解构参数名与视图内变量同名，行内闭包与原实现一字不差。
- * 频谱分区的行定义刻意保持原样平移（频谱行为敏感，只搬家不改写）。
+ * 设置分区 schema：只描述「有哪些行、长什么样、行为指向哪」；响应式状态
+ * 与动作由 SettingsView 调用时注入（解构参数名与视图内变量同名，行内闭包
+ * 语义不变）。频谱分区行定义原样平移，只搬家不改写。
  */
 export const buildSettingSections = ({
   settings,

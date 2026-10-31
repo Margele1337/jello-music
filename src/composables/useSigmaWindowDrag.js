@@ -10,8 +10,7 @@ import { resolveDragTargetX, resolveNudgeFrame } from '../../shared/dragTarget.j
 const PANEL_WIDTH = 800;
 const PANEL_HEIGHT = 600;
 
-// 当前显示器工作区：轻推回程端点必须按「此刻正常拖拽会把面板放到哪里」
-// 计算（含橡皮筋/夹屏），与交还后的 1:1 拖拽同源，衔接才无跳变
+// 当前显示器工作区：轻推回程端点与交还后的 1:1 拖拽同源，衔接才无跳变
 const workArea = () => {
   const s = window.screen || {};
   const left = Number.isFinite(s.availLeft) ? s.availLeft : 0;
@@ -32,15 +31,13 @@ export function useSigmaWindowDrag(options = {}) {
   let dragState = null;
   let dragFrame = null;
   let pendingPosition = null;
-  // 侧边轻推手势（拖拽中按 RShift）：渲染层 rAF 驱动「出程冲向侧边 → 回程
-  // 追踪拖拽预期位」，期间拖拽消息暂停发送（面板由手势动画驱动），结束时把
-  // 拖拽基准重定到手势终点，无缝交还 1:1 拖拽。主进程只下发起手帧并等回报
+  // 侧边轻推手势（拖拽中按 RShift）：rAF 驱动出程→回程追踪拖拽预期位，
+  // 期间拖拽消息暂停，结束时重定拖拽基准到手势终点，无缝交还 1:1 拖拽
   let nudgeGesture = null;
   let unsubscribeNudge = null;
 
-  // 停靠状态一变就终止本会话与进行中的手势：收起后面板已到屏幕右缘、呼出后
-  // 面板在回弹路上，按下时记录的拖拽基准都会在下一次移动把面板拽到错误位置
-  //（历史「弹出到鼠标位置」缺陷的兜底）。重新按住即可再拖
+  // 停靠状态一变就终止会话与手势：否则旧拖拽基准会在下一次移动把面板
+  // 拽到错误位置（历史「弹出到鼠标位置」缺陷的兜底）
   let unsubscribeDock = null;
   const handleDockChanged = () => {
     if (dragState || pendingDrag) endDrag();

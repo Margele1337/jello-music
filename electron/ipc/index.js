@@ -78,19 +78,12 @@ const broadcast = (channel, payload) => {
 };
 
 /**
- * IPC 信任模型：handler 显式声明 scope（'main' | 'hud' | 'any'），
- * 由 resolveScopeWindows 统一解析成窗口集合再校验，注册器集中强制。
- * 此前默认信任「任意自家窗口」，清会话 / 代发 API / 重启 sidecar 等高危
- * 通道对 HUD 窗口（歌词/频谱，与主窗口跑同一个 bundle）同样开放。
- * 收紧对真实调用方零影响：HUD 窗口走窄 preload（jelloSpectrum/jelloLyrics），
- * 本来就没有这些桥。
- *
- * scope 约定：
+ * IPC 信任模型：handler 显式声明 scope（'main' | 'hud' | 'any'），由
+ * resolveScopeWindows 统一解析成窗口集合再校验，注册器集中强制。
  * - 'main'：危险通道与主窗口专属功能（settings/auth/api/update/window/net/log）。
- * - 'any'：保持现状即安全的通道（目前仅频谱数据面：update/hud-ready/
- *   lock-toggle/reset-position），刻意不改其信任集合以免惊动频谱链路。
- * - 桌面歌词/频谱的细节通道继续直接对特定窗口校验（getDesktopLyricsWindow /
- *   getSpectrumWindow），语义比 scope 更细，保持原样。
+ *   HUD 窗口走窄 preload 本来就没有这些桥，收紧对真实调用方零影响。
+ * - 'any'：保持现状即安全的通道（目前仅频谱数据面），刻意不收紧。
+ * - 桌面歌词/频谱的细节通道继续直接对特定窗口校验（比 scope 更细），保持原样。
  */
 export const registerIpc = (windows, intents = {}) => {
   const windowsInScope = (scope) => resolveScopeWindows(scope, windows);
