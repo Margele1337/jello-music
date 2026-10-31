@@ -40,6 +40,11 @@ const TOGGLE_THROTTLE_MS = 120;
 let getWindow = () => null;
 let docked = false;
 let animating = false;
+// 动画归属：'dock'（收起/呼出）| 'nudge'（轻推手势）。两者同为 renderer 模式，
+// nudge-done 回报只能清理自己的那份——连续快按 RShift 时，收起动画在
+// dock-changed → startAnimation 之后才收到迟到的 nudge-done，不区分会把
+// 刚启动的收起动画杀掉，面板卡在半路（docked=true 但窗口不在收起位）
+let animationKind = null;
 let animationTimer = null;
 let animationWatchdog = null;
 let animationStartedAt = 0;
@@ -83,6 +88,7 @@ const cancelAnimation = () => {
     animationWatchdog = null;
   }
   animationMode = null;
+  animationKind = null;
   animating = false;
 };
 
@@ -173,6 +179,7 @@ const startAnimation = (win, toX, toY) => {
 
   cancelAnimation();
   animating = true;
+  animationKind = 'dock';
   animationStartedAt = Date.now();
   animationMode = 'renderer';
   targetX = toX;
@@ -404,6 +411,7 @@ export const beginNudge = () => {
     : NUDGE_MIN_PX;
   if (excursion < 2) return false;
   animating = true;
+  animationKind = 'nudge';
   animationMode = 'renderer';
   animationStartedAt = Date.now();
   lastFrameAt = Date.now();
@@ -417,10 +425,14 @@ export const beginNudge = () => {
   return true;
 };
 
-// 渲染层回报手势结束（完成或被取消）：清动画态与轻推标志，交还常规拖拽
+// 渲染层回报手势结束（完成或被取消）：清轻推标志，交还常规拖拽。
+// 动画只清自己的那份——若手势取消发生在 dockMainWindow 已启动收起动画
+// 之后（连续快按 RShift 的时序），此刻 running 的是收起动画，绝不能动
 export const finishWindowNudge = () => {
   nudgeActiveUntil = 0;
-  if (animating && animationMode === 'renderer') cancelAnimation();
+  if (animating && animationMode === 'renderer' && animationKind === 'nudge') {
+    cancelAnimation();
+  }
 };
 
 export const getMainWindowBounds = () => {
