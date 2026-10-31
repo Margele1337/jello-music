@@ -1,5 +1,6 @@
 import { screen } from 'electron';
 import { getForegroundFullscreenState } from '../services/fullscreenWatcher.js';
+import { resolveDragTargetX } from '../../shared/dragTarget.js';
 import { IPC } from '../../shared/ipc.js';
 
 // 右侧收起/呼出：1:1 移植旧版 sigmaWindow.js 的行为。
@@ -324,13 +325,19 @@ export const moveMainWindow = (x, y, movedX = 0) => {
   if (!win || win.isDestroyed()) return;
   if (nudge) {
     // 轻推回程段：渲染层拖拽的预期位置就是回程目标，动画连续追踪——直接
-    // setBounds 会把「回到鼠标」变成瞬移；出程段丢弃拖拽消息
+    // setBounds 会把「回到鼠标」变成瞬移；出程段丢弃拖拽消息。
+    // 目标解析必须与正常拖拽同一套（含橡皮筋）：悬出区间若被硬夹回屏幕内，
+    // 回程就到不了鼠标预期位置（回归缺陷：拖右一段距离后回不到鼠标）
     if (nudge.phase === 'return' && Number.isFinite(x) && Number.isFinite(y)) {
       const area = screen.getDisplayMatching({
         x: Math.round(x), y: Math.round(y), width: WINDOW_WIDTH, height: WINDOW_HEIGHT
       }).workArea;
-      nudge.targetX = Math.min(Math.max(Math.round(x), area.x), area.x + area.width - WINDOW_WIDTH);
+      const target = resolveDragTargetX({
+        desiredX: x, areaLeft: area.x, areaRight: area.x + area.width, windowWidth: WINDOW_WIDTH, movedX
+      });
+      nudge.targetX = target.x;
       nudge.targetY = Math.min(Math.max(Math.round(y), area.y), area.y + area.height - WINDOW_HEIGHT);
+      setOverhanging(target.overhanging);
     }
     return;
   }
@@ -346,22 +353,13 @@ export const moveMainWindow = (x, y, movedX = 0) => {
   const bottom = area.y + area.height;
   const nextY = Math.min(Math.max(Math.round(y), area.y), bottom - WINDOW_HEIGHT);
 
-  // 原版第 1 步：精确夹取，无越界余量
-  const clampedX = Math.min(Math.max(Math.round(x), area.x), right - WINDOW_WIDTH);
-
-  // 原版第 2 步：var14 = 200, movedX > 70 时橡皮筋
-  if (x + WINDOW_WIDTH > right + 200 && movedX > 70) {
-    const pushedX = clampedX + Math.trunc((x - clampedX - 200) * 0.5);
-    setOverhanging(pushedX + WINDOW_WIDTH > right);
-    if (pushedX !== bounds.x || nextY !== bounds.y) {
-      win.setBounds({ x: pushedX, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
-    }
-    return;
-  }
-
-  setOverhanging(clampedX + WINDOW_WIDTH > right);
-  if (clampedX !== bounds.x || nextY !== bounds.y) {
-    win.setBounds({ x: clampedX, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
+  // 夹取 + 橡皮筋两步（原版顺序）收敛在纯函数里，与轻推回程共用同一套目标
+  const target = resolveDragTargetX({
+    desiredX: x, areaLeft: area.x, areaRight: right, windowWidth: WINDOW_WIDTH, movedX
+  });
+  setOverhanging(target.overhanging);
+  if (target.x !== bounds.x || nextY !== bounds.y) {
+    win.setBounds({ x: target.x, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
   }
 };
 
@@ -412,8 +410,11 @@ export const cancelNudge = () => {
 
 const NUDGE_OUT_RATIO = 0.25;   // 出程位移 = 距收起位距离的 25%（「移动一点」）
 const NUDGE_MAX_PX = 140;       // 出程位移上限
-const NUDGE_OUT_FACTOR = 0.25;  // 缓动系数与收起动画同族（x 0.25 / y 0.2 每帧）
-const NUDGE_RETURN_FACTOR = 0.2;
+const NUDGE_MIN_PX = 24;        // 已悬出收起位时的保底可见位移
+const NUDGE_OUT_FACTOR = 0.25;  // 缓动系数与收起动画同族
+const NUDGE_RETURN_FACTOR = 0.35;
+const NUDGE_RETURN_Y_FACTOR = 0.25;
+const NUDGE_RETURN_FAILSAFE_MS = 2000;   // 回程兜底：超时强制交还 1:1 拖拽
 
 const nudgeStep = () => {
   if (!nudge) return;
@@ -429,19 +430,21 @@ const nudgeStep = () => {
   nudge.lastTime = now;
   const frameFactor = dt / ANIM_GAME_FRAME_MS;
   const fx = nudge.phase === 'out' ? NUDGE_OUT_FACTOR : NUDGE_RETURN_FACTOR;
+  const fy = nudge.phase === 'out' ? 0.2 : NUDGE_RETURN_Y_FACTOR;
 
   const bounds = win.getBounds();
   const nextX = nudge.targetX > bounds.x
     ? Math.min(bounds.x + (nudge.targetX - bounds.x) * fx * frameFactor, nudge.targetX)
     : Math.max(bounds.x + (nudge.targetX - bounds.x) * fx * frameFactor, nudge.targetX);
   const nextY = nudge.targetY > bounds.y
-    ? Math.min(bounds.y + (nudge.targetY - bounds.y) * 0.2 * frameFactor, nudge.targetY)
-    : Math.max(bounds.y + (nudge.targetY - bounds.y) * 0.2 * frameFactor, nudge.targetY);
+    ? Math.min(bounds.y + (nudge.targetY - bounds.y) * fy * frameFactor, nudge.targetY)
+    : Math.max(bounds.y + (nudge.targetY - bounds.y) * fy * frameFactor, nudge.targetY);
 
   if (nudge.phase === 'out' && Math.abs(nudge.outX - nextX) < 0.5) {
     // 出程到位 → 切回程：目标先回到轻推起点，回程段由 moveMainWindow 持续
     // retarget 成拖拽预期位置（鼠标在动就跟手，静止则原位收回）
     nudge.phase = 'return';
+    nudge.returnStartedAt = now;
     nudge.targetX = nudge.startX;
     nudge.targetY = nudge.startY;
   } else if (nudge.phase === 'return'
@@ -453,10 +456,15 @@ const nudgeStep = () => {
     return;
   }
 
-  if (nudge) {
-    setBoundsAt(win, nextX, nextY);
-    nudge.timer = setTimeout(nudgeStep, ANIM_TICK_MS);
+  if (!nudge) return;
+  // 兜底：拖拽目标持续移动导致缓动长期不收敛时，强制交还 1:1 拖拽
+  //（交还瞬间位置与目标可能有小差量，由后续 moveMainWindow 平滑追上）
+  if (nudge.phase === 'return' && now - nudge.returnStartedAt > NUDGE_RETURN_FAILSAFE_MS) {
+    cancelNudge();
+    return;
   }
+  setBoundsAt(win, nextX, nextY);
+  nudge.timer = setTimeout(nudgeStep, ANIM_TICK_MS);
 };
 
 export const nudgeMainWindow = () => {
@@ -466,8 +474,15 @@ export const nudgeMainWindow = () => {
   const bounds = win.getBounds();
   const area = areaFor(win);
   const dockX = area.x + area.width - DOCK_VISIBLE;
-  const outX = bounds.x + Math.max(0, Math.min(NUDGE_MAX_PX, (dockX - bounds.x) * NUDGE_OUT_RATIO));
-  if (Math.abs(outX - bounds.x) < 2) return false;   // 已贴着收起位，轻推没有可见意义
+  // 已悬出收起位（向右拖过头）时也必须给出可见的轻推并回程——绝不能在此
+  // 返回 false 落回「真收起」分支，那正是「拖右一段距离后按 RShift 面板
+  // 不回到鼠标位置」的根源之一
+  const towardDock = dockX - bounds.x;
+  const excursion = towardDock > 0
+    ? Math.min(NUDGE_MAX_PX, towardDock * NUDGE_OUT_RATIO)
+    : NUDGE_MIN_PX;
+  const outX = bounds.x + excursion;
+  if (excursion < 2) return false;   // 理论兜底（悬出态走 NUDGE_MIN_PX，不会到达）
   nudge = {
     phase: 'out',
     timer: null,
