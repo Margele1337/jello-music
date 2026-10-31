@@ -497,3 +497,41 @@ test('song change and pause push sanitized state to the bridge', async () => {
     'albumAudioId', 'albumId', 'author', 'hash', 'img', 'name', 'timeLength'
   ]);
 });
+
+test('radio song appends to the queue and plays the new track', async () => {
+  stubApi();
+  const player = setupPlayer();
+  player.queue = [{ hash: 'h0', name: '歌曲0' }];
+  player.index = 0;
+
+  player.playRadioSong({ hash: 'r1', name: '推荐1' });
+  assert.equal(player.queue.length, 2);
+  assert.equal(player.index, 1);
+  assert.equal(player.currentSong.name, '推荐1');
+  await sleep(20);
+  assert.equal(player.playing, true);
+});
+
+test('radio song jumps to the existing entry instead of duplicating it', () => {
+  stubApi();
+  const player = setupPlayer();
+  player.queue = [{ hash: 'h0', name: '歌曲0' }, { hash: 'h1', name: '歌曲1' }];
+  player.index = 1;
+
+  player.playRadioSong({ hash: 'h0', name: '歌曲0' });
+  assert.equal(player.queue.length, 2);
+  assert.equal(player.index, 0);
+});
+
+test('radio song keeps accumulating distinct recommendations', () => {
+  stubApi();
+  const player = setupPlayer();
+  player.queue = [];
+  player.index = -1;
+
+  player.playRadioSong({ hash: 'r1', name: '推荐1' });
+  player.playRadioSong({ hash: 'r2', name: '推荐2' });
+  player.playRadioSong({ hash: 'r1', name: '推荐1' });   // 重复推荐 → 跳回不重复入列
+  assert.equal(player.queue.length, 2);
+  assert.equal(player.index, 0);
+});

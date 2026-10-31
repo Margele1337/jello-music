@@ -152,11 +152,19 @@ const clear = () => {
   status.value = '';
 };
 
+// 直接以一组歌曲填充卡片区（猜你喜欢电台的累积列表），绕过搜索/歌单加载
+const showSongs = (songs) => {
+  requestToken += 1;
+  cards.value = (Array.isArray(songs) ? songs : []).map(toSongCard);
+  status.value = '';
+};
+
 onMounted(loadDailyRecommend);
 
 defineExpose({
   showPlaylist,
   loadDailyRecommend,
+  showSongs,
   clear
 });
 

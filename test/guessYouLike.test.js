@@ -18,7 +18,6 @@ globalThis.window = {
 
 const { getGuessYouLike } = await import('../src/services/api/library.js');
 
-const cardPayload = (songs) => ({ status: 1, data: { song_list: songs } });
 const cardSong = (n) => ({
   hash: `HASH${n}`,
   songname: `推荐歌曲${n}`,
@@ -27,51 +26,30 @@ const cardSong = (n) => ({
   album_id: 1
 });
 
-test('getGuessYouLike stops after one pull when the card returns a full list', async () => {
+test('getGuessYouLike passes the card song list through normalization', async () => {
   requests.length = 0;
-  handler = async () => cardPayload(Array.from({ length: 15 }, (_, i) => cardSong(i)));
+  handler = async () => ({ status: 1, data: { song_list: [cardSong(1), cardSong(2)] } });
 
   const songs = await getGuessYouLike();
-  assert.equal(songs.length, 15);
+  assert.equal(songs.length, 2);
+  assert.equal(songs[0].hash, 'HASH1');
+  assert.equal(songs[0].name, '推荐歌曲1');
   assert.equal(requests.length, 1);
   assert.equal(requests[0].path, '/top/card');
   assert.equal(requests[0].params.card_id, 1);
+  assert.ok(Number.isFinite(requests[0].params.timestamp), 'timestamp busts the api cache');
 });
 
-test('getGuessYouLike accumulates one-song radio pulls into a deduped queue', async () => {
+test('getGuessYouLike surfaces a single-song radio response as-is', async () => {
   requests.length = 0;
-  let pull = 0;
-  handler = async () => cardPayload([cardSong(pull++)]);   // 每次一首、逐次不同
-
-  const songs = await getGuessYouLike();
-  assert.equal(songs.length, 10);                          // 凑满目标数
-  assert.equal(new Set(songs.map((song) => song.hash)).size, 10);
-  assert.equal(requests.length, 10);
-});
-
-test('getGuessYouLike dedupes repeats and stops when recommendations repeat', async () => {
-  requests.length = 0;
-  handler = async () => cardPayload([cardSong(7)]);        // 永远同一首
+  handler = async () => ({ status: 1, data: { song_list: [cardSong(9)] } });
 
   const songs = await getGuessYouLike();
   assert.equal(songs.length, 1);
-  assert.equal(requests.length, 2);                        // 第二次无新增即停
+  assert.equal(songs[0].hash, 'HASH9');
 });
 
-test('getGuessYouLike keeps partial results when a later pull fails', async () => {
-  requests.length = 0;
-  let pull = 0;
-  handler = async () => {
-    const n = pull++;
-    if (n < 3) return cardPayload([cardSong(n)]);
-    return { status: 0, message: 'boom' };                  // ensureOk 会抛
-  };
-
-  const songs = await getGuessYouLike();
-  assert.equal(songs.length, 3);
-});
-
-test('getGuessYouLike throws when the very first pull fails', async () => {
+test('getGuessYouLike throws the localized error when the card fails', async () => {
   requests.length = 0;
   handler = async () => ({ status: 0, message: 'boom' });
 

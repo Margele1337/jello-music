@@ -538,6 +538,24 @@ export const usePlayerStore = defineStore('player', {
       void this.loadCurrent();
     },
 
+    // 猜你喜欢电台：把新推荐追加到队列末尾并立即播放。推荐已在队列中时
+    // 直接跳到那一首（不产生重复项）；已积累的推荐历史就是后续自动接续
+    // 的队列，随机模式下同样记入历史栈供回溯
+    playRadioSong(song) {
+      if (!song?.hash) return;
+      clearAutoAdvance();
+      this.failStreak = 0;
+      const existing = this.queue.findIndex((item) => item.hash === song.hash);
+      if (existing >= 0) {
+        this.index = existing;
+      } else {
+        this.queue.push(song);
+        this.index = this.queue.length - 1;
+      }
+      if (this.mode === 0) this.noteShufflePlay(this.index);
+      void this.loadCurrent();
+    },
+
     removeFromQueue(index) {
       if (index < 0 || index >= this.queue.length) return;
       this.queue.splice(index, 1);
