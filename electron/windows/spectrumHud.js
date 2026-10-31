@@ -409,6 +409,11 @@ export const showSpectrumHud = () => {
 };
 
 export const destroySpectrumHud = () => {
+  if (geometrySwitchTimer) {
+    clearTimeout(geometrySwitchTimer);
+    geometrySwitchTimer = null;
+  }
+  deferredGeometry = false;
   if (hudWindow && !hudWindow.isDestroyed()) hudWindow.destroy();
   hudWindow = null;
   hudClosed = false;
@@ -436,8 +441,30 @@ export const destroySpectrumHud = () => {
 // 事件，入场只剩渲染层的升起动画；销毁只发生在应用退出。
 // 解锁态原本靠隐藏避免吃点击，关闭态改由 hudClosed 强制穿透替代。
 let hudClosed = false;
+// 锁定切换的几何换挡握手（见 syncSpectrumHudSettings）：渲染层呈现空帧后回
+// geometry-ready，主进程才 setBounds——换几何那一帧合成器里保证没有旧条形，
+// 否则旧内容被拉伸到新窗口尺寸，读作「频谱在屏幕中间闪一下」
+let geometrySwitchTimer = null;
+let deferredGeometry = false;
+
+// 渲染层 ACK（或兜底超时）到达：执行被推迟的几何换挡。
+// source 仅用于 main.log 排障：ack=渲染层空帧确认，fallback=ACK 丢失兜底
+export const flushSpectrumGeometry = (source = 'unknown') => {
+  deferredGeometry = false;
+  if (geometrySwitchTimer) {
+    clearTimeout(geometrySwitchTimer);
+    geometrySwitchTimer = null;
+  }
+  console.log(`[spectrum-geo] switch geometry via ${source}`);
+  applyHudTarget();
+};
 
 export const syncSpectrumHud = (enabled) => {
+  if (geometrySwitchTimer) {
+    clearTimeout(geometrySwitchTimer);
+    geometrySwitchTimer = null;
+  }
+  deferredGeometry = false;
   if (enabled) {
     hudClosed = false;
     if (hudWindow && !hudWindow.isDestroyed()) {
@@ -479,7 +506,7 @@ export const resetSpectrumHudPosition = () => {
 // 解除穿透时不能带 forward 选项：Windows 上 (false, {forward:true}) 解除不干净，窗口仍然穿透
 // HUD 表面现在是整块工作区：解锁态整屏都会吃鼠标，渲染层为此提供「锁定」按钮 + 双击任意处复位，
 // 且解锁态指示框/徽标全程 pointer-events:none（只有按钮可点），不挡穿透路径。
-export const applySpectrumHudMouseEvents = (locked) => {
+export const applySpectrumHudMouseEvents = (locked, { deferGeometry = false } = {}) => {
   hudLocked = locked === true;
   if (!hudWindow || hudWindow.isDestroyed()) return;
   // 关闭态强制穿透：窗口不再隐藏（见 syncSpectrumHud），解锁态的空窗口
@@ -489,8 +516,9 @@ export const applySpectrumHudMouseEvents = (locked) => {
   } else {
     hudWindow.setIgnoreMouseEvents(false);
   }
-  // 锁定/解锁切换即改变目标尺寸：解锁收回底部条，锁定铺回整个区域
-  applyHudTarget();
+  // 锁定/解锁切换即改变目标尺寸：解锁收回底部条，锁定铺回整个区域。
+  // deferGeometry：锁定切换专用——几何延后到空帧呈现后由定时器切换
+  if (!deferGeometry) applyHudTarget();
 };
 
 export const syncSpectrumHudSettings = (settings) => {
@@ -509,11 +537,29 @@ export const syncSpectrumHudSettings = (settings) => {
     spectrumLocked: settings.spectrumLocked,
     scale: hudWindow && !hudWindow.isDestroyed() ? getGeometryScale(getDisplay()) : 1
   };
+  const previousLocked = lastSettings?.spectrumLocked;
+  const lockChanged = previousLocked != null && payload.spectrumLocked != null
+    && payload.spectrumLocked !== previousLocked;
   lastSettings = payload;
   if (!hudWindow || hudWindow.isDestroyed()) return;
-  applySpectrumHudMouseEvents(settings.spectrumLocked);
   if (hudWindow.webContents.isLoading()) return;
+  // 设置先于几何：锁定切换时渲染层武装入场（清空画布），setBounds 那一帧
+  // 合成器里已是空内容，无旧条形可闪
   hudWindow.webContents.send('spectrum:settings', payload);
+  if (lockChanged) {
+    applySpectrumHudMouseEvents(settings.spectrumLocked, { deferGeometry: true });
+    deferredGeometry = true;
+    if (geometrySwitchTimer) clearTimeout(geometrySwitchTimer);
+    console.log(`[spectrum-geo] defer switch (lock=${payload.spectrumLocked}), waiting for empty-frame ack`);
+    // 正路：渲染层画出并呈现空帧后回 geometry-ready（flushSpectrumGeometry）；
+    // 兜底：ACK 丢失（渲染层卡顿/重载）250ms 后强制换挡
+    geometrySwitchTimer = setTimeout(() => {
+      geometrySwitchTimer = null;
+      flushSpectrumGeometry('fallback');
+    }, 250);
+    return;
+  }
+  applySpectrumHudMouseEvents(settings.spectrumLocked);
 };
 
 export const getSpectrumWindow = () => hudWindow;

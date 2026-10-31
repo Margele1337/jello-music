@@ -24,5 +24,7 @@ contextBridge.exposeInMainWorld('jelloSpectrum', {
   },
   setLocked: (value) => ipcRenderer.send('spectrum:lock-toggle', value === true),
   sendBounds: (bounds) => ipcRenderer.send('spectrum:bounds', bounds),
+  // 锁定切换握手：空帧已呈现，主进程可以安全换几何
+  geometryReady: () => ipcRenderer.send('spectrum:geometry-ready'),
   ready: () => ipcRenderer.send('spectrum:hud-ready')
 });

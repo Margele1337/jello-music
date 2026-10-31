@@ -20,7 +20,7 @@ import {
 } from '../windows/desktopLyrics.js';
 import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../shared/desktopLyrics.js';
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
-import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings, resetSpectrumHudPosition } from '../windows/spectrumHud.js';
+import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings, resetSpectrumHudPosition, flushSpectrumGeometry } from '../windows/spectrumHud.js';
 import {
   isMainWindowDocked,
   moveMainWindow,
@@ -366,6 +366,12 @@ export const registerIpc = (getWindow, intents = {}) => {
   ipcMain.on(IPC.SPECTRUM_RESET_POSITION, (event) => {
     if (!isTrustedSender(event, getWindow())) return;
     resetSpectrumHudPosition();
+  });
+
+  // 锁定切换握手：渲染层呈现空帧后回报，此刻 setBounds 才无旧内容可闪
+  ipcMain.on(IPC.SPECTRUM_GEOMETRY_READY, (event) => {
+    if (!isTrustedSender(event, getSpectrumWindow())) return;
+    flushSpectrumGeometry('ack');
   });
 
   ipcMain.on(IPC.WINDOW_DOCK_TOGGLE, (event) => {

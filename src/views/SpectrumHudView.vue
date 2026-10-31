@@ -146,6 +146,16 @@ let mouseFadeRadius = 260;           // 渐隐圈最大半径（CSS 像素，设
 const ENTRANCE_MS = 450;
 let entranceAt = 0;
 let entranceArmed = false;
+// 锁定切换的几何保持期：换挡前后画布必须全空（防止旧帧被拉伸），换挡完成
+// 即吸附当前电平、条形原样恢复——锁定切换不做升起入场（那是恢复播放/重开
+// 的语义），快速来回切换只留下一次 ~280ms 的短暂眨眼
+let geometryHoldUntil = 0;
+// 空帧 ACK：锁定切换后全空绘制保持 ≥120ms 才回报 geometry-ready。只数 3 帧
+// 不够——渲染层提交了空帧 ≠ DWM 已合成消费，GPU 落后 1~2 帧时 setBounds
+// 会把切挡前的旧条形帧拉伸出来（有概率复现，实测 defer→ack 仅 11~16ms）
+let geometryAckAt = 0;
+// 上一次设置同步的锁定态：仅用于识别「切换」（首次同步不武装入场）
+let appliedLocked = null;
 let closing = false;
 let closeAt = 0;
 let mouseX = -1;
@@ -314,6 +324,12 @@ const draw = (now = performance.now()) => {
   const width = canvas.width;
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
+  // 锁定切换握手：全空绘制保持 ≥120ms 才回报主进程换几何（渲染层提交空帧
+  // 之后，还要给 DWM 足够 vsync 把旧条形帧消费掉）
+  if (geometryAckAt && now - geometryAckAt >= 120) {
+    geometryAckAt = 0;
+    window.jelloSpectrum?.geometryReady?.();
+  }
 
   const dt = lastDrawTime > 0 ? Math.min(now - lastDrawTime, 100) : 1000 / 60;
   lastDrawTime = now;
@@ -362,11 +378,22 @@ const draw = (now = performance.now()) => {
 
   const barWidth = Math.ceil(width / BAR_COUNT);
   const sigmaAmp = displayScale * spectrumScale;
-  // 入场因子：1 = 正常绘制；武装未起播 = 0。条形无数据本就不可见，关键是
-  // 信息卡必须等入场一起出现——重开频谱时 playing 冻结为 true，卡片 v-show
-  // 一直挂着，若不压住会在窗口弹出瞬间以满透明度闪现、入场起播又被清零，
-  // 和恢复播放「卡片随条形一起淡入」对不上
-  let entrance = entranceArmed ? 0 : 1;
+  // 入场因子：1 = 正常绘制。两个归零来源——恢复播放/重开的入场（armed，等
+  // 首个真实电平帧起播升起）；锁定切换的几何保持期（换挡完成后直接吸附，
+  // 不做升起——快速来回切换只留下一次短暂眨眼）
+  let entrance = 1;
+  if (geometryHoldUntil) {
+    if (now >= geometryHoldUntil) {
+      geometryHoldUntil = 0;
+      // 换挡完成：吸附当前电平，条形即刻恢复
+      prevFrame = nextFrame;
+      interpolateTargets(now);
+      levels.set(targets);
+    } else {
+      entrance = 0;
+    }
+  }
+  if (entranceArmed) entrance = 0;
   if (entranceAt) {
     const t = (now - entranceAt) / ENTRANCE_MS;
     if (t >= 1) entranceAt = 0;
@@ -572,7 +599,18 @@ const applySettings = (settings = {}) => {
   }
   if (Number.isFinite(settings.spectrumInfoScale)) infoScale.value = clampInfoScale(settings.spectrumInfoScale);
   if (settings.spectrumInfoVisible != null) infoVisible.value = settings.spectrumInfoVisible === true;
-  if (settings.spectrumLocked != null) locked.value = settings.spectrumLocked === true;
+  if (settings.spectrumLocked != null) {
+    const nextLocked = settings.spectrumLocked === true;
+    // 锁定切换伴随窗口几何换挡（底部条 ⇄ 整块区域）：主进程等空帧呈现后再
+    // setBounds，这里先武装入场把条形/信息卡清空——旧内容没东西可闪，
+    // 几何落位后随真实电平重新升起（与恢复播放/重开同款）
+    if (appliedLocked !== null && nextLocked !== appliedLocked) {
+      geometryHoldUntil = performance.now() + 280;
+      geometryAckAt = performance.now();
+    }
+    appliedLocked = nextLocked;
+    locked.value = nextLocked;
+  }
 };
 
 // 解锁态不再给 body 铺半透明底（整屏会把桌面压暗），改成边框 + 徽标提示，纯 CSS 完成。
@@ -638,9 +676,10 @@ const onSpectrumClose = () => {
   closing = true;
   closingUi.value = true;
   closeAt = performance.now();
-  // 挂起的入场必须撤掉：关闭动画靠 closeFade 淡出卡片，因子被压成 0 会让
-  // 淡出变成瞬间消失
+  // 挂起的入场/几何保持期必须撤掉：关闭动画靠 closeFade 淡出卡片，因子被
+  // 压成 0 会让淡出变成瞬间消失
   entranceArmed = false;
+  geometryHoldUntil = 0;
   targets.fill(0);
   prevFrame = null;
   nextFrame = null;

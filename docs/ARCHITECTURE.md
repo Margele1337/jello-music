@@ -265,6 +265,20 @@ Pitfalls hit on the way, fixed and worth remembering:
   all-zero frames (the cold-start reset frame `startSpectrum` sends first) and
   is cleared by the first frame with non-zero levels — a zero frame would eat
   the snap and leave a visible smoothing ramp instead of the entrance.
+- **Geometry switches wait for an empty frame — and snap instead of entering.**
+  Lock/unlock swaps the window between the bottom strip and the full area.
+  Resizing before the renderer reacts makes the compositor present the previous
+  frame stretched into the new size — a one-frame "spectrum flashes mid-screen".
+  `syncSpectrumHudSettings` therefore sends settings first (the renderer clears
+  bars and card) and defers the geometry switch until the renderer reports
+  `spectrum:geometry-ready` after ≥120 ms of empty frames — a 3-frame ack still
+  flashed intermittently, because a submitted empty frame is not yet a
+  composited one: DWM can lag 1–2 vsyncs behind and stretch the last
+  pre-switch bars frame. The lock toggle deliberately does **not** play the
+  rise-in entrance (that semantics belongs to resume/reopen): once the switch
+  is done the renderer snaps levels back and the bars reappear as they were,
+  so rapid toggling reads as a single ~280 ms blink instead of a
+  disappear-then-rise that itself looks like a flash.
 - **Debugging trick:** unlock the HUD (drag mode). The edit border makes
   window-level fades visible — that is how the mismatch was traced to the
   window layer instead of the renderer.
