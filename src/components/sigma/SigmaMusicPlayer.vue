@@ -386,20 +386,17 @@ const onPlaylistSelect = (item) => {
   }
 };
 
-// 猜你喜欢电台：每次点击拉一首新推荐立即播放；已播过的推荐累积在右栏
-// 卡片区（保留，会话内不清除）——这片区域对齐「每日推荐」的卡片列表，
-// 点其中任意一张就在这份累积列表内播放。累积列表同时是后续自动接续的队列
-const guessRadioSongs = ref([]);
-
+// 猜你喜欢电台：每次点击拉一首新推荐立即播放；右栏卡片区直接镜像**真实
+// 播放队列**——凡是播过的歌（电台追加、自动接续、其他入口播的）都在，
+// 逐首累积保留。拉取结束时整表刷新，点击任意卡片就在这份列表内播放
 const playGuessYouLike = async () => {
   temporaryPlaylist.value = null;
   try {
     const songs = await getGuessYouLike();
     const song = songs[0];
     if (!song) return;
-    guessRadioSongs.value = [...guessRadioSongs.value, song];
-    searchBoxRef.value?.showSongs?.(guessRadioSongs.value);
     props.player?.playRadioSong?.(song);
+    searchBoxRef.value?.showSongs?.([...props.player.queue]);
   } catch (error) {
     window.dispatchEvent(new CustomEvent('jello:toast', {
       detail: error?.message || '猜你喜欢加载失败'
