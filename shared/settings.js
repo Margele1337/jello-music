@@ -106,7 +106,7 @@ export const SETTING_DEFAULTS = Object.freeze({
   volume: 1,
   // 音量合成器式应用级音量：与主界面音量相乘后输出（应用音量 50% × 主界面
   // 80% = 实际 40%），主界面滑杆语义不变
-  masterVolume: 1,
+  masterVolume: 0.6,
   playbackRate: 1,
   loudnessNormalization: false,
   audioOutputDevice: 'default',
