@@ -17,6 +17,14 @@ export function useSigmaWindowDrag(options = {}) {
   let dragState = null;
   let dragFrame = null;
   let pendingPosition = null;
+  // 停靠状态一变就终止本会话：收起后面板已到屏幕右缘、呼出后面板在回弹路上，
+  // 按下时记录的拖拽基准都会在下一次移动把面板拽到错误位置（历史「弹出到
+  // 鼠标位置」缺陷的兜底）。重新按住即可再拖
+  let unsubscribeDock = null;
+  const handleDockChanged = () => {
+    if (dragState || pendingDrag) endDrag();
+  };
+  unsubscribeDock = window.jello?.windowControl?.onDockChanged?.(handleDockChanged) || null;
 
   const flushDragPosition = () => {
     dragFrame = null;
@@ -68,6 +76,7 @@ export function useSigmaWindowDrag(options = {}) {
     }
     flushDragPosition();
     window.jello?.windowControl?.sendDragEnd?.();
+    window.jello?.windowControl?.setDragActive?.(false);
     releaseCapture();
 
     dragState = null;
@@ -108,6 +117,8 @@ export function useSigmaWindowDrag(options = {}) {
     window.addEventListener('pointermove', onDragPointerMove);
     window.addEventListener('pointerup', endDrag);
     window.addEventListener('pointercancel', endDrag);
+    // 会话存活上报：主进程 RShift 据此把「拖拽中按热键」解释成侧边轻推
+    window.jello?.windowControl?.setDragActive?.(true);
     event.preventDefault();
 
     window.jello.windowControl.getBounds?.().then((bounds) => {
@@ -129,6 +140,8 @@ export function useSigmaWindowDrag(options = {}) {
 
   // 组件卸载时兜底清理（正常路径 endDrag 会自行解绑）
   onBeforeUnmount(() => {
+    unsubscribeDock?.();
+    unsubscribeDock = null;
     if (dragState || pendingDrag) endDrag();
   });
 

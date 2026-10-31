@@ -17,8 +17,13 @@ import { initUpdater, stopUpdater } from './services/updater.js';
 import { initGlobalKeyListener, stopGlobalKeyListener } from './services/globalKeyService.js';
 import { registerMediaKeys, stopMediaKeys } from './services/mediaShortcuts.js';
 import {
+  cancelNudge,
+  dockMainWindow,
   initDockController,
   isMainWindowDocked,
+  isMainWindowDragActive,
+  isNudgeActive,
+  nudgeMainWindow,
   raiseMainWindow,
   resetDockState,
   restoreMainWindow,
@@ -188,6 +193,16 @@ function handleRightShift() {
     showMainWindow();
     return;
   }
+  // 拖拽会话进行中（左键按住面板）：第一次按 = 侧边轻推一下再平滑回到鼠标
+  // 预期位置（渲染层拖拽原地继续，不收起）；轻推中再按 = 明确要收起，直接
+  // dock——渲染层收到 dock-changed 会终止拖拽会话，旧拖拽基准不会再把面板
+  // 拽回鼠标位置
+  if (isNudgeActive()) {
+    cancelNudge();
+    dockMainWindow();
+    return;
+  }
+  if (isMainWindowDragActive() && !isMainWindowDocked() && nudgeMainWindow()) return;
   const wasDocked = isMainWindowDocked();
   toggleMainWindowDock();
   // 与旧版 toggleSigmaWindowFromHotkey 一致：滑出后置顶，否则按了像没反应

@@ -55,6 +55,9 @@ export const IPC = Object.freeze({
   WINDOW_ANIMATE_STOP: 'window:animate-stop',
   WINDOW_MOVE: 'window:move',
   WINDOW_DRAG_END: 'window:drag-end',
+  // 渲染层拖拽会话的存活信号（pointerdown 建 / pointerup 撤）。主进程的
+  // RShift 热键依赖它区分「拖拽中按热键 → 侧边轻推后交还拖拽」与「普通收起/呼出」
+  WINDOW_DRAG_ACTIVE: 'window:drag-active',
   WINDOW_GET_BOUNDS: 'window:get-bounds',
   WINDOW_OVERHANG_CHANGED: 'window:overhang-changed',
   UPDATE_GET: 'update:get',

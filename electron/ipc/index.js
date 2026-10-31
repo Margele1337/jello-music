@@ -28,6 +28,7 @@ import {
   finishMainWindowDrag,
   getMainWindowBounds,
   restoreMainWindow,
+  setMainWindowDragActive,
   toggleMainWindowDock,
   applyAnimatePosition,
   finishAnimate
@@ -425,6 +426,12 @@ export const registerIpc = (windows, intents = {}) => {
   ipcMain.on(IPC.WINDOW_DRAG_END, (event) => {
     if (!trustedInScope(event, 'main')) return;
     finishMainWindowDrag();
+  });
+
+  // 拖拽会话存活：RShift 热键据此决定「轻推后交还拖拽」还是正常收起/呼出
+  ipcMain.on(IPC.WINDOW_DRAG_ACTIVE, (event, active) => {
+    if (!trustedInScope(event, 'main')) return;
+    setMainWindowDragActive(active === true);
   });
 
   ipcMain.handle(IPC.WINDOW_GET_BOUNDS, (event) => {

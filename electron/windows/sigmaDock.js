@@ -51,6 +51,15 @@ let targetY = 0;
 let lastToggleAt = 0;
 let raiseTimer = null;
 
+// 渲染层拖拽会话存活（window:drag-active 上报，pointerdown 建 / pointerup 撤）
+let dragActive = false;
+
+// 拖拽中按 RShift 的「侧边轻推」：出程向收起方向位移一小段（不做任何状态
+// 切换），回程连续追踪渲染层拖拽的预期位置（moveMainWindow 回程段 retarget），
+// 收敛后无缝交还 1:1 拖拽。轻推期间 animationBlocked() 为真：拖拽消息不能
+// 直接 setBounds、松手不能触发吸附，任何路径都拽不离动画轨迹
+let nudge = null; // { phase: 'out'|'return', timer, startX, startY, outX, targetX, targetY, lastTime }
+
 export const initDockController = (getter) => {
   getWindow = getter;
 };
@@ -75,10 +84,14 @@ const cancelAnimation = () => {
   animating = false;
 };
 
-export const stopDockAnimation = () => cancelAnimation();
+export const stopDockAnimation = () => {
+  cancelAnimation();
+  cancelNudge();
+};
 
 export const resetDockState = () => {
   cancelAnimation();
+  cancelNudge();
   docked = false;
   if (raiseTimer) {
     clearTimeout(raiseTimer);
@@ -87,6 +100,7 @@ export const resetDockState = () => {
 };
 
 const animationBlocked = () => {
+  if (nudge) return true;
   if (!animating) return false;
   if (Date.now() - animationStartedAt > ANIM_STUCK_MS) {
     cancelAnimation();
@@ -151,6 +165,7 @@ const runMainAnimation = () => {
 };
 
 const startAnimation = (win, toX, toY) => {
+  cancelNudge();   // 真实收起/呼出动画接管：进行中的轻推作废
   const start = win.getBounds();
   if (Math.abs(start.x - toX) < 1 && Math.abs(start.y - toY) < 1) {
     // 必须先停掉在跑的动画：否则旧动画会继续往它自己的目标推进，
@@ -306,7 +321,20 @@ export const toggleMainWindowDock = () => {
 // 窗口位置。基准取错会让橡皮筋不动点从「纯光标函数」退化成「完整超出量」。
 export const moveMainWindow = (x, y, movedX = 0) => {
   const win = getWindow();
-  if (!win || win.isDestroyed() || animationBlocked()) return;
+  if (!win || win.isDestroyed()) return;
+  if (nudge) {
+    // 轻推回程段：渲染层拖拽的预期位置就是回程目标，动画连续追踪——直接
+    // setBounds 会把「回到鼠标」变成瞬移；出程段丢弃拖拽消息
+    if (nudge.phase === 'return' && Number.isFinite(x) && Number.isFinite(y)) {
+      const area = screen.getDisplayMatching({
+        x: Math.round(x), y: Math.round(y), width: WINDOW_WIDTH, height: WINDOW_HEIGHT
+      }).workArea;
+      nudge.targetX = Math.min(Math.max(Math.round(x), area.x), area.x + area.width - WINDOW_WIDTH);
+      nudge.targetY = Math.min(Math.max(Math.round(y), area.y), area.y + area.height - WINDOW_HEIGHT);
+    }
+    return;
+  }
+  if (animationBlocked()) return;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
   const bounds = win.getBounds();
@@ -364,6 +392,94 @@ export const finishMainWindowDrag = () => {
   if (nextX !== bounds.x || nextY !== bounds.y) {
     win.setBounds({ x: nextX, y: nextY, width: WINDOW_WIDTH, height: WINDOW_HEIGHT });
   }
+};
+
+// ===== 拖拽会话存活与「侧边轻推」 =====
+
+export const setMainWindowDragActive = (value) => {
+  dragActive = value === true;
+};
+
+export const isMainWindowDragActive = () => dragActive;
+
+export const isNudgeActive = () => !!nudge;
+
+export const cancelNudge = () => {
+  if (!nudge) return;
+  if (nudge.timer) clearTimeout(nudge.timer);
+  nudge = null;
+};
+
+const NUDGE_OUT_RATIO = 0.25;   // 出程位移 = 距收起位距离的 25%（「移动一点」）
+const NUDGE_MAX_PX = 140;       // 出程位移上限
+const NUDGE_OUT_FACTOR = 0.25;  // 缓动系数与收起动画同族（x 0.25 / y 0.2 每帧）
+const NUDGE_RETURN_FACTOR = 0.2;
+
+const nudgeStep = () => {
+  if (!nudge) return;
+  nudge.timer = null;
+  const win = getWindow();
+  if (!win || win.isDestroyed()) {
+    cancelNudge();
+    return;
+  }
+
+  const now = Date.now();
+  const dt = Math.min(ANIM_MAX_DT, Math.max(1, now - nudge.lastTime));
+  nudge.lastTime = now;
+  const frameFactor = dt / ANIM_GAME_FRAME_MS;
+  const fx = nudge.phase === 'out' ? NUDGE_OUT_FACTOR : NUDGE_RETURN_FACTOR;
+
+  const bounds = win.getBounds();
+  const nextX = nudge.targetX > bounds.x
+    ? Math.min(bounds.x + (nudge.targetX - bounds.x) * fx * frameFactor, nudge.targetX)
+    : Math.max(bounds.x + (nudge.targetX - bounds.x) * fx * frameFactor, nudge.targetX);
+  const nextY = nudge.targetY > bounds.y
+    ? Math.min(bounds.y + (nudge.targetY - bounds.y) * 0.2 * frameFactor, nudge.targetY)
+    : Math.max(bounds.y + (nudge.targetY - bounds.y) * 0.2 * frameFactor, nudge.targetY);
+
+  if (nudge.phase === 'out' && Math.abs(nudge.outX - nextX) < 0.5) {
+    // 出程到位 → 切回程：目标先回到轻推起点，回程段由 moveMainWindow 持续
+    // retarget 成拖拽预期位置（鼠标在动就跟手，静止则原位收回）
+    nudge.phase = 'return';
+    nudge.targetX = nudge.startX;
+    nudge.targetY = nudge.startY;
+  } else if (nudge.phase === 'return'
+    && Math.abs(nudge.targetX - nextX) < 0.5 && Math.abs(nudge.targetY - nextY) < 0.5) {
+    // 收敛到拖拽预期位置：此时交还 1:1 拖拽，后续 moveMainWindow 直接生效，
+    // 面板已在鼠标预期位，无跳变
+    setBoundsAt(win, nudge.targetX, nudge.targetY);
+    cancelNudge();
+    return;
+  }
+
+  if (nudge) {
+    setBoundsAt(win, nextX, nextY);
+    nudge.timer = setTimeout(nudgeStep, ANIM_TICK_MS);
+  }
+};
+
+export const nudgeMainWindow = () => {
+  const win = getWindow();
+  if (!win || win.isDestroyed() || !win.isVisible() || nudge) return false;
+  cancelAnimation();   // 若有收起/呼出动画在跑（理论不会：拖拽起手已取消），先停
+  const bounds = win.getBounds();
+  const area = areaFor(win);
+  const dockX = area.x + area.width - DOCK_VISIBLE;
+  const outX = bounds.x + Math.max(0, Math.min(NUDGE_MAX_PX, (dockX - bounds.x) * NUDGE_OUT_RATIO));
+  if (Math.abs(outX - bounds.x) < 2) return false;   // 已贴着收起位，轻推没有可见意义
+  nudge = {
+    phase: 'out',
+    timer: null,
+    startX: bounds.x,
+    startY: bounds.y,
+    outX,
+    targetX: outX,
+    targetY: bounds.y,
+    lastTime: Date.now()
+  };
+  nudgeStep();
+  return true;
 };
 
 export const getMainWindowBounds = () => {

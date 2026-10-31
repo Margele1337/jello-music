@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('jello', {
     sendAnimateDone: () => ipcRenderer.send('window:animate-done'),
     sendMove: (position) => ipcRenderer.send('window:move', position),
     sendDragEnd: () => ipcRenderer.send('window:drag-end'),
+    // 拖拽会话存活上报：主进程 RShift 热键据此把「拖拽中收起」解释成轻推动作
+    setDragActive: (active) => ipcRenderer.send('window:drag-active', active === true),
     getBounds: () => ipcRenderer.invoke('window:get-bounds'),
     onOverhangChanged: (callback) => {
       const handler = (_event, value) => callback(value);
