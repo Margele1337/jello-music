@@ -736,6 +736,15 @@ const settingSections = [
     title: '声音',
     items: [
       {
+        key: 'masterVolume',
+        control: 'slider',
+        icon: 'volume',
+        label: '应用音量',
+        description: '音量合成器式的应用级音量：与主界面音量相乘后输出（应用 50% × 主界面 80% = 实际 40%），主界面滑杆语义不变。',
+        slider: { min: 0, max: 1, step: 0.01 },
+        format: (value) => `${Math.round(value * 100)}%`
+      },
+      {
         key: 'quality',
         control: 'pill',
         icon: 'headphones',
@@ -920,15 +929,6 @@ const settingSections = [
   {
     title: '系统',
     items: [
-      {
-        key: 'masterVolume',
-        control: 'slider',
-        icon: 'volume',
-        label: '应用音量',
-        description: '音量合成器式的应用级音量：与主界面音量相乘后输出（应用 50% × 主界面 80% = 实际 40%），主界面滑杆语义不变。',
-        slider: { min: 0, max: 1, step: 0.01 },
-        format: (value) => `${Math.round(value * 100)}%`
-      },
       {
         key: 'hotkeyIntroSeen',
         control: 'action',
