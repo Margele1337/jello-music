@@ -8,7 +8,7 @@
     />
     <SigmaScrollablePanel class="sigma-search-box-results" ref="resultsEl">
       <SigmaThumbnailButton
-        v-for="(card, index) in cards"
+        v-for="(card, index) in displayCards"
         :key="card.key"
         :type="card.type"
         :cover="card.cover"
@@ -18,12 +18,12 @@
         @click="onCardClick(card)"
       />
     </SigmaScrollablePanel>
-    <p v-if="status" class="sigma-search-box-status">{{ status }}</p>
+    <p v-if="status && !liveSongs" class="sigma-search-box-status">{{ status }}</p>
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import artworkImg from '../../assets/sigma/music/artwork.png';
 import {
   getDailyRecommend,
@@ -36,7 +36,10 @@ import SigmaScrollablePanel from './SigmaScrollablePanel.vue';
 import SigmaThumbnailButton from './SigmaThumbnailButton.vue';
 
 const props = defineProps({
-  player: { type: Object, default: null }
+  player: { type: Object, default: null },
+  // 非空时卡片区直接渲染这份实时列表（猜你喜欢电台：镜像真实播放队列，
+  // 每播/每追加一首都会出现并保留），本地 cards（搜索/歌单/每日推荐）让位
+  liveSongs: { type: Array, default: null }
 });
 
 const emit = defineEmits(['open-playlist', 'search']);
@@ -45,6 +48,11 @@ const keyword = ref('');
 const cards = ref([]);
 const status = ref('');
 const resultsEl = ref(null);
+
+// 直播模式（liveSongs 非空）渲染实时队列，否则渲染本地加载的卡片
+const displayCards = computed(() => (
+  Array.isArray(props.liveSongs) ? props.liveSongs.map(toSongCard) : cards.value
+));
 
 let requestToken = 0;
 
@@ -152,19 +160,11 @@ const clear = () => {
   status.value = '';
 };
 
-// 直接以一组歌曲填充卡片区（猜你喜欢电台的累积列表），绕过搜索/歌单加载
-const showSongs = (songs) => {
-  requestToken += 1;
-  cards.value = (Array.isArray(songs) ? songs : []).map(toSongCard);
-  status.value = '';
-};
-
 onMounted(loadDailyRecommend);
 
 defineExpose({
   showPlaylist,
   loadDailyRecommend,
-  showSongs,
   clear
 });
 
@@ -181,7 +181,7 @@ const onCardClick = (card) => {
     return;
   }
 
-  const songs = cards.value
+  const songs = displayCards.value
     .filter((item) => item.type === 'song')
     .map((item) => item.song);
   props.player.playSongList?.(songs, card.hash);

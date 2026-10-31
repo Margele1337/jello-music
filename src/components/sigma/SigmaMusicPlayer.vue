@@ -83,6 +83,7 @@
     <SigmaSearchBox
       ref="searchBoxRef"
       :player="player"
+      :live-songs="radioView ? player?.queue : null"
       @open-playlist="onOpenSearchPlaylist"
       @search="onSearchStarted"
     />
@@ -349,12 +350,18 @@ const openCollect = () => {
   collectModalRef.value?.open?.();
 };
 
+// 电台视图：右栏卡片区实时镜像播放队列（每播/每追加一首都出现并保留，
+// 第一首 1 个、第二首 2 个……）。搜歌/开歌单/每日推荐时让位回各自视图
+const radioView = ref(false);
+
 const onOpenSearchPlaylist = (playlist = {}) => {
   if (!playlist.id) return;
+  radioView.value = false;
   temporaryPlaylist.value = { ...playlist, name: playlist.name || '歌单' };
 };
 
 const onSearchStarted = () => {
+  radioView.value = false;
   temporaryPlaylist.value = null;
 };
 
@@ -374,6 +381,7 @@ const onPlaylistSelect = (item) => {
     return;
   }
   if (item.type === 'daily') {
+    radioView.value = false;
     searchBoxRef.value?.loadDailyRecommend?.();
     return;
   }
@@ -382,13 +390,14 @@ const onPlaylistSelect = (item) => {
     return;
   }
   if (item.id) {
+    radioView.value = false;
     searchBoxRef.value?.showPlaylist?.(item);
   }
 };
 
-// 猜你喜欢电台：每次点击拉一首新推荐立即播放；右栏卡片区直接镜像**真实
-// 播放队列**——凡是播过的歌（电台追加、自动接续、其他入口播的）都在，
-// 逐首累积保留。拉取结束时整表刷新，点击任意卡片就在这份列表内播放
+// 猜你喜欢电台：每次点击拉一首新推荐立即播放并追加进队列；右栏在电台
+// 视图下实时镜像队列——第一首 1 个、第二首 2 个（第一首+第二首）……逐首
+// 累积保留，歌曲播完按队列自动接续，点任意卡片就在这份列表内播放
 const playGuessYouLike = async () => {
   temporaryPlaylist.value = null;
   try {
@@ -396,7 +405,7 @@ const playGuessYouLike = async () => {
     const song = songs[0];
     if (!song) return;
     props.player?.playRadioSong?.(song);
-    searchBoxRef.value?.showSongs?.([...props.player.queue]);
+    radioView.value = true;
   } catch (error) {
     window.dispatchEvent(new CustomEvent('jello:toast', {
       detail: error?.message || '猜你喜欢加载失败'
