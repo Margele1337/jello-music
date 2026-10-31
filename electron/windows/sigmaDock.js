@@ -55,11 +55,12 @@ let raiseTimer = null;
 // 渲染层拖拽会话存活（window:drag-active 上报，pointerdown 建 / pointerup 撤）
 let dragActive = false;
 
-// 拖拽中按 RShift 的「侧边轻推」：出程向收起方向位移一小段（不做任何状态
-// 切换），回程连续追踪渲染层拖拽的预期位置（moveMainWindow 回程段 retarget），
-// 收敛后无缝交还 1:1 拖拽。轻推期间 animationBlocked() 为真：拖拽消息不能
-// 直接 setBounds、松手不能触发吸附，任何路径都拽不离动画轨迹
-let nudge = null; // { phase: 'out'|'return', timer, startX, startY, outX, targetX, targetY, lastTime }
+// 拖拽中按 RShift 的「侧边轻推」：主进程只裁定「这是轻推不是收起」并下发
+// 起手帧参数（出程目标 = 向收起位方向的一段位移），手势动画整体由渲染层
+// rAF 驱动（与收起/呼出动画同款，垂直同步平滑；主进程 setTimeout 粒度
+// ~15ms 且不与 vsync 对齐，之前的主进程驱动版本观感发涩）。主进程仅保留
+// 一个带兜底时限的标志：轻推中再按 RShift = 明确收起
+let nudgeActiveUntil = 0;
 
 export const initDockController = (getter) => {
   getWindow = getter;
@@ -85,14 +86,11 @@ const cancelAnimation = () => {
   animating = false;
 };
 
-export const stopDockAnimation = () => {
-  cancelAnimation();
-  cancelNudge();
-};
+export const stopDockAnimation = () => cancelAnimation();
 
 export const resetDockState = () => {
   cancelAnimation();
-  cancelNudge();
+  nudgeActiveUntil = 0;
   docked = false;
   if (raiseTimer) {
     clearTimeout(raiseTimer);
@@ -101,7 +99,6 @@ export const resetDockState = () => {
 };
 
 const animationBlocked = () => {
-  if (nudge) return true;
   if (!animating) return false;
   if (Date.now() - animationStartedAt > ANIM_STUCK_MS) {
     cancelAnimation();
@@ -166,7 +163,6 @@ const runMainAnimation = () => {
 };
 
 const startAnimation = (win, toX, toY) => {
-  cancelNudge();   // 真实收起/呼出动画接管：进行中的轻推作废
   const start = win.getBounds();
   if (Math.abs(start.x - toX) < 1 && Math.abs(start.y - toY) < 1) {
     // 必须先停掉在跑的动画：否则旧动画会继续往它自己的目标推进，
@@ -322,26 +318,7 @@ export const toggleMainWindowDock = () => {
 // 窗口位置。基准取错会让橡皮筋不动点从「纯光标函数」退化成「完整超出量」。
 export const moveMainWindow = (x, y, movedX = 0) => {
   const win = getWindow();
-  if (!win || win.isDestroyed()) return;
-  if (nudge) {
-    // 轻推回程段：渲染层拖拽的预期位置就是回程目标，动画连续追踪——直接
-    // setBounds 会把「回到鼠标」变成瞬移；出程段丢弃拖拽消息。
-    // 目标解析必须与正常拖拽同一套（含橡皮筋）：悬出区间若被硬夹回屏幕内，
-    // 回程就到不了鼠标预期位置（回归缺陷：拖右一段距离后回不到鼠标）
-    if (nudge.phase === 'return' && Number.isFinite(x) && Number.isFinite(y)) {
-      const area = screen.getDisplayMatching({
-        x: Math.round(x), y: Math.round(y), width: WINDOW_WIDTH, height: WINDOW_HEIGHT
-      }).workArea;
-      const target = resolveDragTargetX({
-        desiredX: x, areaLeft: area.x, areaRight: area.x + area.width, windowWidth: WINDOW_WIDTH, movedX
-      });
-      nudge.targetX = target.x;
-      nudge.targetY = Math.min(Math.max(Math.round(y), area.y), area.y + area.height - WINDOW_HEIGHT);
-      setOverhanging(target.overhanging);
-    }
-    return;
-  }
-  if (animationBlocked()) return;
+  if (!win || win.isDestroyed() || animationBlocked()) return;
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
   const bounds = win.getBounds();
@@ -400,110 +377,50 @@ export const setMainWindowDragActive = (value) => {
 
 export const isMainWindowDragActive = () => dragActive;
 
-export const isNudgeActive = () => !!nudge;
-
-export const cancelNudge = () => {
-  if (!nudge) return;
-  if (nudge.timer) clearTimeout(nudge.timer);
-  nudge = null;
-};
+export const isNudgeActive = () => Date.now() < nudgeActiveUntil;
 
 const NUDGE_OUT_RATIO = 0.25;   // 出程位移 = 距收起位距离的 25%（「移动一点」）
 const NUDGE_MAX_PX = 140;       // 出程位移上限
 const NUDGE_MIN_PX = 24;        // 已悬出收起位时的保底可见位移
-const NUDGE_OUT_FACTOR = 0.25;  // 缓动系数与收起动画同族
-const NUDGE_RETURN_FACTOR = 0.35;
-const NUDGE_RETURN_Y_FACTOR = 0.25;
-const NUDGE_RETURN_FAILSAFE_MS = 2000;   // 回程兜底：超时强制交还 1:1 拖拽
+// 主进程侧轻推标志的兜底时限：正常手势 ~360ms，渲染层结束时会回报清零，
+// 这里只防渲染层失联（崩溃/无回报）后标志永久悬挂
+const NUDGE_FLAG_FALLBACK_MS = 900;
 
-const nudgeStep = () => {
-  if (!nudge) return;
-  nudge.timer = null;
+// 下发轻推起手帧并进入 renderer 动画态：渲染层以 rAF 驱动整个手势
+//（出程 → 回程追踪拖拽预期位），经 animate-position 通道逐帧落位，
+// 结束时回报 nudge-done（finishWindowNudge）。置 renderer 动画态后
+// applyAnimatePosition 才接帧，且 moveMainWindow 被动画闸拦住不会打架
+export const beginNudge = () => {
   const win = getWindow();
-  if (!win || win.isDestroyed()) {
-    cancelNudge();
-    return;
-  }
-
-  const now = Date.now();
-  const dt = Math.min(ANIM_MAX_DT, Math.max(1, now - nudge.lastTime));
-  nudge.lastTime = now;
-  const frameFactor = dt / ANIM_GAME_FRAME_MS;
-  const fx = nudge.phase === 'out' ? NUDGE_OUT_FACTOR : NUDGE_RETURN_FACTOR;
-  const fy = nudge.phase === 'out' ? 0.2 : NUDGE_RETURN_Y_FACTOR;
-
-  // 位置推进必须走内部浮点状态（与 runMainAnimation 同构），不能每帧回读
-  // getBounds 再缓动：setBounds 写入取整，剩余距离缩到步长 < 1px 时取整会
-  // 把步进整个吞掉，位置停住而收敛判定（对内部值）永假——出程段永久卡死，
-  // 拖拽消息被全部丢弃（表现为面板冻结，只能 RShift 收起恢复）
-  let currentX = nudge.currentX;
-  let currentY = nudge.currentY;
-  currentX = nudge.targetX > currentX
-    ? Math.min(currentX + (nudge.targetX - currentX) * fx * frameFactor, nudge.targetX)
-    : Math.max(currentX + (nudge.targetX - currentX) * fx * frameFactor, nudge.targetX);
-  currentY = nudge.targetY > currentY
-    ? Math.min(currentY + (nudge.targetY - currentY) * fy * frameFactor, nudge.targetY)
-    : Math.max(currentY + (nudge.targetY - currentY) * fy * frameFactor, nudge.targetY);
-  nudge.currentX = currentX;
-  nudge.currentY = currentY;
-
-  if (nudge.phase === 'out' && Math.abs(nudge.outX - currentX) < 0.5) {
-    // 出程到位 → 切回程：目标先回到轻推起点，回程段由 moveMainWindow 持续
-    // retarget 成拖拽预期位置（鼠标在动就跟手，静止则原位收回）
-    nudge.phase = 'return';
-    nudge.returnStartedAt = now;
-    nudge.targetX = nudge.startX;
-    nudge.targetY = nudge.startY;
-  } else if (nudge.phase === 'return'
-    && Math.abs(nudge.targetX - currentX) < 0.5 && Math.abs(nudge.targetY - currentY) < 0.5) {
-    // 收敛到拖拽预期位置：此时交还 1:1 拖拽，后续 moveMainWindow 直接生效，
-    // 面板已在鼠标预期位，无跳变
-    setBoundsAt(win, nudge.targetX, nudge.targetY);
-    cancelNudge();
-    return;
-  }
-
-  if (!nudge) return;
-  // 兜底：拖拽目标持续移动导致缓动长期不收敛时，强制交还 1:1 拖拽
-  //（交还瞬间位置与目标可能有小差量，由后续 moveMainWindow 平滑追上）
-  if (nudge.phase === 'return' && now - nudge.returnStartedAt > NUDGE_RETURN_FAILSAFE_MS) {
-    cancelNudge();
-    return;
-  }
-  setBoundsAt(win, currentX, currentY);
-  nudge.timer = setTimeout(nudgeStep, ANIM_TICK_MS);
-};
-
-export const nudgeMainWindow = () => {
-  const win = getWindow();
-  if (!win || win.isDestroyed() || !win.isVisible() || nudge) return false;
+  if (!win || win.isDestroyed() || !win.isVisible()) return false;
   cancelAnimation();   // 若有收起/呼出动画在跑（理论不会：拖拽起手已取消），先停
   const bounds = win.getBounds();
   const area = areaFor(win);
   const dockX = area.x + area.width - DOCK_VISIBLE;
-  // 已悬出收起位（向右拖过头）时也必须给出可见的轻推并回程——绝不能在此
-  // 返回 false 落回「真收起」分支，那正是「拖右一段距离后按 RShift 面板
-  // 不回到鼠标位置」的根源之一
+  // 已悬出收起位（向右拖过头）时给保底可见位移：轻推路径绝不落回「真收起」
   const towardDock = dockX - bounds.x;
   const excursion = towardDock > 0
     ? Math.min(NUDGE_MAX_PX, towardDock * NUDGE_OUT_RATIO)
     : NUDGE_MIN_PX;
-  const outX = bounds.x + excursion;
-  if (excursion < 2) return false;   // 理论兜底（悬出态走 NUDGE_MIN_PX，不会到达）
-  nudge = {
-    phase: 'out',
-    timer: null,
-    startX: bounds.x,
-    startY: bounds.y,
-    currentX: bounds.x,
-    currentY: bounds.y,
-    outX,
-    targetX: outX,
-    targetY: bounds.y,
-    lastTime: Date.now()
-  };
-  nudgeStep();
+  if (excursion < 2) return false;
+  animating = true;
+  animationMode = 'renderer';
+  animationStartedAt = Date.now();
+  lastFrameAt = Date.now();
+  nudgeActiveUntil = Date.now() + NUDGE_FLAG_FALLBACK_MS;
+  win.webContents.send(IPC.WINDOW_NUDGE_START, {
+    fromX: bounds.x,
+    fromY: bounds.y,
+    outX: bounds.x + excursion,
+    outY: bounds.y
+  });
   return true;
+};
+
+// 渲染层回报手势结束（完成或被取消）：清动画态与轻推标志，交还常规拖拽
+export const finishWindowNudge = () => {
+  nudgeActiveUntil = 0;
+  if (animating && animationMode === 'renderer') cancelAnimation();
 };
 
 export const getMainWindowBounds = () => {

@@ -5,6 +5,21 @@
 // - capturePointer：播放器需要 pointer capture（设置页原本不捕获，保持 false）
 // - onBeforeDrag：播放器在起手时取消进行中的窗口动画
 import { onBeforeUnmount } from 'vue';
+import { resolveDragTargetX, resolveNudgeFrame } from '../../shared/dragTarget.js';
+
+const PANEL_WIDTH = 800;
+const PANEL_HEIGHT = 600;
+
+// 当前显示器工作区：轻推回程端点必须按「此刻正常拖拽会把面板放到哪里」
+// 计算（含橡皮筋/夹屏），与交还后的 1:1 拖拽同源，衔接才无跳变
+const workArea = () => {
+  const s = window.screen || {};
+  const left = Number.isFinite(s.availLeft) ? s.availLeft : 0;
+  const top = Number.isFinite(s.availTop) ? s.availTop : 0;
+  const width = Number.isFinite(s.availWidth) ? s.availWidth : Number(s.width) || 0;
+  const height = Number.isFinite(s.availHeight) ? s.availHeight : Number(s.height) || 0;
+  return { left, top, right: left + width, bottom: top + height };
+};
 
 export function useSigmaWindowDrag(options = {}) {
   const {
@@ -17,9 +32,15 @@ export function useSigmaWindowDrag(options = {}) {
   let dragState = null;
   let dragFrame = null;
   let pendingPosition = null;
-  // 停靠状态一变就终止本会话：收起后面板已到屏幕右缘、呼出后面板在回弹路上，
-  // 按下时记录的拖拽基准都会在下一次移动把面板拽到错误位置（历史「弹出到
-  // 鼠标位置」缺陷的兜底）。重新按住即可再拖
+  // 侧边轻推手势（拖拽中按 RShift）：渲染层 rAF 驱动「出程冲向侧边 → 回程
+  // 追踪拖拽预期位」，期间拖拽消息暂停发送（面板由手势动画驱动），结束时把
+  // 拖拽基准重定到手势终点，无缝交还 1:1 拖拽。主进程只下发起手帧并等回报
+  let nudgeGesture = null;
+  let unsubscribeNudge = null;
+
+  // 停靠状态一变就终止本会话与进行中的手势：收起后面板已到屏幕右缘、呼出后
+  // 面板在回弹路上，按下时记录的拖拽基准都会在下一次移动把面板拽到错误位置
+  //（历史「弹出到鼠标位置」缺陷的兜底）。重新按住即可再拖
   let unsubscribeDock = null;
   const handleDockChanged = () => {
     if (dragState || pendingDrag) endDrag();
@@ -28,7 +49,7 @@ export function useSigmaWindowDrag(options = {}) {
 
   const flushDragPosition = () => {
     dragFrame = null;
-    if (!pendingPosition) return;
+    if (nudgeGesture || !pendingPosition) return;
     window.jello?.windowControl?.sendMove?.(pendingPosition);
     pendingPosition = null;
   };
@@ -41,6 +62,9 @@ export function useSigmaWindowDrag(options = {}) {
       return;
     }
     if (!dragState || event.pointerId !== dragState.pointerId) return;
+    dragState.lastScreenX = event.screenX;
+    dragState.lastScreenY = event.screenY;
+    if (nudgeGesture) return;   // 手势期间面板由动画驱动，拖拽消息暂停
     pendingPosition = {
       x: dragState.winX + (event.screenX - dragState.mouseX),
       y: dragState.winY + (event.screenY - dragState.mouseY),
@@ -51,6 +75,76 @@ export function useSigmaWindowDrag(options = {}) {
       dragFrame = requestAnimationFrame(flushDragPosition);
     }
   };
+
+  // ===== 侧边轻推手势 =====
+
+  // 若此刻没有轻推干预，正常拖拽会把面板放到的位置（含橡皮筋/夹屏）
+  const desiredWithBoundaries = () => {
+    const area = workArea();
+    const raw = {
+      x: dragState.winX + (dragState.lastScreenX - dragState.mouseX),
+      y: dragState.winY + (dragState.lastScreenY - dragState.mouseY)
+    };
+    const target = resolveDragTargetX({
+      desiredX: raw.x,
+      areaLeft: area.left,
+      areaRight: area.right,
+      windowWidth: window.outerWidth || PANEL_WIDTH,
+      movedX: dragState.lastScreenX - dragState.startX
+    });
+    return {
+      x: target.x,
+      y: Math.min(Math.max(raw.y, area.top), area.bottom - (window.outerHeight || PANEL_HEIGHT))
+    };
+  };
+
+  const endNudgeGesture = (notifyMain) => {
+    const gesture = nudgeGesture;
+    if (!gesture) return;
+    nudgeGesture = null;
+    if (gesture.raf) cancelAnimationFrame(gesture.raf);
+    if (notifyMain) window.jello?.windowControl?.sendNudgeDone?.();
+  };
+
+  const beginNudgeGesture = ({ fromX, fromY, outX, outY }) => {
+    if (!dragState || nudgeGesture) {
+      // 无会话/已在手势中：立即回报，别让主进程标志等满兜底时限
+      window.jello?.windowControl?.sendNudgeDone?.();
+      return;
+    }
+
+    const gesture = { raf: 0, startedAt: performance.now() };
+    nudgeGesture = gesture;
+
+    const step = (now) => {
+      if (nudgeGesture !== gesture) return;
+      const desired = desiredWithBoundaries();
+      const frame = resolveNudgeFrame({
+        fromX, fromY, outX, outY,
+        desiredX: desired.x,
+        desiredY: desired.y,
+        elapsedMs: now - gesture.startedAt
+      });
+      window.jello?.windowControl?.sendAnimatePosition?.({ x: frame.x, y: frame.y });
+      if (!frame.done) {
+        gesture.raf = requestAnimationFrame(step);
+        return;
+      }
+      // 重定拖拽基准到手势终点（= 此刻拖拽预期位）：后续 1:1 移动从这里连续
+      // 计算，面板已在鼠标预期位，交还无跳变
+      dragState.winX = desired.x;
+      dragState.winY = desired.y;
+      dragState.mouseX = dragState.lastScreenX;
+      dragState.mouseY = dragState.lastScreenY;
+      nudgeGesture = null;
+      window.jello?.windowControl?.sendNudgeDone?.();
+    };
+    gesture.raf = requestAnimationFrame(step);
+  };
+
+  if (window.jello?.windowControl) {
+    unsubscribeNudge = window.jello.windowControl.onNudgeStart?.(beginNudgeGesture) || null;
+  }
 
   const releaseCapture = () => {
     if (!capturePointer) return;
@@ -70,6 +164,9 @@ export function useSigmaWindowDrag(options = {}) {
       if (pendingDrag && event.pointerId !== pendingDrag.pointerId) return;
       if (dragState && event.pointerId !== dragState.pointerId) return;
     }
+    // 先停手势再走松手链：nudge-done 先清掉主进程动画态，
+    // sendDragEnd 的贴边收起判定才能正常执行
+    endNudgeGesture(true);
     if (dragFrame !== null) {
       cancelAnimationFrame(dragFrame);
       dragFrame = null;
@@ -130,6 +227,8 @@ export function useSigmaWindowDrag(options = {}) {
         startX: pendingDrag.startX,
         winX: bounds.x,
         winY: bounds.y,
+        lastScreenX: pendingDrag.lastX,
+        lastScreenY: pendingDrag.lastY,
         captureEl: pendingDrag.captureEl
       };
       pendingDrag = null;
@@ -142,6 +241,9 @@ export function useSigmaWindowDrag(options = {}) {
   onBeforeUnmount(() => {
     unsubscribeDock?.();
     unsubscribeDock = null;
+    unsubscribeNudge?.();
+    unsubscribeNudge = null;
+    endNudgeGesture(false);
     if (dragState || pendingDrag) endDrag();
   });
 

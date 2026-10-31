@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveDragTargetX } from '../shared/dragTarget.js';
+import {
+  NUDGE_BACK_MS,
+  NUDGE_OUT_MS,
+  resolveDragTargetX,
+  resolveNudgeFrame
+} from '../shared/dragTarget.js';
 
 // 1920 宽单显示器、面板 800：屏幕内最大 X = 1120，橡皮筋触发线 = desired > 2120
 const base = { areaLeft: 0, areaRight: 1920, windowWidth: 800 };
@@ -40,4 +45,40 @@ test('float desired rounds into the clamp like the original inline math', () => 
 
 test('left edge clamps symmetrically', () => {
   assert.deepEqual(resolveDragTargetX({ ...base, desiredX: -50, movedX: 0 }), { x: 0, overhanging: false });
+});
+
+// ===== 轻推手势帧 =====
+
+const gesture = { fromX: 1000, fromY: 200, outX: 1140, outY: 200, desiredX: 1000, desiredY: 200 };
+
+test('nudge out leg eases from the start position toward the excursion target', () => {
+  const first = resolveNudgeFrame({ ...gesture, elapsedMs: 0 });
+  assert.equal(first.x, 1000);
+  assert.equal(first.y, 200);
+  assert.equal(first.done, false);
+
+  const mid = resolveNudgeFrame({ ...gesture, elapsedMs: NUDGE_OUT_MS / 2 });
+  // easeOutCubic(0.5) = 0.875 → 已走出 87.5%，冲出去的前段快、收尾慢
+  assert.ok(Math.abs(mid.x - (1000 + 140 * 0.875)) < 1e-9);
+  assert.equal(mid.done, false);
+});
+
+test('nudge back leg eases toward the live desired position', () => {
+  const atOutEnd = resolveNudgeFrame({ ...gesture, elapsedMs: NUDGE_OUT_MS });
+  assert.equal(atOutEnd.x, 1140);   // t=0 → k=0，仍在出程端点
+  const halfBack = resolveNudgeFrame({ ...gesture, elapsedMs: NUDGE_OUT_MS + NUDGE_BACK_MS / 2 });
+  // easeInOutCubic(0.5) = 0.5 → 正好在出程端点与预期位的中点
+  assert.equal(halfBack.x, 1070);
+  assert.equal(halfBack.done, false);
+});
+
+test('nudge gesture lands exactly on the desired position when done', () => {
+  const done = resolveNudgeFrame({ ...gesture, elapsedMs: NUDGE_OUT_MS + NUDGE_BACK_MS + 1 });
+  assert.deepEqual({ x: done.x, y: done.y, done: true }, { x: 1000, y: 200, done: true });
+});
+
+test('moving desired during the back leg keeps the endpoint glued to it', () => {
+  const frame = resolveNudgeFrame({ ...gesture, desiredX: 1100, elapsedMs: NUDGE_OUT_MS + NUDGE_BACK_MS });
+  assert.equal(frame.x, 1100);
+  assert.equal(frame.done, true);
 });

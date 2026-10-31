@@ -58,6 +58,10 @@ export const IPC = Object.freeze({
   // 渲染层拖拽会话的存活信号（pointerdown 建 / pointerup 撤）。主进程的
   // RShift 热键依赖它区分「拖拽中按热键 → 侧边轻推后交还拖拽」与「普通收起/呼出」
   WINDOW_DRAG_ACTIVE: 'window:drag-active',
+  // 拖拽中按 RShift 的「侧边轻推」：主进程下发起手帧（出程目标），渲染层以
+  // rAF 驱动整个手势并经 animate-position 逐帧落位，结束/取消时回报 done
+  WINDOW_NUDGE_START: 'window:nudge-start',
+  WINDOW_NUDGE_DONE: 'window:nudge-done',
   WINDOW_GET_BOUNDS: 'window:get-bounds',
   WINDOW_OVERHANG_CHANGED: 'window:overhang-changed',
   UPDATE_GET: 'update:get',

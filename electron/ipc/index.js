@@ -23,6 +23,7 @@ import { sanitizeDesktopLyricLyrics, sanitizeDesktopLyricProgress } from '../../
 import { sanitizeSpectrumPayload } from '../../shared/spectrum.js';
 import { getSpectrumWindow, sendSpectrumData, syncSpectrumHud, sendSpectrumSettings, syncSpectrumHudSettings, resetSpectrumHudPosition, flushSpectrumGeometry } from '../windows/spectrumHud.js';
 import {
+  finishWindowNudge,
   isMainWindowDocked,
   moveMainWindow,
   finishMainWindowDrag,
@@ -432,6 +433,12 @@ export const registerIpc = (windows, intents = {}) => {
   ipcMain.on(IPC.WINDOW_DRAG_ACTIVE, (event, active) => {
     if (!trustedInScope(event, 'main')) return;
     setMainWindowDragActive(active === true);
+  });
+
+  // 渲染层轻推手势结束（完成或被取消）：清动画态与轻推标志，交还常规拖拽
+  ipcMain.on(IPC.WINDOW_NUDGE_DONE, (event) => {
+    if (!trustedInScope(event, 'main')) return;
+    finishWindowNudge();
   });
 
   ipcMain.handle(IPC.WINDOW_GET_BOUNDS, (event) => {

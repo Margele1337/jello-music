@@ -98,6 +98,13 @@ contextBridge.exposeInMainWorld('jello', {
     sendDragEnd: () => ipcRenderer.send('window:drag-end'),
     // 拖拽会话存活上报：主进程 RShift 热键据此把「拖拽中收起」解释成轻推动作
     setDragActive: (active) => ipcRenderer.send('window:drag-active', active === true),
+    // 侧边轻推手势：主进程下发起手帧，渲染层 rAF 驱动（与收起动画同款平滑）
+    onNudgeStart: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('window:nudge-start', handler);
+      return () => ipcRenderer.removeListener('window:nudge-start', handler);
+    },
+    sendNudgeDone: () => ipcRenderer.send('window:nudge-done'),
     getBounds: () => ipcRenderer.invoke('window:get-bounds'),
     onOverhangChanged: (callback) => {
       const handler = (_event, value) => callback(value);

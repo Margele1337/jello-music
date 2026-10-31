@@ -29,3 +29,39 @@ export const resolveDragTargetX = ({
   }
   return { x: clampedX, overhanging: clampedX + windowWidth > areaRight };
 };
+
+// ===== 轻推手势帧（渲染层 rAF 驱动，纯计算便于单测） =====
+// 两段连续曲线：出程 easeOutCubic（冲向侧边、自然减速），回程 easeInOutCubic
+// 追踪拖拽预期位（端点随鼠标移动实时取当前值，不产生折返死停）。
+// 回程端点是「若此刻没有轻推，拖拽会把面板放到的位置」（含橡皮筋）。
+export const NUDGE_OUT_MS = 140;
+export const NUDGE_BACK_MS = 220;
+
+export const easeOutCubic = (t) => 1 - (1 - t) ** 3;
+export const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+
+/**
+ * @param {number} elapsedMs 手势开始后经过的毫秒数
+ * @returns {{ x: number, y: number, done: boolean }} 该帧面板应在的位置（浮点，
+ *   调用方经 animate-position 通道落盘取整，浮点状态留在渲染层不回灌）
+ */
+export const resolveNudgeFrame = ({
+  fromX, fromY, outX, outY, desiredX, desiredY, elapsedMs
+}) => {
+  if (elapsedMs < NUDGE_OUT_MS) {
+    const k = easeOutCubic(Math.max(0, elapsedMs / NUDGE_OUT_MS));
+    return {
+      x: fromX + (outX - fromX) * k,
+      y: fromY + (outY - fromY) * k,
+      done: false
+    };
+  }
+  const t = (elapsedMs - NUDGE_OUT_MS) / NUDGE_BACK_MS;
+  if (t >= 1) return { x: desiredX, y: desiredY, done: true };
+  const k = easeInOutCubic(Math.max(0, t));
+  return {
+    x: outX + (desiredX - outX) * k,
+    y: outY + (desiredY - outY) * k,
+    done: false
+  };
+};
