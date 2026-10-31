@@ -84,6 +84,13 @@ export function useSigmaWindowDrag(options = {}) {
 
     if (onBeforeDrag) onBeforeDrag(event);
 
+    // pointerdown 的 preventDefault（下方）会一并抑制浏览器默认的失焦流程：
+    // 点空白处起拖时主动让聚焦中的输入框失焦（搜索框点外部取消光标）
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+      active.blur();
+    }
+
     pendingDrag = {
       pointerId: event.pointerId,
       lastX: event.screenX,
