@@ -108,15 +108,43 @@ export const getDailyRecommend = async () => {
 };
 
 // 猜你喜欢（主页「私人专属好歌推荐」/top/card?card_id=1）。
-// timestamp 绕过 KuGouMusicApi 的同 URL 缓存，保证每次都重新推荐。
+// 单卡推荐是 radio 式服务：部分账号/设备指纹（登录 cookie 的 dfid/mid）下
+// 每次只回 1 首个性化推荐，未登录才回整表——这里连续拉取并按 hash 去重，
+// 凑出可用的播放队列；一次就回整表的账号首轮即止，行为不变。
+// timestamp 绕过 KuGouMusicApi 的同 URL 缓存，保证每次都是新推荐。
+const GUESS_TARGET_COUNT = 10;
+const GUESS_MAX_PULLS = 10;
+
 export const getGuessYouLike = async () => {
-  const payload = await apiRequest({
-    method: 'GET',
-    path: '/top/card',
-    params: { card_id: 1, timestamp: Date.now() }
-  });
-  ensureOk(payload, '获取猜你喜欢失败');
-  return normalizeSongList(payload?.data?.song_list);
+  const collected = [];
+  const seen = new Set();
+  for (let pull = 0; pull < GUESS_MAX_PULLS && collected.length < GUESS_TARGET_COUNT; pull += 1) {
+    let list;
+    try {
+      const payload = await apiRequest({
+        method: 'GET',
+        path: '/top/card',
+        params: { card_id: 1, timestamp: Date.now() + pull }
+      });
+      ensureOk(payload, '获取猜你喜欢失败');
+      list = normalizeSongList(payload?.data?.song_list);
+    } catch (error) {
+      // 首轮就失败照常抛给调用方；已有部分结果时用现有的，不再打断播放
+      if (!collected.length) throw error;
+      break;
+    }
+    if (!list.length) break;
+    let added = 0;
+    for (const song of list) {
+      if (!song?.hash || seen.has(song.hash)) continue;
+      seen.add(song.hash);
+      collected.push(song);
+      added += 1;
+    }
+    // 服务端开始重复推荐：本轮候选已耗尽
+    if (!added) break;
+  }
+  return collected;
 };
 
 export const getUserPlaylists = async () => {
