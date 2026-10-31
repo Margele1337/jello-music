@@ -91,7 +91,7 @@ const finishDrag = async () => {
   let keysSnapshot = null;
   let fromIdx = 0;
   let lastIdx = 0;
-  let residualPx = 0;
+  let preTops = null;
   if (dragCtx) {
     keysSnapshot = dragCtx.keys;
     fromIdx = dragCtx.fromIdx;
@@ -106,33 +106,34 @@ const finishDrag = async () => {
       savedOrder.value = nextKeys;
       persistOrder();
     }
-    // 被拖项的残位移：拖动位移 − 槽位差×身位。重排会把节点搬到新槽位，
-    // 预置这个残位移后节点搬移前后视觉位置严格连续（否则重排帧多出
-    // 「槽位差×身位」的错位 = 松手闪跳）
-    residualPx = dragCtx.offset - (lastIdx - fromIdx) * dragCtx.itemH;
+    // 提交前抓取所有条目的当前视觉 top：让位动画（0.14s）可能进行到一半，
+    // 只给被拖项预置残位移不够——邻居半途被「拍」到终点同样读作松手闪跳
+    const els = panelRef.value ? Array.from(panelRef.value.querySelectorAll('.sigma-playlist-item')) : [];
+    preTops = new Map(els.map((el) => [el, el.getBoundingClientRect().top]));
   }
   draggingKey.value = '';
   dragEndedAt = performance.now();
   dragCtx = null;
-  // 提交帧分三步，杜绝闪跳：
-  // 1) 冻结全部过渡（.dragging 移除会恢复 0.16s 过渡，不清冻结就会把
-  //    残余位移动画出来）；2) 非拖拽项清位移——它们重排后的自然位置 =
-  //    让位时的视觉位置，清除无视觉变化；3) 重排完成后清被拖项残位移。
   const els = panelRef.value ? Array.from(panelRef.value.querySelectorAll('.sigma-playlist-item')) : [];
   els.forEach((el) => { el.style.transition = 'none'; });
+  await nextTick();
+  // 重排落地：先全部清到自然位（冻结态），再按「提交前视觉位 − 新自然位」
+  // 预置残位移——画面像素级回到松手瞬间；强制 reflow 后解除冻结，有残差的
+  // 条目以 0.14s 滑入自然位（与让位动画同速），无残差的无感
   els.forEach((el) => {
-    if (dragKey && el.dataset.key === dragKey) {
-      el.style.transform = `translateY(${residualPx}px) scale(1.05)`;
-      return;
-    }
     el.style.transform = '';
     el.style.zIndex = '';
   });
-  await nextTick();
   els.forEach((el) => {
+    const preTop = preTops?.get(el);
+    const delta = preTop == null ? 0 : preTop - el.getBoundingClientRect().top;
+    el.style.transform = delta ? `translateY(${delta}px)` : '';
+  });
+  void panelRef.value?.offsetHeight;
+  els.forEach((el) => {
+    el.style.transition = el.style.transform ? 'transform 0.14s ease' : '';
     el.style.transform = '';
     el.style.zIndex = '';
-    el.style.transition = '';
   });
 };
 
@@ -145,16 +146,10 @@ const onDragMove = (event) => {
   const n = keys.length;
   const dy = event.clientY - startY;
   const clamped = Math.max(-fromIdx * itemH, Math.min((n - 1 - fromIdx) * itemH, dy));
-  // 滞后阈值：位移超过身位的 60% 才换槽（让位动画的触发点）。50% 中线附近
-  // 的微小回退不再翻转槽位——否则松手时常见"让位已发生、顺序却按原位提交"
-  // 的反弹复位
-  const slots = clamped / itemH;
-  const offset = Math.trunc(slots);
-  const frac = slots - offset;
-  let slotOffset = offset;
-  if (frac >= 0.6) slotOffset = offset + 1;
-  else if (frac <= -0.6) slotOffset = offset - 1;
-  const curSlot = fromIdx + slotOffset;
+  // 槽位按半程取整：换槽边界落在两个身位的中间而非槽位线上——对齐某个槽位
+  // 后指针的小幅抖动不会翻转槽位（旧 60% 阈值的边界恰在对齐点 1.0 上），
+  // 向上/向下阈值严格对称；提交永远采用最后一次移动的槽位，与让位视觉一致
+  const curSlot = fromIdx + Math.round(clamped / itemH);
   dragCtx.lastIdx = curSlot;
   dragCtx.offset = clamped;
   for (let i = 0; i < n; i += 1) {
@@ -198,13 +193,23 @@ const onItemPointerDown = (item, event) => {
       stop();
       return;
     }
-    // 长按触发：记录拖动上下文（键序/项高/起点），条目浮起由 .dragging 样式呈现
+    // 长按触发：记录拖动上下文（键序/槽距/起点），条目浮起由 .dragging 样式呈现
     const keys = draggableKeys();
+    // 槽距取相邻条目 offsetTop 差（含 2px margin）：只取元素高度会让位移、
+    // 落位、吸附全程带每槽 2px 的系统误差
+    const siblings = panelRef.value.querySelectorAll('.sigma-playlist-item');
+    const elIdx = Array.prototype.indexOf.call(siblings, el);
+    let pitch = el.getBoundingClientRect().height;
+    if (elIdx > -1 && elIdx < siblings.length - 1) {
+      pitch = siblings[elIdx + 1].offsetTop - el.offsetTop;
+    } else if (elIdx > 0) {
+      pitch = el.offsetTop - siblings[elIdx - 1].offsetTop;
+    }
     dragCtx = {
       key: item.key,
       keys,
       fromIdx: keys.indexOf(item.key),
-      itemH: el.getBoundingClientRect().height,
+      itemH: pitch,
       startY: event.clientY,
       curIdx: keys.indexOf(item.key)
     };
