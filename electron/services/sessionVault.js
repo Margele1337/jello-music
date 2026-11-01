@@ -22,8 +22,9 @@ export const loadSession = async () => {
     const text = typeof decrypted === 'string' ? decrypted : decrypted?.result;
     return text ? JSON.parse(text) : null;
   } catch (error) {
-    console.error('[session] 会话解密失败:', error.message);
-    ensureStore().delete(KEY);
+    // 解密失败（记录损坏/系统密钥环境变化）：保留记录不销毁——暂时性异常
+    // 下次启动可能恢复；持续失败按未登录继续，直到下次成功写入覆盖
+    console.error('[session] 会话解密失败（保留记录）:', error.message);
     return null;
   }
 };

@@ -50,6 +50,8 @@ const showRegisterHint = ref(false);
 let pollTimer = null;
 let countdownTimer = null;
 let qrToken = 0;
+let pollFailures = 0;
+const POLL_MAX_FAILURES = 3;
 let disposed = false;
 
 const TAB_TITLES = { qr: '扫码登录', phone: '手机登录', account: '账号密码登录' };
@@ -86,6 +88,7 @@ const fail = (message, fallback) => {
 
 const pollStatus = (key) => {
   clearPoll();
+  pollFailures = 0;
   pollTimer = setInterval(async () => {
     if (disposed || tab.value !== 'qr') return;
     try {
@@ -94,6 +97,7 @@ const pollStatus = (key) => {
         path: '/login/qr/check',
         params: { key, timestamp: Date.now() }
       });
+      pollFailures = 0;
       const codeValue = response?.data?.status;
       if (codeValue === 2) {
         scanned.value = true;
@@ -108,7 +112,11 @@ const pollStatus = (key) => {
         await createQr();
       }
     } catch (requestError) {
-      fail(requestError?.message, '二维码状态检查失败');
+      // 瞬时网络抖动不终止轮询：连续 N 次失败才判定检查不可用
+      pollFailures += 1;
+      if (pollFailures >= POLL_MAX_FAILURES) {
+        fail(requestError?.message, '二维码状态检查失败');
+      }
     }
   }, 2000);
 };
@@ -209,20 +217,19 @@ const sendCode = async () => {
   }
 };
 
-// selectedUserid 为空即首次提交；多账号时带 userid 重新提交（对齐旧版流程）
+// selectedUserid 为空即首次提交；多账号时带 userid 重新提交（对齐旧版流程）。
+// 重提交同样需要 mobile/code（code 仍在表单里），校验对两种路径都生效
 const loginPhone = async (selectedUserid = null) => {
   const mobile = phone.value.trim();
   const smsCode = code.value.trim();
 
-  if (!selectedUserid) {
-    if (!isChineseMobile(mobile)) {
-      error.value = '请输入正确的 11 位手机号';
-      return;
-    }
-    if (!/^\d{4,6}$/.test(smsCode)) {
-      error.value = '请输入短信验证码';
-      return;
-    }
+  if (!isChineseMobile(mobile)) {
+    error.value = '请输入正确的 11 位手机号';
+    return;
+  }
+  if (!/^\d{4,6}$/.test(smsCode)) {
+    error.value = '请输入短信验证码';
+    return;
   }
 
   loggingIn.value = true;

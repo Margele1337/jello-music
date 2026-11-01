@@ -129,7 +129,13 @@ export const resetDeviceCookies = () => {
 };
 
 export const clearAuthSession = () => {
-  for (const key of ['token', 'userid', 't1', 'vip_type']) cookies.delete(key);
+  // 登出清掉全部会话 cookie，只保留设备标识（KUGOU_API_*、dfid，与
+  // resetDeviceCookies 同口径）：上游登录可能经 Set-Cookie 写入固定 4 个
+  // 之外的会话 cookie，只按名单删会残留并继续随请求外发
+  for (const key of [...cookies.keys()]) {
+    if (key.startsWith('KUGOU_API_') || key === 'dfid') continue;
+    cookies.delete(key);
+  }
   authHeader = '';
   profile = null;
   if (persistTimer) {
