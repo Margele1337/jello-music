@@ -35,5 +35,13 @@ jobs:
       - run: npm --prefix api install --omit=dev
       - run: npm test
       - run: npm run build
+      - name: Cache electron-builder resources
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-win-x64-v1
       - name: Package and upload release assets
+        timeout-minutes: 25
+        env:
+          DEBUG: electron-builder,electron-builder:nsis
         run: npx electron-builder --win --x64 --publish always
