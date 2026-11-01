@@ -58,6 +58,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "shared/**/*",
       "package.json",
       "LICENSE",
       "NOTICE"
