@@ -42,11 +42,11 @@
     "vue-router": "^4.6.4",
     "wait-on": "^9.5.1"
   },
+  "author": "Margele1337",
   "build": {
     "appId": "cn.jello.music",
     "productName": "Jello Music",
     "icon": "build/icon.ico",
-    "electronDist": "node_modules/electron/dist",
     "asarUnpack": [
       "node_modules/koffi/**",
       "node_modules/@koromix/**"
