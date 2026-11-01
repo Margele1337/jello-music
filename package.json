@@ -1,6 +1,6 @@
 {
   "name": "jello-music",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Jello Music - clean-room MIT desktop client",
   "license": "MIT",
@@ -111,7 +111,9 @@
     ],
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "differentialPackage": false
+    },
+    "compression": "normal"
   }
 }
