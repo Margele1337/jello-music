@@ -406,6 +406,20 @@ const playGuessYouLike = async () => {
     }));
   }
 };
+
+// 登录态变化后刷新每日推荐：挂载时载入的是当时身份的推荐（未登录=通用
+// 列表），登录/登出后要换成新身份的推荐，否则右栏一直是登录前的旧列表。
+// wasAuthenticated 在挂载后取基线——启动时恢复会话的那次 profile 变化
+// 不算「登录动作」，避免与挂载时的首次载入重复请求
+let wasAuthenticated = null;
+watch(() => auth.isAuthenticated, (now) => {
+  if (wasAuthenticated === null || wasAuthenticated === now) {
+    wasAuthenticated = now;
+    return;
+  }
+  wasAuthenticated = now;
+  searchBoxRef.value?.loadDailyRecommend?.();
+});
 const docked = ref(false);
 const shellDocked = ref(false);
 const undockRequested = ref(false);
@@ -547,6 +561,9 @@ onMounted(() => {
   tickTimer = setInterval(syncPlaybackState, 250);
   updateDockedState();
   dockedTimer = setInterval(updateDockedState, 200);
+  // 登录态基线在挂载后取：App.vue 的 auth.load（启动恢复）发生在父组件
+  // onMounted 里，晚于子组件挂载——基线后的变化才算「登录/登出动作」
+  wasAuthenticated = auth.isAuthenticated;
   unsubscribeDock = window.jello?.windowControl?.onDockChanged?.((value) => {
     // value=true → 吸附收起，undockRequested=false；value=false → 主进程开始滑出，
     // undockRequested 置 true —— 点击瞬间就开始 150ms 变亮（原版「醒来」效果）。
