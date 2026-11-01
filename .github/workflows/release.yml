@@ -44,4 +44,8 @@ jobs:
         timeout-minutes: 25
         env:
           DEBUG: electron-builder,electron-builder:nsis
+          # electron-builder 对 7z 载荷硬编码 -mx=9（compression 配置只影响
+          # zip），单线程压 382MB 在 2 核 runner 上超 25 分钟；官方逃生门：
+          # 该环境变量直接覆盖压缩等级。5 级实测 1 分钟、包仅大 2MB
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: 5
         run: npx electron-builder --win --x64 --publish always
